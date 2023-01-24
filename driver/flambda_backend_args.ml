@@ -33,6 +33,9 @@ let mk_dcfg_invariants f =
 let mk_dcfg_equivalence_check f =
   "-dcfg-equivalence-check", Arg.Unit f, " Extra sanity checks on Cfg transformations"
 
+let mk_validate f =
+  "-validate", Arg.Unit f, " Run the semantic equivalence checking validator for Flambda2"
+
 let mk_reorder_blocks_random f =
   "-reorder-blocks-random",
   Arg.Int f,
@@ -462,6 +465,7 @@ module type Flambda_backend_options = sig
   val dcfg : unit -> unit
   val dcfg_invariants : unit -> unit
   val dcfg_equivalence_check : unit -> unit
+  val validate : unit -> unit
 
   val reorder_blocks_random : int -> unit
 
@@ -544,6 +548,7 @@ struct
     mk_dcfg F.dcfg;
     mk_dcfg_invariants F.dcfg_invariants;
     mk_dcfg_equivalence_check F.dcfg_equivalence_check;
+    mk_validate F.validate;
 
     mk_reorder_blocks_random F.reorder_blocks_random;
 
@@ -656,6 +661,7 @@ module Flambda_backend_options_impl = struct
   let dcfg = set' Flambda_backend_flags.dump_cfg
   let dcfg_invariants = set' Flambda_backend_flags.cfg_invariants
   let dcfg_equivalence_check = set' Flambda_backend_flags.cfg_equivalence_check
+  let validate = set' Flambda_backend_flags.validate
 
   let reorder_blocks_random seed =
     Flambda_backend_flags.reorder_blocks_random := Some seed
@@ -874,6 +880,7 @@ module Extra_params = struct
     | "ocamlcfg" -> set' Flambda_backend_flags.use_ocamlcfg
     | "cfg-invariants" -> set' Flambda_backend_flags.cfg_invariants
     | "cfg-equivalence-check" -> set' Flambda_backend_flags.cfg_equivalence_check
+    | "validate" -> set' Flambda_backend_flags.validate
     | "dump-inlining-paths" -> set' Flambda_backend_flags.dump_inlining_paths
     | "reorder-blocks-random" ->
        set_int_option' Flambda_backend_flags.reorder_blocks_random
