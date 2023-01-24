@@ -25,9 +25,15 @@
    simplifier has not changed and shows a syntactic equality up to
    alpha-equivalence. *)
 
-(* module Validate : sig
- *   type t = bool (* FIXME *)
- * end *)
+type core_exp
+
+type eq
+
+val core_eq : core_exp -> core_exp -> eq
+
+val flambda_unit_to_core : Flambda_unit.t -> core_exp
+
+val simplify_result_to_core : Simplify.simplify_result -> core_exp
 
 val validate :
-  Flambda_unit.t -> Flambda_unit.t -> bool
+  Flambda2_cmx.Flambda_cmx.loader -> Flambda_unit.t -> bool
