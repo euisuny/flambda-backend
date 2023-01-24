@@ -49,5 +49,4 @@
   flambda2_terms
   flambda2_simplify_shared
   flambda2_types
-  flambda2_ui
-  flambda2_validate))
+  flambda2_ui))
