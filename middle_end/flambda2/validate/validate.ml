@@ -66,7 +66,7 @@ let rec core_eq_ctx (ctx1:context) (ctx2:context) clo1 clo2 e1 e2 : eq =
     (* Continuation.equal cont1 cont2 && *)
     (* Add bound variables to context, continuation id to closure context *)
     (* core_eq_ctx (bound1::ctx1) (bound2::ctx2) (cont1::clo1) (cont2::clo2) body1 body2 *)
-    false
+    failwith "Unimplemented"
   | Apply { callee = callee1;
             continuation = cont1;
             exn_continuation = exn_cont1;
@@ -76,30 +76,26 @@ let rec core_eq_ctx (ctx1:context) (ctx2:context) clo1 clo2 e1 e2 : eq =
             continuation = cont2;
             exn_continuation = exn_cont2;
             args = args2;
-            call_kind = kind2 } -> false
+            call_kind = kind2 } ->
+    failwith "Unimplemented"
   | Apply_cont _, Apply_cont _ ->
-    false
+    failwith "Unimplemented"
   | Switch _, Switch _ ->
-    false
-  | Invalid _, Invalid _ -> true
+    failwith "Unimplemented"
+  | Invalid _, Invalid _ ->
+    failwith "Unimplemented"
 
 let core_eq = core_eq_ctx [] [] [] []
 
 let rec flambda_expr_to_core (e: expr) : core_exp =
   let e = Expr.descr e in
   match e with
-  | Flambda.Let e ->
-    Let_expr.pattern_match e ~f:(let_to_core)
-  | Flambda.Let_cont e ->
-    let_cont_to_core e
-  | Flambda.Apply t ->
-    Invalid { message = "unimplemented" }
-  | Flambda.Apply_cont t ->
-    Invalid { message = "unimplemented" }
-  | Flambda.Switch t ->
-    Invalid { message = "unimplemented" }
-  | Flambda.Invalid { message = t }->
-    Invalid { message = t }
+  | Flambda.Let e -> Let_expr.pattern_match e ~f:(let_to_core)
+  | Flambda.Let_cont e -> let_cont_to_core e
+  | Flambda.Apply t -> apply_to_core t
+  | Flambda.Apply_cont t -> apply_cont_to_core t
+  | Flambda.Switch t -> switch_to_core t
+  | Flambda.Invalid { message = t } -> Invalid { message = t }
 
 and let_to_core (var : Bound_pattern.t) ~body : core_exp =
   Let (var, flambda_expr_to_core body)
@@ -107,20 +103,41 @@ and let_to_core (var : Bound_pattern.t) ~body : core_exp =
 and let_cont_to_core (e : Let_cont_expr.t) : core_exp =
   match e with
   | Non_recursive
-      {handler = h; num_free_occurrences = n; is_applied_with_traps = b} ->
-    Invalid { message = "unimplemented" }
+      {handler = h; num_free_occurrences; is_applied_with_traps} ->
+    let (contvar, scoped_body) =
+      Non_recursive_let_cont_handler.pattern_match
+        h ~f:(fun contvar ~body -> (contvar, body)) in
+    Let_cont {
+      continuation_handler = failwith "Unimplemented";
+      letbound_contvar = contvar;
+      body = flambda_expr_to_core scoped_body;}
+
   | Recursive r ->
     Recursive_let_cont_handlers.pattern_match
       r ~f:recursive_let_cont_handler_to_core
 
+and cont_handler_to_core (e : Continuation_handler.t) :
+    Bound_parameters.t * core_exp =
+  let (var, handler) =
+    Continuation_handler.pattern_match e ~f:(fun var ~handler -> (var, handler)) in
+  (var, flambda_expr_to_core handler)
+
 and recursive_let_cont_handler_to_core ~invariant_params ~body t : core_exp =
-  Invalid { message = "unimplemented" }
+  failwith "Unimplemented"
+
+and apply_to_core (e : Apply.t) : core_exp =
+  failwith "Unimplemented"
+
+and apply_cont_to_core (e : Apply_cont.t) : core_exp =
+  failwith "Unimplemented"
+
+and switch_to_core (e : Switch.t) : core_exp =
+  failwith "Unimplemented"
 
 (* TODO *)
-let normalize = fun x -> x
+let normalize = failwith "Unimplemented"
 
-let simplify_result_to_core _e =
-  Invalid { message = "unimplemented" }
+let simplify_result_to_core _e = failwith "Unimplemented"
 
 let validate src tgt =
   let ret_cont = Continuation.create ~sort:Toplevel_return () in
