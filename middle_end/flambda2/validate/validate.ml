@@ -8,34 +8,12 @@ module Exn_continuation = struct
   type t = Continuation.t
 end
 
-(* FIXME: Substitute [Simple.t] to [core_exp] *)
-module Apply = struct
-  type t =
-    { callee: Simple.t;
-      continuation: Result_continuation.t;
-      exn_continuation: Exn_continuation.t;
-      args: Simple.t list;
-      call_kind: Call_kind.t; }
-end
-
-module Apply_cont = struct
-  type t =
-    { k : Continuation.t;
-      args : Simple.t list }
-end
-
-module Switch = struct
-  type t =
-    { scrutinee : Simple.t;
-      arms : Apply_cont_expr.t Targetint_31_63.Map.t }
-end
-
 (* Simplified core of [flambda2] terms *)
 type core_exp =
   | Let of let_expr
   | Let_cont of let_cont_expr
-  | Apply of Apply.t
-  | Apply_cont of Apply_cont.t
+  | Apply of apply_expr
+  | Apply_cont of apply_cont_expr
   | Switch of Switch.t
   | Invalid of { message : string }
 
@@ -45,12 +23,27 @@ and let_expr = Bound_pattern.t * core_exp
    cont exprs *)
 (* [let k x = e1 in e2]
    e1 = continuation
-   k = bound
+   k = bound_cont
    body = e2 *)
 and let_cont_expr =
-  { continuation : Continuation.t; (* FIXME : add code for continuation *)
-    bound : Bound_pattern.t;
+  { continuation_handler : Bound_parameters.t * core_exp;
+    letbound_contvar : Bound_continuation.t;
     body : core_exp; }
+
+and apply_expr =
+  { callee: core_exp;
+    continuation: Result_continuation.t;
+    exn_continuation: Exn_continuation.t;
+    args: core_exp list;
+    call_kind: Call_kind.t; }
+
+and apply_cont_expr =
+  { k : Continuation.t;
+    args : core_exp list }
+
+and switch_expr =
+  { scrutinee : Simple.t;
+    arms : Apply_cont_expr.t Targetint_31_63.Map.t }
 
 (* The most naive equality type, a boolean *)
 type eq = bool
@@ -66,13 +59,14 @@ let rec core_eq_ctx (ctx1:context) (ctx2:context) clo1 clo2 e1 e2 : eq =
   | Let (b1, e1), Let (b2, e2) ->
     (* Add bound variables to context *)
     core_eq_ctx (b1::ctx1) (b2::ctx2) clo1 clo2 e1 e2
-  | Let_cont {continuation = cont1; bound = bound1; body = body1},
-    Let_cont {continuation = cont2; bound = bound2; body = body2} ->
+  | Let_cont {continuation_handler = cont1; letbound_contvar = bound1; body = body1},
+    Let_cont {continuation_handler = cont2; letbound_contvar = bound2; body = body2} ->
     (* [Continuation.t] is the names of the continuations, so this equality check
        checks for [id] equality *)
-    Continuation.equal cont1 cont2 &&
+    (* Continuation.equal cont1 cont2 && *)
     (* Add bound variables to context, continuation id to closure context *)
-    core_eq_ctx (bound1::ctx1) (bound2::ctx2) (cont1::clo1) (cont2::clo2) body1 body2
+    (* core_eq_ctx (bound1::ctx1) (bound2::ctx2) (cont1::clo1) (cont2::clo2) body1 body2 *)
+    false
   | Apply { callee = callee1;
             continuation = cont1;
             exn_continuation = exn_cont1;

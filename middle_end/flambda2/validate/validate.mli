@@ -46,5 +46,4 @@ val simplify_result_to_core : Simplify.simplify_result -> core_exp
 
 val normalize : core_exp -> core_exp
 
-val validate :
-  Flambda_unit.t -> Simplify.simplify_result -> eq
+val validate : Flambda_unit.t -> Simplify.simplify_result -> eq
