@@ -26,9 +26,15 @@ and let_expr = Bound_pattern.t * core_exp
    k = bound_cont
    body = e2 *)
 and let_cont_expr =
-  { continuation_handler : Bound_parameters.t * core_exp;
-    letbound_contvar : Bound_continuation.t;
-    body : core_exp; }
+  | Non_recursive of
+    { continuation_handler : Bound_parameters.t * core_exp;
+      letbound_contvar : Bound_continuation.t;
+      body : core_exp; }
+  | Recursive of
+    { continuation_handler :
+        Bound_parameters.t * (Bound_parameters.t * expr) Continuation.Map.t;
+      letbound_context : Bound_continuations.t;
+      body : core_exp; }
 
 and apply_expr =
   { callee: core_exp;
@@ -59,8 +65,7 @@ let rec core_eq_ctx (ctx1:context) (ctx2:context) clo1 clo2 e1 e2 : eq =
   | Let (b1, e1), Let (b2, e2) ->
     (* Add bound variables to context *)
     core_eq_ctx (b1::ctx1) (b2::ctx2) clo1 clo2 e1 e2
-  | Let_cont {continuation_handler = cont1; letbound_contvar = bound1; body = body1},
-    Let_cont {continuation_handler = cont2; letbound_contvar = bound2; body = body2} ->
+  | Let_cont _, Let_cont _ ->
     (* [Continuation.t] is the names of the continuations, so this equality check
        checks for [id] equality *)
     (* Continuation.equal cont1 cont2 && *)
@@ -107,14 +112,20 @@ and let_cont_to_core (e : Let_cont_expr.t) : core_exp =
     let (contvar, scoped_body) =
       Non_recursive_let_cont_handler.pattern_match
         h ~f:(fun contvar ~body -> (contvar, body)) in
-    Let_cont {
-      continuation_handler = failwith "Unimplemented";
+    let cont_handler =
+      Non_recursive_let_cont_handler.handler h |> cont_handler_to_core in
+    Let_cont (Non_recursive {
+      continuation_handler = cont_handler;
       letbound_contvar = contvar;
-      body = flambda_expr_to_core scoped_body;}
+      body = flambda_expr_to_core scoped_body;})
 
   | Recursive r ->
-    Recursive_let_cont_handlers.pattern_match
-      r ~f:recursive_let_cont_handler_to_core
+    let _ = Recursive_let_cont_handlers.pattern_match
+      r ~f:recursive_let_cont_handler_to_core in
+    Let_cont (Recursive {
+      continuation_handler = failwith "Unimplemented";
+      letbound_context = failwith "Unimplemented";
+      body = failwith "Unimplemented";})
 
 and cont_handler_to_core (e : Continuation_handler.t) :
     Bound_parameters.t * core_exp =

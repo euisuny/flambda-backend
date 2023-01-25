@@ -8,8 +8,8 @@
       [Flambda_unit.t]   ------- Simplify.run --------> [simplify_result]
               |                                                 |
               |                                                 |
-          translate                                        translate
-    (flambda_expr_to_core)                           (simplify_result_to_core)
+          translate                                         translate
+    (flambda_expr_to_core)                          (simplify_result_to_core)
               |                                                 |
               |                                                 |
               ↓                                                 ↓
