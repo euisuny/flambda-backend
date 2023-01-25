@@ -1,6 +1,33 @@
-module Apply = Apply_expr
-module Apply_cont = Apply_cont_expr
-module Switch = Switch_expr
+(* TODO: Renaming (do we need [With_delayed_renaming.t]? )*)
+
+module Result_continuation = struct
+  type t = Continuation.t
+end
+
+module Exn_continuation = struct
+  type t = Continuation.t
+end
+
+module Apply = struct
+  type t =
+    { callee: Simple.t;
+      continuation: Result_continuation.t;
+      exn_continuation: Exn_continuation.t;
+      args: Simple.t list;
+      call_kind: Call_kind.t; }
+end
+
+module Apply_cont = struct
+  type t =
+    { k : Continuation.t;
+      args : Simple.t list }
+end
+
+module Switch = struct
+  type t =
+    { scrutinee : Simple.t;
+      arms : Apply_cont_expr.t Targetint_31_63.Map.t }
+end
 
 (* Simplified core of [flambda2] terms *)
 type core_exp =
@@ -20,9 +47,39 @@ and let_cont_expr =
     bound : Bound_pattern.t;
     body : core_exp; }
 
+(* The most naive equality type, a boolean *)
 type eq = bool
 
-let core_eq _e1 _e2 = true
+(* Simple program context *)
+type context = Bound_pattern.t list
+
+(* Closure context *)
+type closure_context = Continuation.t list
+
+let rec core_eq_ctx (ctx1:context) (ctx2:context) clo1 clo2 e1 e2 : eq =
+  match e1, e2 with
+  | Let (b1, e1), Let (b2, e2) ->
+    core_eq_ctx (b1::ctx1) (b2::ctx2) clo1 clo2 e1 e2
+  | Let_cont {continuation = cont1; bound = bound1; body = body1},
+    Let_cont {continuation = cont2; bound = bound2; body = body2} ->
+    core_eq_ctx (bound1::ctx1) (bound2::ctx2) (cont1::clo1) (cont2::clo2) body1 body2
+  | Apply { callee = callee1;
+            continuation = cont1;
+            exn_continuation = exn_cont1;
+            args = args1;
+            call_kind = kind1 },
+    Apply { callee = callee2;
+            continuation = cont2;
+            exn_continuation = exn_cont2;
+            args = args2;
+            call_kind = kind2 } -> false
+  | Apply_cont _, Apply_cont _ ->
+    false
+  | Switch _, Switch _->
+    false
+  | Invalid _, Invalid _ -> true
+
+let core_eq = core_eq_ctx [] [] [] []
 
 let flambda_unit_to_core = function
   _ -> Invalid { message = "unimplemented" }
