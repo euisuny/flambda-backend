@@ -1,22 +1,14 @@
 (include_subdirs unqualified)
 
-(env
- (_
-  (flags
-   (:standard -w +a-30-40-41-42-69-70))))
-
 (library
  (name flambda2_validate)
- (wrapped false)
- (instrumentation
-  (backend bisect_ppx))
+ (wrapped true)
+ (instrumentation (backend bisect_ppx))
  (flags
   (:standard
     -principal
     -open
     Flambda2_algorithms
-    -open
-    Flambda2_cmx
     -open
     Flambda2_bound_identifiers
     -open
@@ -36,13 +28,10 @@
  ))
  (ocamlopt_flags
   (:standard -O3))
- ; (modules flambda2)
  (libraries
    ocamlcommon
-   ocamlbytecomp
-   ocamloptcomp
    flambda2_simplify
    flambda2_simplify_shared
+   flambda2_algorithms
    flambda2_terms
-   flambda2_cmx
 ))
