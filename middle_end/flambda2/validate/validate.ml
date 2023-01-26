@@ -1,16 +1,27 @@
 open! Flambda
 
 (* Simplified core of [flambda2] terms *)
+(* (1) Simple.t -> core_exp
+   (2) Ignore [Num_occurrences] (which is used for making inlining decisions)
+   (3) Ignored traps for now
+   (4) *)
+
 type core_exp =
+  | Var of Simple.t
   | Let of let_expr
   | Let_cont of let_cont_expr
   | Apply of apply_expr
   | Apply_cont of apply_cont_expr
   | Switch of switch_expr
   | Invalid of { message : string }
-  | Var of Simple.t
 
-and let_expr = Bound_pattern.t * core_exp
+(* [let x = e1 in e]
+
+   [fun x -> e] = let_abst
+   [e1] = body *)
+and let_expr =
+  { let_abst : Bound_pattern.t * core_exp;
+    body : Flambda.named; }
 
 and let_cont_expr =
   (* Non-recursive case [let k x = e1 in e2]
@@ -20,8 +31,7 @@ and let_cont_expr =
      [e2] = body (has bound variable [k] in scope) *)
   | Non_recursive of
     { continuation_handler : Bound_parameters.t * core_exp;
-      letbound_contvar : Bound_continuation.t;
-      body : core_exp; }
+      body : Bound_continuation.t * core_exp;}
 
   (* Recursive case, we have a set of (mutually recursive) continuations
      [let rec K x in e] where [K] is a map of continuations
@@ -60,12 +70,17 @@ type context = Bound_pattern.t list
 (* Closure context, keeping track of the continuation id's *)
 type closure_context = Continuation.t list
 
-let rec core_eq_ctx (ctx1:context) (ctx2:context) clo1 clo2 e1 e2 : eq = true
+let rec core_eq_ctx (ctx1:context) (ctx2:context) clo1 clo2 e1 e2 : eq =
   (* match e1, e2 with
    * | Let (b1, e1), Let (b2, e2) ->
    *   (* Add bound variables to context *)
    *   core_eq_ctx (b1::ctx1) (b2::ctx2) clo1 clo2 e1 e2
    * | Let_cont _, Let_cont _ ->
+   *   (*   (Non_recursive { continuation_handler = (param1, exp1);
+   *    *                           body = (conbody1;}),
+   *    * Let_cont (Non_recursive { continuation_handler = (param2, exp2);
+   *    *                           letbound_contvar = bound_cont2;
+   *    *                           body = body2;}) -> *)
    *   (* [Continuation.t] is the names of the continuations, so this equality check
    *      checks for [id] equality *)
    *   (* Continuation.equal cont1 cont2 && *)
@@ -81,14 +96,11 @@ let rec core_eq_ctx (ctx1:context) (ctx2:context) clo1 clo2 e1 e2 : eq = true
    *           continuation = cont2;
    *           exn_continuation = exn_cont2;
    *           args = args2;
-   *           call_kind = kind2 } ->
-   *   failwith "Unimplemented"
-   * | Apply_cont _, Apply_cont _ ->
-   *   failwith "Unimplemented"
-   * | Switch _, Switch _ ->
-   *   failwith "Unimplemented"
-   * | Invalid _, Invalid _ ->
-   *   failwith "Unimplemented" *)
+   *           call_kind = kind2 } -> failwith "Unimplemented"
+   * | Apply_cont _, Apply_cont _ -> failwith "Unimplemented"
+   * | Switch _, Switch _ -> failwith "Unimplemented"
+   * | Invalid _, Invalid _ -> failwith "Unimplemented" *)
+  failwith "Unimplemented"
 
 let core_eq = core_eq_ctx [] [] [] []
 
@@ -97,15 +109,17 @@ let simple_to_core (v : Simple.t) : core_exp = Var v
 let rec flambda_expr_to_core (e: expr) : core_exp =
   let e = Expr.descr e in
   match e with
-  | Flambda.Let e -> Let_expr.pattern_match e ~f:(let_to_core)
-  | Flambda.Let_cont e -> let_cont_to_core e
+  | Flambda.Let t -> let_to_core t
+  | Flambda.Let_cont t -> let_cont_to_core t
   | Flambda.Apply t -> apply_to_core t
   | Flambda.Apply_cont t -> apply_cont_to_core t
   | Flambda.Switch t -> switch_to_core t
   | Flambda.Invalid { message = t } -> Invalid { message = t }
 
-and let_to_core (var : Bound_pattern.t) ~body : core_exp =
-  Let (var, flambda_expr_to_core body)
+and let_to_core (e : Let_expr.t) : core_exp =
+  let (var, body) = Let_expr.pattern_match e ~f:(fun var ~body -> (var, body)) in
+  Let { let_abst = (var, flambda_expr_to_core body);
+        body = Let_expr.defining_expr e; }
 
 and let_cont_to_core (e : Let_cont_expr.t) : core_exp =
   match e with
@@ -118,8 +132,7 @@ and let_cont_to_core (e : Let_cont_expr.t) : core_exp =
       Non_recursive_let_cont_handler.handler h |> cont_handler_to_core in
     Let_cont (Non_recursive {
       continuation_handler = cont_handler;
-      letbound_contvar = contvar;
-      body = flambda_expr_to_core scoped_body;})
+      body = (contvar, flambda_expr_to_core scoped_body);})
 
   | Recursive r ->
     let (params, body, handler) = Recursive_let_cont_handlers.pattern_match
