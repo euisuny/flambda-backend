@@ -6,7 +6,7 @@ type core_exp =
   | Let_cont of let_cont_expr
   | Apply of apply_expr
   | Apply_cont of apply_cont_expr
-  | Switch of Switch.t
+  | Switch of switch_expr
   | Invalid of { message : string }
 
 and let_expr = Bound_pattern.t * core_exp
@@ -47,7 +47,7 @@ and apply_cont_expr =
     args : core_exp list }
 
 and switch_expr =
-  { scrutinee : Simple.t;
+  { scrutinee : core_exp;
     arms : Apply_cont_expr.t Targetint_31_63.Map.t }
 
 (* The most naive equality type, a boolean *)
@@ -142,18 +142,23 @@ and cont_handlers_to_core (e : Continuation_handlers.t) :
   Continuation.Map.map cont_handler_to_core e
 
 and apply_to_core (e : Apply.t) : core_exp =
-  Apply { callee = Apply_expr.callee e |> simple_to_core;
-          continuation = Apply_expr.continuation e;
-          exn_continuation = Apply_expr.exn_continuation e |>
-                             Exn_continuation.exn_handler;
-          args = Apply_expr.args e |> List.map simple_to_core;
-          call_kind = Apply_expr.call_kind e;}
+  Apply {
+    callee = Apply_expr.callee e |> simple_to_core;
+    continuation = Apply_expr.continuation e;
+    exn_continuation = Apply_expr.exn_continuation e |>
+                        Exn_continuation.exn_handler;
+    args = Apply_expr.args e |> List.map simple_to_core;
+    call_kind = Apply_expr.call_kind e;}
 
 and apply_cont_to_core (e : Apply_cont.t) : core_exp =
-  failwith "Unimplemented"
+  Apply_cont {
+    k = Apply_cont_expr.continuation e;
+    args = Apply_cont_expr.args e |> List.map simple_to_core;}
 
 and switch_to_core (e : Switch.t) : core_exp =
-  failwith "Unimplemented"
+  Switch {
+    scrutinee = Switch_expr.scrutinee e |> simple_to_core;
+    arms = Switch_expr.arms e;}
 
 (* TODO *)
 let normalize = failwith "Unimplemented"
