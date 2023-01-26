@@ -19,21 +19,28 @@ type core_exp =
 
 and let_expr = Bound_pattern.t * core_exp
 
-(* representing the recursive continuations, since this subsumes the non-recursive
-   cont exprs *)
-(* [let k x = e1 in e2]
-   e1 = continuation
-   k = bound_cont
-   body = e2 *)
 and let_cont_expr =
+  (* Non-recursive case [let k x = e1 in e2]
+
+     [fun x -> e1] = continuation_handler
+     bound variable [k] = bound_cont
+     [e2] = body (has bound variable [k] in scope) *)
   | Non_recursive of
     { continuation_handler : Bound_parameters.t * core_exp;
       letbound_contvar : Bound_continuation.t;
       body : core_exp; }
+
+  (* Recursive case, we have a set of (mutually recursive) continuations
+     [let rec K x in e] where [K] is a map of continuations
+     [x] is the set of invariant parameters
+     bound variable [K] is in the scope of [e]
+
+     [x] = invariant_params
+     [K] = continuation_map
+     [e] = body *)
   | Recursive of
-    { continuation_handler :
-        Bound_parameters.t * (Bound_parameters.t * expr) Continuation.Map.t;
-      letbound_context : Bound_continuations.t;
+    { invariant_params : Bound_parameters.t;
+      continuation_map : (Bound_parameters.t * core_exp) Continuation.Map.t;
       body : core_exp; }
 
 and apply_expr =
@@ -120,12 +127,12 @@ and let_cont_to_core (e : Let_cont_expr.t) : core_exp =
       body = flambda_expr_to_core scoped_body;})
 
   | Recursive r ->
-    let _ = Recursive_let_cont_handlers.pattern_match
-      r ~f:recursive_let_cont_handler_to_core in
+    let (params, body, handler) = Recursive_let_cont_handlers.pattern_match
+      r ~f:(fun ~invariant_params ~body t -> (invariant_params, body, t))in
     Let_cont (Recursive {
-      continuation_handler = failwith "Unimplemented";
-      letbound_context = failwith "Unimplemented";
-      body = failwith "Unimplemented";})
+      invariant_params = params;
+      continuation_map = cont_handlers_to_core handler;
+      body = flambda_expr_to_core body;})
 
 and cont_handler_to_core (e : Continuation_handler.t) :
     Bound_parameters.t * core_exp =
@@ -133,8 +140,11 @@ and cont_handler_to_core (e : Continuation_handler.t) :
     Continuation_handler.pattern_match e ~f:(fun var ~handler -> (var, handler)) in
   (var, flambda_expr_to_core handler)
 
-and recursive_let_cont_handler_to_core ~invariant_params ~body t : core_exp =
-  failwith "Unimplemented"
+and cont_handlers_to_core (e : Continuation_handlers.t) :
+  (Bound_parameters.t * core_exp) Continuation.Map.t =
+  let e : Continuation_handler.t Continuation.Map.t =
+    Continuation_handlers.to_map e in
+  Continuation.Map.map cont_handler_to_core e
 
 and apply_to_core (e : Apply.t) : core_exp =
   failwith "Unimplemented"
