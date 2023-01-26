@@ -8,6 +8,7 @@ type core_exp =
   | Apply_cont of apply_cont_expr
   | Switch of switch_expr
   | Invalid of { message : string }
+  | Var of Simple.t
 
 and let_expr = Bound_pattern.t * core_exp
 
@@ -59,40 +60,39 @@ type context = Bound_pattern.t list
 (* Closure context, keeping track of the continuation id's *)
 type closure_context = Continuation.t list
 
-let rec core_eq_ctx (ctx1:context) (ctx2:context) clo1 clo2 e1 e2 : eq =
-  match e1, e2 with
-  | Let (b1, e1), Let (b2, e2) ->
-    (* Add bound variables to context *)
-    core_eq_ctx (b1::ctx1) (b2::ctx2) clo1 clo2 e1 e2
-  | Let_cont _, Let_cont _ ->
-    (* [Continuation.t] is the names of the continuations, so this equality check
-       checks for [id] equality *)
-    (* Continuation.equal cont1 cont2 && *)
-    (* Add bound variables to context, continuation id to closure context *)
-    (* core_eq_ctx (bound1::ctx1) (bound2::ctx2) (cont1::clo1) (cont2::clo2) body1 body2 *)
-    failwith "Unimplemented"
-  | Apply { callee = callee1;
-            continuation = cont1;
-            exn_continuation = exn_cont1;
-            args = args1;
-            call_kind = kind1 },
-    Apply { callee = callee2;
-            continuation = cont2;
-            exn_continuation = exn_cont2;
-            args = args2;
-            call_kind = kind2 } ->
-    failwith "Unimplemented"
-  | Apply_cont _, Apply_cont _ ->
-    failwith "Unimplemented"
-  | Switch _, Switch _ ->
-    failwith "Unimplemented"
-  | Invalid _, Invalid _ ->
-    failwith "Unimplemented"
+let rec core_eq_ctx (ctx1:context) (ctx2:context) clo1 clo2 e1 e2 : eq = true
+  (* match e1, e2 with
+   * | Let (b1, e1), Let (b2, e2) ->
+   *   (* Add bound variables to context *)
+   *   core_eq_ctx (b1::ctx1) (b2::ctx2) clo1 clo2 e1 e2
+   * | Let_cont _, Let_cont _ ->
+   *   (* [Continuation.t] is the names of the continuations, so this equality check
+   *      checks for [id] equality *)
+   *   (* Continuation.equal cont1 cont2 && *)
+   *   (* Add bound variables to context, continuation id to closure context *)
+   *   (* core_eq_ctx (bound1::ctx1) (bound2::ctx2) (cont1::clo1) (cont2::clo2) body1 body2 *)
+   *   failwith "Unimplemented"
+   * | Apply { callee = callee1;
+   *           continuation = cont1;
+   *           exn_continuation = exn_cont1;
+   *           args = args1;
+   *           call_kind = kind1 },
+   *   Apply { callee = callee2;
+   *           continuation = cont2;
+   *           exn_continuation = exn_cont2;
+   *           args = args2;
+   *           call_kind = kind2 } ->
+   *   failwith "Unimplemented"
+   * | Apply_cont _, Apply_cont _ ->
+   *   failwith "Unimplemented"
+   * | Switch _, Switch _ ->
+   *   failwith "Unimplemented"
+   * | Invalid _, Invalid _ ->
+   *   failwith "Unimplemented" *)
 
 let core_eq = core_eq_ctx [] [] [] []
 
-let simple_to_core (v : Simple.t) : core_exp =
-  failwith "Unimplemented"
+let simple_to_core (v : Simple.t) : core_exp = Var v
 
 let rec flambda_expr_to_core (e: expr) : core_exp =
   let e = Expr.descr e in
@@ -161,35 +161,14 @@ and switch_to_core (e : Switch.t) : core_exp =
     arms = Switch_expr.arms e;}
 
 (* TODO *)
-let normalize = failwith "Unimplemented"
+let rec normalize = fun x -> x
 
-let simplify_result_to_core _e = failwith "Unimplemented"
-
-let validate src tgt =
-  let ret_cont = Continuation.create ~sort:Toplevel_return () in
-  let exn_cont = Continuation.create () in
-  let toplevel_my_region = Variable.create "toplevel_my_region" in
-  let mk_renaming u =
-    let renaming = Renaming.empty in
-    let renaming =
-      Renaming.add_fresh_continuation renaming
-        (Flambda_unit.return_continuation u)
-        ~guaranteed_fresh:ret_cont
-    in
-    let renaming =
-      Renaming.add_fresh_continuation renaming
-        (Flambda_unit.exn_continuation u)
-        ~guaranteed_fresh:exn_cont
-    in
-    let renaming =
-      Renaming.add_fresh_variable renaming
-        (Flambda_unit.toplevel_my_region u)
-        ~guaranteed_fresh:toplevel_my_region
-    in
-    renaming
-  in
-  let src_body = Expr.apply_renaming (Flambda_unit.body src) (mk_renaming src) in
-  (* let tgt_body = Expr.apply_renaming (Flambda_unit.body tgt) (mk_renaming tgt) in *)
-  let src_core = flambda_expr_to_core src_body in
-  let tgt_core = simplify_result_to_core tgt in
+let simulation_relation src tgt =
+  let {Simplify.unit = tgt; exported_offsets; cmx; all_code} = tgt in
+  let src_core = Flambda_unit.body src |> flambda_expr_to_core in
+  let tgt_core = Flambda_unit.body tgt |> flambda_expr_to_core in
   core_eq src_core tgt_core
+
+let validate ~cmx_loader ~round src =
+  let tgt = Simplify.run ~cmx_loader ~round src in
+  simulation_relation src tgt

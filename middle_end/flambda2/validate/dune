@@ -12,6 +12,8 @@
     -open
     Flambda2_bound_identifiers
     -open
+    Flambda2_cmx
+    -open
     Flambda2_identifiers
     -open
     Flambda2_kinds
@@ -30,6 +32,7 @@
   (:standard -O3))
  (libraries
    ocamlcommon
+   flambda2_cmx
    flambda2_simplify
    flambda2_simplify_shared
    flambda2_algorithms

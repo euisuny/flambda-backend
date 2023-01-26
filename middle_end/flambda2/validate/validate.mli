@@ -55,8 +55,8 @@ val simple_to_core : Simple.t -> core_exp
 
 val flambda_expr_to_core : Flambda.expr -> core_exp
 
-val simplify_result_to_core : Simplify.simplify_result -> core_exp
-
 val normalize : core_exp -> core_exp
 
-val validate : Flambda_unit.t -> Simplify.simplify_result -> eq
+val simulation_relation : Flambda_unit.t -> Simplify.simplify_result -> eq
+
+val validate : cmx_loader:Flambda_cmx.loader -> round:int -> Flambda_unit.t -> bool
