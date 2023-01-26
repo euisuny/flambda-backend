@@ -20,7 +20,7 @@ type core_exp =
    [e1] = body *)
 and let_expr =
   { let_abst : (Bound_pattern.t, core_exp) Name_abstraction.t;
-    body : Flambda.named; }
+    body : Named.t; }
 
 and let_cont_expr =
   (* Non-recursive case [let k x = e1 in e2]
@@ -66,7 +66,23 @@ and switch_expr =
   { scrutinee : core_exp;
     arms : core_exp Targetint_31_63.Map.t }
 
-let apply_renaming_core_exp = failwith "Unimplemented"
+let rec apply_renaming_core_exp t renaming =
+  match t with
+  | Let t -> apply_renaming_let_expr t renaming
+  | Let_cont t -> apply_renaming_let_cont t renaming
+  | _ -> failwith "Unimplemented"
+and apply_renaming_let_expr ({ let_abst; body } as t) renaming =
+  let let_abst' =
+    Name_abstraction.apply_renaming
+      (module Bound_pattern)
+      let_abst renaming
+      ~apply_renaming_to_term:apply_renaming_core_exp
+  in
+  let defining_expr' = Named.apply_renaming body renaming in
+  Let { let_abst = let_abst'; body = defining_expr' }
+and apply_renaming_let_cont t renaming =
+  failwith "Unimplemented"
+
 let ids_for_export_core_exp = failwith "Unimplemented"
 let apply_renaming_cont_map = failwith "Unimplemented"
 let ids_for_export_cont_map = failwith "Unimplemented"
