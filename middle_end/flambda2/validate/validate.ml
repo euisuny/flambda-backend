@@ -1,10 +1,9 @@
 open! Flambda
 
 (* Simplified core of [flambda2] terms *)
-(* (1) Simple.t -> core_exp
+(* (1) Simple.t -> core_exp for [Apply*] expressions
    (2) Ignore [Num_occurrences] (which is used for making inlining decisions)
-   (3) Ignored traps for now
-   (4) *)
+   (3) Ignored traps for now *)
 
 type core_exp =
   | Var of Simple.t
@@ -59,7 +58,7 @@ and apply_cont_expr =
 
 and switch_expr =
   { scrutinee : core_exp;
-    arms : Apply_cont_expr.t Targetint_31_63.Map.t }
+    arms : core_exp Targetint_31_63.Map.t }
 
 (* The most naive equality type, a boolean *)
 type eq = bool
@@ -171,7 +170,7 @@ and apply_cont_to_core (e : Apply_cont.t) : core_exp =
 and switch_to_core (e : Switch.t) : core_exp =
   Switch {
     scrutinee = Switch_expr.scrutinee e |> simple_to_core;
-    arms = Switch_expr.arms e;}
+    arms = Switch_expr.arms e |> Targetint_31_63.Map.map apply_cont_to_core;}
 
 (* TODO *)
 let rec normalize = fun x -> x
