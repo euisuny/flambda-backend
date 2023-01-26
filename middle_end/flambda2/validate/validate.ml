@@ -1,13 +1,5 @@
 open! Flambda
 
-module Result_continuation = struct
-  type t = Continuation.t
-end
-
-module Exn_continuation = struct
-  type t = Continuation.t
-end
-
 (* Simplified core of [flambda2] terms *)
 type core_exp =
   | Let of let_expr
@@ -45,8 +37,8 @@ and let_cont_expr =
 
 and apply_expr =
   { callee: core_exp;
-    continuation: Result_continuation.t;
-    exn_continuation: Exn_continuation.t;
+    continuation: Apply_expr.Result_continuation.t;
+    exn_continuation: Continuation.t;
     args: core_exp list;
     call_kind: Call_kind.t; }
 
@@ -99,6 +91,9 @@ let rec core_eq_ctx (ctx1:context) (ctx2:context) clo1 clo2 e1 e2 : eq =
 
 let core_eq = core_eq_ctx [] [] [] []
 
+let simple_to_core (v : Simple.t) : core_exp =
+  failwith "Unimplemented"
+
 let rec flambda_expr_to_core (e: expr) : core_exp =
   let e = Expr.descr e in
   match e with
@@ -147,7 +142,12 @@ and cont_handlers_to_core (e : Continuation_handlers.t) :
   Continuation.Map.map cont_handler_to_core e
 
 and apply_to_core (e : Apply.t) : core_exp =
-  failwith "Unimplemented"
+  Apply { callee = Apply_expr.callee e |> simple_to_core;
+          continuation = Apply_expr.continuation e;
+          exn_continuation = Apply_expr.exn_continuation e |>
+                             Exn_continuation.exn_handler;
+          args = Apply_expr.args e |> List.map simple_to_core;
+          call_kind = Apply_expr.call_kind e;}
 
 and apply_cont_to_core (e : Apply_cont.t) : core_exp =
   failwith "Unimplemented"
