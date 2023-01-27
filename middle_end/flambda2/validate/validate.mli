@@ -29,8 +29,8 @@
    To use this validator, use the [-validate] flag.
 
    N.B. Note the difference between this validator and the comparison check
-   function available through [-cfg-equivalence-check].
-   The CFG equivalence checker takes as assumption that the output of the
+   function available through [compare/compare.ml].
+   The [compare] function takes as assumption that the output of the
    simplifier has not changed and shows a syntactic equality up to
    alpha-equivalence. **)
 

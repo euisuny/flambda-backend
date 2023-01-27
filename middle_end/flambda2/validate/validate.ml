@@ -43,6 +43,7 @@ and let_cont_expr =
   | Recursive of
     { continuation_map :
         (Bound_parameters.t, continuation_handler_map) Name_abstraction.t;
+      (* should have domain of [K] in scope *)
       body : core_exp; }
 
 and continuation_handler =
@@ -65,6 +66,7 @@ and apply_cont_expr =
 and switch_expr =
   { scrutinee : core_exp;
     arms : core_exp Targetint_31_63.Map.t }
+
 
 (** [Name_abstraction] setup for [core_exp]s **)
 (** Nominal renaming for [core_exp] **)
@@ -255,21 +257,28 @@ module Core_let = struct
     | Set_of_closures _, Set_of_closures _ -> ()
     | _ , _ -> failwith "[Let.create] Mismatched bound pattern and defining expr");
     Let { let_abst = A.create bound_pattern body; body = defining_expr }
+
+  (* Ignores distinction in binding variables/symbols *)
+  let pattern_match_pair = A.pattern_match_pair
+
 end
 
 module Core_continuation_handler = struct
   module A = Name_abstraction.Make (Bound_parameters) (T0)
   let create = A.create
+  let pattern_match_pair = A.pattern_match_pair
 end
 
 module Core_letrec_body = struct
   module A = Name_abstraction.Make (Bound_continuation) (T0)
   let create = A.create
+  let pattern_match_pair = A.pattern_match_pair
 end
 
 module Core_continuation_map = struct
   module A = Name_abstraction.Make (Bound_parameters) (ContMap)
   let create = A.create
+  let pattern_match_pair = A.pattern_match_pair
 end
 
 (** Translation from flambda2 terms to simplified core language **)
@@ -362,26 +371,120 @@ module Env = struct
       function_slots = Function_slot.Map.empty;
       function_slots_rev = Function_slot.Map.empty;
       value_slots = Value_slot.Map.empty;
-      value_slots_rev = Value_slot.Map.empty}
+      value_slots_rev = Value_slot.Map.empty }
+
+  let add_symbol t symbol1 symbol2 =
+    t.symbols <- Symbol.Map.add symbol1 symbol2 t.symbols
+
+  let add_code_id t code_id1 code_id2 =
+    t.code_ids <- Code_id.Map.add code_id1 code_id2 t.code_ids
+
+  let add_function_slot t function_slot1 function_slot2 =
+    t.function_slots
+      <- Function_slot.Map.add function_slot1 function_slot2 t.function_slots;
+    t.function_slots
+      <- Function_slot.Map.add function_slot2 function_slot1
+           t.function_slots_rev
+
+  let add_value_slot t value_slot1 value_slot2 =
+    t.value_slots <- Value_slot.Map.add value_slot1 value_slot2 t.value_slots;
+    t.value_slots
+      <- Value_slot.Map.add value_slot2 value_slot1 t.value_slots_rev
+
+  let find_symbol t sym = Symbol.Map.find_opt sym t.symbols
+
+  let find_code_id t code_id = Code_id.Map.find_opt code_id t.code_ids
+
+  let find_function_slot t function_slot =
+    Function_slot.Map.find_opt function_slot t.function_slots
+
+  let find_function_slot_rev t function_slot =
+    Function_slot.Map.find_opt function_slot t.function_slots_rev
+
+  let find_value_slot t value_slot =
+    Value_slot.Map.find_opt value_slot t.value_slots
+
+  let find_value_slot_rev t value_slot =
+    Value_slot.Map.find_opt value_slot t.value_slots_rev
 end
 
-(* TODO: write [pattern_match_pair] for [Let_exprs] *)
+let subst_symbol (env : Env.t) symbol =
+  Env.find_symbol env symbol |> Option.value ~default:symbol
+
 (** Equality between two programs given a context **)
 (* For now, following a naive alpha-equivalence equality from [compare/compare]
     (without the discriminant) *)
-let rec core_eq_ctx (env:Env.t) e1 e2 : eq =
+let rec equiv (env:Env.t) e1 e2 : eq =
   match e1, e2 with
-  | Let e1, Let e2 -> core_eq_let env e1 e2
+  | Let e1, Let e2 -> equiv_let env e1 e2
   | Let_cont _, Let_cont _ -> failwith "Unimplemented"
   | Apply _, Apply _ -> failwith "Unimplemented"
   | Apply_cont _, Apply_cont _ -> failwith "Unimplemented"
   | Switch _, Switch _ -> failwith "Unimplemented"
   | Invalid _, Invalid _ -> failwith "Unimplemented"
 
-and core_eq_let env e1 e2 : eq =
+(* IY: Do we need to add special treatment for static vars? *)
+and equiv_let env ({let_abst = let_abst1; body = body1} as e1)
+                    ({let_abst = let_abst2; body = body2} as e2) : eq =
+  equiv_named env body1 body2 &&
+  Core_let.pattern_match_pair let_abst1 let_abst2
+    ~f:(fun b t1 t2 -> equiv env t1 t2)
+
+and equiv_named env named1 named2 : eq =
+  match named1, named2 with
+  | Simple simple1, Simple simple2 ->
+    equiv_simple env simple1 simple2
+  | Prim (prim1, dbg1), Prim (prim2, _) ->
+    equiv_primitives env prim1 prim2
+  | Set_of_closures set1, Set_of_closures set2 ->
+    equiv_sets_of_closures env set1 set2
+  | Rec_info rec_info_expr1, Rec_info rec_info_expr2 ->
+    equiv_rec_info env rec_info_expr1 rec_info_expr2
+  | Static_consts const1, Static_consts const2 ->
+    equiv_static_consts env const1 const2
+  | (Simple _ | Prim _ | Set_of_closures _ | Static_consts _ | Rec_info _), _ ->
+    false
+
+and equiv_simple env simple1 simple2 : eq =
+  Simple.pattern_match simple1
+    ~name:(fun name1 ~coercion:_ ->
+      Simple.pattern_match simple2
+        ~name:(fun name2 ~coercion:_ -> equiv_names env name1 name2)
+        ~const:(fun _ -> false))
+    ~const:(fun const1 ->
+      Simple.pattern_match simple2
+        ~name:(fun _ ~coercion:_ -> false)
+        ~const:(fun const2 -> Reg_width_const.equal const1 const2))
+
+and equiv_names env name1 name2 : eq =
+  Name.pattern_match name1
+    ~var:(fun var1 ->
+      Name.pattern_match name2
+        ~var:(fun var2 -> Variable.equal var1 var2)
+        ~symbol:(fun _ -> false))
+    ~symbol:(fun symbol1 ->
+      Name.pattern_match name2
+        ~var:(fun _ -> false)
+        ~symbol:(fun symbol2 -> equiv_symbols env symbol1 symbol2))
+
+and equiv_symbols env sym1 sym2 : eq =
+  let symbol1 = subst_symbol env sym1 in
+  let symbol2 = subst_symbol env sym2 in
+  Symbol.equal sym1 sym2
+
+and equiv_primitives env prim1 prim2 : eq =
   failwith "Unimplemented"
 
-let core_eq = Env.create () |> core_eq_ctx
+and equiv_sets_of_closures env set1 set2 : eq =
+  failwith "Unimplemented"
+
+and equiv_rec_info env info1 info2 : eq =
+  failwith "Unimplemented"
+
+and equiv_static_consts env set1 set2 : eq =
+  failwith "Unimplemented"
+
+let core_eq = Env.create () |> equiv
 
 (** Normalization *)
 (* TODO *)
