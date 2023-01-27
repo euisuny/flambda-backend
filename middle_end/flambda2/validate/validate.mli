@@ -1,4 +1,4 @@
-(* Simple validator for Flambda2
+(** Simple validator for Flambda2
 
    This is the interface for a simple Flambda2 validator, which performs basic
    semantic equivalence between terms. Given the simplifying pass (after CPS
@@ -32,9 +32,9 @@
    function available through [-cfg-equivalence-check].
    The CFG equivalence checker takes as assumption that the output of the
    simplifier has not changed and shows a syntactic equality up to
-   alpha-equivalence. *)
+   alpha-equivalence. **)
 
-(* The core language simplifies any bureaucratic redundancies, and alleviates
+(** The core language simplifies any bureaucratic redundancies, and alleviates
    syntactic restrictions of terms in the negative position (i.e.arguments).
 
    Note that the syntactic restrictions are a necessary part of the "Compiling-
@@ -46,11 +46,11 @@ type eq
 
 val core_eq : core_exp -> core_exp -> eq
 
-(* [simple_to_core] is a value-lifting translation:
+(** [simple_to_core] is a value-lifting translation:
 
    [Simple.t] corresponds to a register-sized value.
    By using this translation, we can allow for more liberal β - reductions in
-   while normalizing [core_exp] terms. *)
+   while normalizing [core_exp] terms. **)
 val simple_to_core : Simple.t -> core_exp
 
 val flambda_expr_to_core : Flambda.expr -> core_exp

@@ -178,6 +178,8 @@ module Named : sig
       statically-allocated constants. *)
   val is_static_consts : t -> bool
 
+  val ids_for_export : t -> Ids_for_export.t
+
   val must_be_static_consts : t -> static_const_group
 
   val at_most_generative_effects : t -> bool

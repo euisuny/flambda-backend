@@ -1,6 +1,6 @@
 open! Flambda
 
-(* Simplified core of [flambda2] terms *)
+(** Simplified core of [flambda2] terms **)
 (* (1) Simple.t -> core_exp for [Apply*] expressions
    (2) Ignore [Num_occurrences] (which is used for making inlining decisions)
    (3) Ignored traps for now *)
@@ -14,32 +14,32 @@ type core_exp =
   | Switch of switch_expr
   | Invalid of { message : string }
 
-(* [let x = e1 in e]
+(** Let expressions [let x = e1 in e]
 
    [fun x -> e] = let_abst
-   [e1] = body *)
+   [e1] = body **)
 and let_expr =
   { let_abst : (Bound_pattern.t, core_exp) Name_abstraction.t;
     body : Named.t; }
 
 and let_cont_expr =
-  (* Non-recursive case [let k x = e1 in e2]
+  (** Non-recursive case [let k x = e1 in e2]
 
      [fun x -> e1] = handler
      bound variable [k] = Bound_continuation.t
-     [e2] = body (has bound variable [k] in scope) *)
+     [e2] = body (has bound variable [k] in scope) **)
   | Non_recursive of
     { handler : continuation_handler;
       body : (Bound_continuation.t, core_exp) Name_abstraction.t;}
 
-  (* Recursive case, we have a set of (mutually recursive) continuations
+  (** Recursive case, we have a set of (mutually recursive) continuations
      [let rec K x in e] where [K] is a map of continuations
      [x] is the set of invariant parameters
      bound variable [K] is in the scope of [e]
 
      [x] = invariant_params (Bound_parameters.t)
      [K] = continuation_map
-     [e] = body *)
+     [e] = body **)
   | Recursive of
     { continuation_map :
         (Bound_parameters.t, continuation_handler_map) Name_abstraction.t;
@@ -66,9 +66,11 @@ and switch_expr =
   { scrutinee : core_exp;
     arms : core_exp Targetint_31_63.Map.t }
 
-(* Nominal renaming for [core_exp] *)
+(** [Name_abstraction] setup for [core_exp]s **)
+(** Nominal renaming for [core_exp] **)
 let rec apply_renaming t renaming : core_exp =
   match t with
+  | Var t -> Var (Simple.apply_renaming t renaming)
   | Let t -> Let (apply_renaming_let t renaming)
   | Let_cont t -> Let_cont (apply_renaming_let_cont t renaming)
   | Apply t -> Apply (apply_renaming_apply t renaming)
@@ -147,9 +149,90 @@ and apply_renaming_switch ({scrutinee; arms} as t) renaming : switch_expr =
   let arms = Targetint_31_63.Map.map (fun x -> apply_renaming x renaming) arms in
   { scrutinee = scrutinee; arms = arms }
 
-let ids_for_export = failwith "Unimplemented"
-let ids_for_export_cont_map = failwith "Unimplemented"
+(** [ids_for_export] is the set of bound variables for a given expression **)
+let rec ids_for_export (t:core_exp) =
+  match t with
+  | Var t -> Ids_for_export.from_simple t
+  | Let t -> ids_for_export_let t
+  | Let_cont t -> ids_for_export_let_cont t
+  | Apply t -> ids_for_export_apply t
+  | Apply_cont t -> ids_for_export_apply_cont t
+  | Switch t -> ids_for_export_switch t
+  | Invalid t -> Ids_for_export.empty
 
+(* ids for [Let_expr] *)
+and ids_for_export_let { let_abst; body } =
+  let body_ids = Named.ids_for_export body in
+  let let_abst_ids =
+    Name_abstraction.ids_for_export
+      (module Bound_pattern)
+      let_abst ~ids_for_export_of_term:ids_for_export
+  in
+  Ids_for_export.union body_ids let_abst_ids
+
+(* ids for [Let_cont] *)
+and ids_for_export_let_cont (t : let_cont_expr) =
+  match t with
+  | Non_recursive { handler; body } ->
+    let handler_ids = ids_for_export_cont_handler handler in
+    let body_ids =
+      Name_abstraction.ids_for_export
+        (module Bound_continuation)
+        body ~ids_for_export_of_term:ids_for_export in
+    Ids_for_export.union handler_ids body_ids
+  | Recursive { continuation_map; body } ->
+    let cont_map_ids =
+      Name_abstraction.ids_for_export
+        (module Bound_parameters)
+        continuation_map ~ids_for_export_of_term:ids_for_export_cont_map in
+    let body_ids = ids_for_export body in
+    Ids_for_export.union cont_map_ids body_ids
+
+and ids_for_export_cont_handler (t : continuation_handler) =
+  Name_abstraction.ids_for_export
+    (module Bound_parameters) t ~ids_for_export_of_term:ids_for_export
+
+and ids_for_export_cont_map (t : continuation_handler_map) =
+  Continuation.Map.fold
+    (fun k handler ids ->
+       Ids_for_export.union ids
+         (Ids_for_export.add_continuation
+            (ids_for_export_cont_handler handler)
+            k))
+    t Ids_for_export.empty
+
+(* ids for [Apply] *)
+and ids_for_export_apply
+      { callee; continuation; exn_continuation; args; call_kind } =
+  let callee_ids = ids_for_export callee in
+  let callee_and_args_ids =
+    List.fold_left
+      (fun ids arg -> Ids_for_export.union ids (ids_for_export arg))
+       callee_ids args in
+  let result_continuation_ids =
+    Apply_expr.Result_continuation.ids_for_export continuation in
+  let exn_continuation_ids =
+    Ids_for_export.add_continuation Ids_for_export.empty exn_continuation in
+  let call_kind_ids = Call_kind.ids_for_export call_kind in
+  (Ids_for_export.union
+    (Ids_for_export.union callee_and_args_ids call_kind_ids)
+    (Ids_for_export.union result_continuation_ids exn_continuation_ids))
+
+(* ids for [Apply_cont] *)
+and ids_for_export_apply_cont { k; args } =
+  List.fold_left
+    (fun ids arg -> Ids_for_export.union ids (ids_for_export arg))
+    (Ids_for_export.add_continuation Ids_for_export.empty k)
+    args
+
+and ids_for_export_switch { scrutinee; arms } =
+  let scrutinee_ids = ids_for_export scrutinee in
+  Targetint_31_63.Map.fold
+    (fun _discr action ids ->
+        Ids_for_export.union ids (ids_for_export action))
+    arms scrutinee_ids
+
+(* Module definitions for [Name_abstraction]*)
 module T0 = struct
   type t = core_exp
   let apply_renaming = apply_renaming
@@ -189,7 +272,7 @@ module Core_continuation_map = struct
   let create = A.create
 end
 
-(* Translation *)
+(** Translation from flambda2 terms to simplified core language **)
 let simple_to_core (v : Simple.t) : core_exp = Var v
 
 let rec flambda_expr_to_core (e: expr) : core_exp =
@@ -260,7 +343,7 @@ and switch_to_core (e : Switch.t) : core_exp =
 (* The most naive equality type, a boolean *)
 type eq = bool
 
-(* Simple program context *)
+(** Simple program context **)
 module Env = struct
   type t = Bound_pattern.t list (* FIXME *)
   let create () = []
@@ -276,7 +359,7 @@ let rec normalize (e:core_exp) : core_exp =
   | Switch _ -> failwith "Unimplemented"
   | Invalid _ -> failwith "Unimplemented"
 
-(* Equality between two programs given a context *)
+(** Equality between two programs given a context **)
 let rec core_eq_ctx (e:Env.t) e1 e2 : eq =
   match e1, e2 with
   | Let _, Let _ -> failwith "Unimplemented"
