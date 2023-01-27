@@ -344,11 +344,47 @@ and switch_to_core (e : Switch.t) : core_exp =
 type eq = bool
 
 (** Simple program context **)
+(* FIXME: Same structure used as [compare/compare.ml],
+   might be useful to refactor the structure out of the file *)
 module Env = struct
-  type t = Bound_pattern.t list (* FIXME *)
-  let create () = []
+  type t =
+    { mutable symbols : Symbol.t Symbol.Map.t;
+      mutable code_ids : Code_id.t Code_id.Map.t;
+      mutable function_slots : Function_slot.t Function_slot.Map.t;
+      mutable function_slots_rev : Function_slot.t Function_slot.Map.t;
+      mutable value_slots : Value_slot.t Value_slot.Map.t;
+      mutable value_slots_rev : Value_slot.t Value_slot.Map.t
+    }
+
+  let create () =
+    { symbols = Symbol.Map.empty;
+      code_ids = Code_id.Map.empty;
+      function_slots = Function_slot.Map.empty;
+      function_slots_rev = Function_slot.Map.empty;
+      value_slots = Value_slot.Map.empty;
+      value_slots_rev = Value_slot.Map.empty}
 end
 
+(* TODO: write [pattern_match_pair] for [Let_exprs] *)
+(** Equality between two programs given a context **)
+(* For now, following a naive alpha-equivalence equality from [compare/compare]
+    (without the discriminant) *)
+let rec core_eq_ctx (env:Env.t) e1 e2 : eq =
+  match e1, e2 with
+  | Let e1, Let e2 -> core_eq_let env e1 e2
+  | Let_cont _, Let_cont _ -> failwith "Unimplemented"
+  | Apply _, Apply _ -> failwith "Unimplemented"
+  | Apply_cont _, Apply_cont _ -> failwith "Unimplemented"
+  | Switch _, Switch _ -> failwith "Unimplemented"
+  | Invalid _, Invalid _ -> failwith "Unimplemented"
+
+and core_eq_let env e1 e2 : eq =
+  failwith "Unimplemented"
+
+let core_eq = Env.create () |> core_eq_ctx
+
+(** Normalization *)
+(* TODO *)
 let rec normalize (e:core_exp) : core_exp =
   match e with
   | Var _ -> e
@@ -359,24 +395,13 @@ let rec normalize (e:core_exp) : core_exp =
   | Switch _ -> failwith "Unimplemented"
   | Invalid _ -> failwith "Unimplemented"
 
-(** Equality between two programs given a context **)
-let rec core_eq_ctx (e:Env.t) e1 e2 : eq =
-  match e1, e2 with
-  | Let _, Let _ -> failwith "Unimplemented"
-  | Let_cont _, Let_cont _ -> failwith "Unimplemented"
-  | Apply _, Apply _ -> failwith "Unimplemented"
-  | Apply_cont _, Apply_cont _ -> failwith "Unimplemented"
-  | Switch _, Switch _ -> failwith "Unimplemented"
-  | Invalid _, Invalid _ -> failwith "Unimplemented"
-
-let core_eq = Env.create () |> core_eq_ctx
-
 let simulation_relation src tgt =
   let {Simplify.unit = tgt; exported_offsets; cmx; all_code} = tgt in
   let src_core = Flambda_unit.body src |> flambda_expr_to_core in
   let tgt_core = Flambda_unit.body tgt |> flambda_expr_to_core in
   core_eq src_core tgt_core
 
+(** Top-level validator *)
 let validate ~cmx_loader ~round src =
   let tgt = Simplify.run ~cmx_loader ~round src in
   simulation_relation src tgt
