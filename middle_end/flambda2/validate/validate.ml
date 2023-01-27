@@ -66,31 +66,94 @@ and switch_expr =
   { scrutinee : core_exp;
     arms : core_exp Targetint_31_63.Map.t }
 
-let rec apply_renaming_core_exp t renaming =
+(* Nominal renaming for [core_exp] *)
+let rec apply_renaming t renaming : core_exp =
   match t with
-  | Let t -> apply_renaming_let_expr t renaming
-  | Let_cont t -> apply_renaming_let_cont t renaming
-  | _ -> failwith "Unimplemented"
-and apply_renaming_let_expr ({ let_abst; body } as t) renaming =
+  | Let t -> Let (apply_renaming_let t renaming)
+  | Let_cont t -> Let_cont (apply_renaming_let_cont t renaming)
+  | Apply t -> Apply (apply_renaming_apply t renaming)
+  | Apply_cont t -> Apply_cont (apply_renaming_apply_cont t renaming)
+  | Switch t -> Switch (apply_renaming_switch t renaming)
+  | Invalid t -> Invalid t
+
+(* renaming for [Let] *)
+and apply_renaming_let ({ let_abst; body } as t) renaming : let_expr =
   let let_abst' =
     Name_abstraction.apply_renaming
       (module Bound_pattern)
       let_abst renaming
-      ~apply_renaming_to_term:apply_renaming_core_exp
+      ~apply_renaming_to_term:apply_renaming
   in
   let defining_expr' = Named.apply_renaming body renaming in
-  Let { let_abst = let_abst'; body = defining_expr' }
-and apply_renaming_let_cont t renaming =
-  failwith "Unimplemented"
+  { let_abst = let_abst'; body = defining_expr' }
 
-let ids_for_export_core_exp = failwith "Unimplemented"
-let apply_renaming_cont_map = failwith "Unimplemented"
+(* renaming for [Let_cont] *)
+and apply_renaming_let_cont t renaming : let_cont_expr =
+  match t with
+  | Non_recursive { handler; body } ->
+    let handler =
+      apply_renaming_cont_handler handler renaming
+    in
+    let body =
+      Name_abstraction.apply_renaming
+        (module Bound_continuation)
+        body renaming ~apply_renaming_to_term:apply_renaming
+    in
+    Non_recursive { handler = handler ; body = body }
+  | Recursive { continuation_map; body } ->
+    let continuation_map =
+      Name_abstraction.apply_renaming
+        (module Bound_parameters)
+        continuation_map renaming ~apply_renaming_to_term:apply_renaming_cont_map
+    in
+    Recursive { continuation_map = continuation_map ;
+                body = apply_renaming body renaming }
+
+and apply_renaming_cont_handler t renaming : continuation_handler =
+  Name_abstraction.apply_renaming
+    (module Bound_parameters)
+    t renaming ~apply_renaming_to_term:apply_renaming
+
+and apply_renaming_cont_map t renaming : continuation_handler_map =
+  Continuation.Map.fold
+    (fun k handler result ->
+       let k = Renaming.apply_continuation renaming k in
+       let handler = apply_renaming_cont_handler handler renaming in
+       Continuation.Map.add k handler result) t Continuation.Map.empty
+
+(* renaming for [Apply] *)
+and apply_renaming_apply
+      ({ callee; continuation; exn_continuation; args; call_kind} as t) renaming:
+  apply_expr =
+  let continuation =
+    Apply_expr.Result_continuation.apply_renaming continuation renaming in
+  let exn_continuation =
+    Renaming.apply_continuation renaming exn_continuation in
+  let callee = apply_renaming callee renaming in
+  let args = List.map (fun x -> apply_renaming x renaming) args in
+  let call_kind = Call_kind.apply_renaming call_kind renaming in
+  { callee = callee; continuation = continuation;
+    exn_continuation = exn_continuation; args = args; call_kind = call_kind }
+
+(* renaming for [Apply_cont] *)
+and apply_renaming_apply_cont ({k; args} as t) renaming : apply_cont_expr =
+  let k = Renaming.apply_continuation renaming k in
+  let args = List.map (fun x -> apply_renaming x renaming) args in
+  { k = k; args = args }
+
+(* renaming for [Switch] *)
+and apply_renaming_switch ({scrutinee; arms} as t) renaming : switch_expr =
+  let scrutinee = apply_renaming scrutinee renaming in
+  let arms = Targetint_31_63.Map.map (fun x -> apply_renaming x renaming) arms in
+  { scrutinee = scrutinee; arms = arms }
+
+let ids_for_export = failwith "Unimplemented"
 let ids_for_export_cont_map = failwith "Unimplemented"
 
 module T0 = struct
   type t = core_exp
-  let apply_renaming = apply_renaming_core_exp
-  let ids_for_export = ids_for_export_core_exp
+  let apply_renaming = apply_renaming
+  let ids_for_export = ids_for_export
 end
 
 module ContMap = struct
