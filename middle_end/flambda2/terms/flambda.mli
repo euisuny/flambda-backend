@@ -432,6 +432,18 @@ module Recursive_let_cont_handlers : sig
       'a) ->
     'a
 
+  (** Deconstruct a continuation binding to get the bound continuations,
+      together with the expressions and handlers over which they are scoped. *)
+  val pattern_match_bound :
+    t ->
+    f:
+      (Bound_continuations.t ->
+       invariant_params:Bound_parameters.t ->
+       body:expr ->
+       Continuation_handlers.t ->
+       'a) ->
+    'a
+
   (** Deconstruct two continuation bindings using the same bound continuations. *)
   val pattern_match_pair :
     t ->

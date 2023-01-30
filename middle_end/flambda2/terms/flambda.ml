@@ -1211,6 +1211,13 @@ module Recursive_let_cont_handlers = struct
     let<> invariant_params, handlers = handlers in
     f ~invariant_params ~body handlers
 
+  let pattern_match_bound t ~f =
+    let open A1 in
+    let<> conts, { body; handlers } = t in
+    let open! A0 in
+    let<> invariant_params, handlers = handlers in
+    f conts ~invariant_params ~body handlers
+
   let pattern_match_pair t1 t2 ~f =
     A1.pattern_match_pair t1 t2
       ~f:(fun

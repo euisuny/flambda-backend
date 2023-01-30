@@ -41,16 +41,18 @@ and let_cont_expr =
      [K] = continuation_map
      [e] = body **)
   | Recursive of
-    { continuation_map :
-        (Bound_parameters.t, continuation_handler_map) Name_abstraction.t;
-      (* should have domain of [K] in scope *)
-      body : core_exp; }
+      (Bound_continuations.t, recursive_let_expr) Name_abstraction.t
 
-and continuation_handler =
-  (Bound_parameters.t, core_exp) Name_abstraction.t
+and recursive_let_expr =
+  { continuation_map :
+      (Bound_parameters.t, continuation_handler_map) Name_abstraction.t;
+    body : core_exp; }
 
 and continuation_handler_map =
   continuation_handler Continuation.Map.t
+
+and continuation_handler =
+  (Bound_parameters.t, core_exp) Name_abstraction.t
 
 and apply_expr =
   { callee: core_exp;
@@ -66,7 +68,6 @@ and apply_cont_expr =
 and switch_expr =
   { scrutinee : core_exp;
     arms : core_exp Targetint_31_63.Map.t }
-
 
 (** [Name_abstraction] setup for [core_exp]s **)
 (** Nominal renaming for [core_exp] **)
@@ -104,14 +105,20 @@ and apply_renaming_let_cont t renaming : let_cont_expr =
         body renaming ~apply_renaming_to_term:apply_renaming
     in
     Non_recursive { handler = handler ; body = body }
-  | Recursive { continuation_map; body } ->
-    let continuation_map =
-      Name_abstraction.apply_renaming
-        (module Bound_parameters)
-        continuation_map renaming ~apply_renaming_to_term:apply_renaming_cont_map
-    in
-    Recursive { continuation_map = continuation_map ;
-                body = apply_renaming body renaming }
+  | Recursive t ->
+    Recursive (Name_abstraction.apply_renaming
+        (module Bound_continuations)
+        t renaming ~apply_renaming_to_term:apply_renaming_recursive_let_expr)
+
+and apply_renaming_recursive_let_expr ({continuation_map; body} as t) renaming
+  : recursive_let_expr =
+  let continuation_map =
+    Name_abstraction.apply_renaming
+      (module Bound_parameters)
+      continuation_map renaming ~apply_renaming_to_term:apply_renaming_cont_map
+  in
+  { continuation_map = continuation_map ;
+    body = apply_renaming body renaming }
 
 and apply_renaming_cont_handler t renaming : continuation_handler =
   Name_abstraction.apply_renaming
@@ -182,13 +189,18 @@ and ids_for_export_let_cont (t : let_cont_expr) =
         (module Bound_continuation)
         body ~ids_for_export_of_term:ids_for_export in
     Ids_for_export.union handler_ids body_ids
-  | Recursive { continuation_map; body } ->
-    let cont_map_ids =
-      Name_abstraction.ids_for_export
-        (module Bound_parameters)
-        continuation_map ~ids_for_export_of_term:ids_for_export_cont_map in
-    let body_ids = ids_for_export body in
-    Ids_for_export.union cont_map_ids body_ids
+  | Recursive t ->
+    Name_abstraction.ids_for_export
+      (module Bound_continuations)
+      t ~ids_for_export_of_term:ids_for_export_recursive_let_expr
+
+and ids_for_export_recursive_let_expr ({continuation_map; body} as t : recursive_let_expr) =
+  let cont_map_ids =
+    Name_abstraction.ids_for_export
+      (module Bound_parameters)
+      continuation_map ~ids_for_export_of_term:ids_for_export_cont_map in
+  let body_ids = ids_for_export body in
+  Ids_for_export.union cont_map_ids body_ids
 
 and ids_for_export_cont_handler (t : continuation_handler) =
   Name_abstraction.ids_for_export
@@ -247,6 +259,12 @@ module ContMap = struct
   let ids_for_export = ids_for_export_cont_map
 end
 
+module RecursiveLetExpr = struct
+  type t = recursive_let_expr
+  let apply_renaming = apply_renaming_recursive_let_expr
+  let ids_for_export = ids_for_export_recursive_let_expr
+end
+
 module Core_let = struct
   module A = Name_abstraction.Make (Bound_pattern) (T0)
   let create (bound_pattern : Bound_pattern.t) (defining_expr : named) body =
@@ -260,7 +278,6 @@ module Core_let = struct
 
   (* Ignores distinction in binding variables/symbols *)
   let pattern_match_pair = A.pattern_match_pair
-
 end
 
 module Core_continuation_handler = struct
@@ -277,6 +294,12 @@ end
 
 module Core_continuation_map = struct
   module A = Name_abstraction.Make (Bound_parameters) (ContMap)
+  let create = A.create
+  let pattern_match_pair = A.pattern_match_pair
+end
+
+module Core_recursive = struct
+  module A = Name_abstraction.Make (Bound_continuations) (RecursiveLetExpr)
   let create = A.create
   let pattern_match_pair = A.pattern_match_pair
 end
@@ -312,12 +335,13 @@ and let_cont_to_core (e : Let_cont_expr.t) : core_exp =
         Core_letrec_body.create contvar;})
 
   | Recursive r ->
-    let (params, body, handler) = Recursive_let_cont_handlers.pattern_match
-      r ~f:(fun ~invariant_params ~body t -> (invariant_params, body, t))in
-    Let_cont (Recursive {
-      continuation_map =
-        Core_continuation_map.create params (cont_handlers_to_core handler);
-      body = flambda_expr_to_core body;})
+    let (bound, params, body, handler) = Recursive_let_cont_handlers.pattern_match_bound
+      r ~f:(fun bound ~invariant_params ~body t -> (bound, invariant_params, body, t)) in
+    Let_cont
+      (Recursive (Core_recursive.create bound
+        {continuation_map =
+            Core_continuation_map.create params (cont_handlers_to_core handler);
+         body = flambda_expr_to_core body;}))
 
 and cont_handler_to_core (e : Continuation_handler.t) : continuation_handler =
   let (var, handler) =
