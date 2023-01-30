@@ -362,8 +362,44 @@ module Core_let = struct
     | _ , _ -> failwith "[Let.create] Mismatched bound pattern and defining expr");
     Let { let_abst = A.create bound_pattern body; body = defining_expr }
 
-  (* Ignores distinction in binding variables/symbols *)
-  let pattern_match_pair = A.pattern_match_pair
+  module Pattern_match_pair_error = struct
+    type t = Mismatched_let_bindings
+
+    let to_string = function
+      | Mismatched_let_bindings -> "Mismatched let bindings"
+  end
+
+  (* Treat "dynamic binding" (statically scoped binding under lambda abstraction)
+     and "static binding" (globally scoped mapping of statics) differently *)
+  let pattern_match_pair
+        ({let_abst = let_abst1; body = body1} as t1)
+        ({let_abst = let_abst2; body = body2} as t2)
+        (dynamic : Bound_pattern.t -> core_exp -> core_exp -> 'a)
+        (static : Bound_static.t -> Bound_static.t -> core_exp -> core_exp -> 'a):
+    ('a, Pattern_match_pair_error.t) Result.t =
+    A.pattern_match let_abst1 ~f:(fun let_bound1 let_body1 ->
+      A.pattern_match let_abst2 ~f:(fun let_bound2 let_body2 ->
+        let dynamic_case () =
+          let ans = A.pattern_match_pair let_abst1 let_abst2 ~f:dynamic
+          in Ok ans
+        in
+        match let_bound1, let_bound2 with
+        | Bound_pattern.Singleton _, Bound_pattern.Singleton _ -> dynamic_case ()
+        | Set_of_closures vars1, Set_of_closures vars2 ->
+          if List.compare_lengths vars1 vars2 = 0
+          then dynamic_case ()
+          else Error Pattern_match_pair_error.Mismatched_let_bindings
+        | Static bound_static1, Static bound_static2 ->
+          let patterns1 = bound_static1 |> Bound_static.to_list in
+          let patterns2 = bound_static2 |> Bound_static.to_list in
+          if List.compare_lengths patterns1 patterns2 = 0
+          then
+            let ans = static bound_static1 bound_static2 let_body1 let_body2 in
+            Ok ans
+          else Error Pattern_match_pair_error.Mismatched_let_bindings
+        | _,_ -> Error Pattern_match_pair_error.Mismatched_let_bindings
+      )
+    )
 end
 
 module Core_continuation_handler = struct
@@ -531,20 +567,40 @@ let rec equiv (env:Env.t) e1 e2 : eq =
   | Apply _, Apply _ -> failwith "Unimplemented"
   | Apply_cont _, Apply_cont _ -> failwith "Unimplemented"
   | Switch _, Switch _ -> failwith "Unimplemented"
-  | Invalid _, Invalid _ -> failwith "Unimplemented"
+  | Invalid _, Invalid _ -> true
 
-(* IY: Do we need to add special treatment for static vars? *)
 and equiv_let env ({let_abst = let_abst1; body = body1} as e1)
                     ({let_abst = let_abst2; body = body2} as e2) : eq =
-  equiv_named env body1 body2 &&
-  Core_let.pattern_match_pair let_abst1 let_abst2
-    ~f:(fun b t1 t2 -> equiv env t1 t2)
+  Core_let.pattern_match_pair e1 e2
+    (fun bound let_bound1 let_bound2 ->
+       equiv_named env body1 body2 && equiv env let_bound1 let_bound2)
+    (fun bound1 bound2 let_bound1 let_bound2 ->
+       match body1, body2 with
+       | Static_consts consts1, Static_consts consts2 ->
+         equiv_let_symbol_exprs env
+           (bound1, consts1, body1)
+           (bound2, consts2, body2)
+       | _, _ -> Misc.fatal_error "Static LHS has dynamic RHS")
+  |> function | Ok comp -> comp | _ -> false
+
+and equiv_let_symbol_exprs env
+      (static1, const1, body1) (static2, const2, body2) : eq =
+  equiv_bound_static env static1 static2 &&
+  equiv_static_consts env const1 const2 &&
+  equiv_named env body1 body2
+
+and equiv_bound_static env static1 static2 : eq =
+  failwith "Unimplemented"
+
+and equiv_static_consts env
+      (const1 : Static_const_group.t) (const2 : Static_const_group.t) : eq =
+  failwith "Unimplemented"
 
 and equiv_named env named1 named2 : eq =
   match named1, named2 with
   | Simple simple1, Simple simple2 ->
     equiv_simple env simple1 simple2
-  | Prim (prim1, dbg1), Prim (prim2, _) ->
+  | Prim (prim1, _), Prim (prim2, _) ->
     equiv_primitives env prim1 prim2
   | Set_of_closures set1, Set_of_closures set2 ->
     equiv_sets_of_closures env set1 set2
@@ -589,9 +645,6 @@ and equiv_sets_of_closures env set1 set2 : eq =
   failwith "Unimplemented"
 
 and equiv_rec_info env info1 info2 : eq =
-  failwith "Unimplemented"
-
-and equiv_static_consts env set1 set2 : eq =
   failwith "Unimplemented"
 
 let core_eq = Env.create () |> equiv
