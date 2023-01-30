@@ -42,6 +42,8 @@
    validator removes this restriction to check for term equality *)
 type core_exp
 
+val print : Format.formatter -> core_exp -> unit
+
 type eq
 
 val core_eq : core_exp -> core_exp -> eq

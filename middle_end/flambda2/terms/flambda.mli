@@ -184,6 +184,8 @@ module Named : sig
 
   val at_most_generative_effects : t -> bool
 
+  val print : Format.formatter -> t -> unit
+
   val fold_code_and_sets_of_closures :
     t ->
     init:'a ->

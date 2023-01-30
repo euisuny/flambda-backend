@@ -1425,6 +1425,8 @@ module Named = struct
                ->
                acc)
            init
+
+  let print = print_named
 end
 
 module Invalid = struct

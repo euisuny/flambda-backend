@@ -1,5 +1,7 @@
 open! Flambda
 
+let fprintf = Format.fprintf
+
 (** Simplified core of [flambda2] terms **)
 (* (1) Simple.t -> core_exp for [Apply*] expressions
    (2) Ignore [Num_occurrences] (which is used for making inlining decisions)
@@ -158,8 +160,92 @@ and apply_renaming_switch ({scrutinee; arms} as t) renaming : switch_expr =
   let arms = Targetint_31_63.Map.map (fun x -> apply_renaming x renaming) arms in
   { scrutinee = scrutinee; arms = arms }
 
+(** Basic pretty-printer for [core_exp]s **)
+let rec print ppf e =
+  match e with
+  | Var t -> Simple.print ppf t
+  | Let t -> print_let ppf t
+  | Let_cont t -> print_let_cont ppf t
+  | Apply t -> print_apply ppf t
+  | Apply_cont t -> print_apply_cont ppf t
+  | Switch t -> print_switch ppf t
+  | Invalid { message } -> fprintf ppf "Invalid %s" message
+
+and print_let ppf ({let_abst; body} as t : let_expr) =
+  Name_abstraction.pattern_match_for_printing
+    (module Bound_pattern)
+    let_abst ~apply_renaming_to_term:apply_renaming
+    ~f:(fun bound let_body ->
+      fprintf ppf "let %a = %a in\n %a"
+        Bound_pattern.print bound
+        print let_body
+        Named.print body)
+
+and print_let_cont ppf (t : let_cont_expr) =
+  match t with
+  | Non_recursive {handler; body} ->
+    Name_abstraction.pattern_match_for_printing
+      (module Bound_continuation) body
+      ~apply_renaming_to_term:apply_renaming
+      ~f:(fun k body ->
+        Bound_continuation.print ppf k;
+        Name_abstraction.pattern_match_for_printing
+          (module Bound_parameters) handler
+          ~apply_renaming_to_term:apply_renaming
+          ~f:(fun k let_body ->
+            fprintf ppf "letc %a = %a in \n %a"
+            Bound_parameters.print k
+            print let_body
+            print body))
+  | Recursive t ->
+    fprintf ppf "letc ";
+    Name_abstraction.pattern_match_for_printing
+      (module Bound_continuations) t
+      ~apply_renaming_to_term:apply_renaming_recursive_let_expr
+      ~f:(fun k body -> print_recursive_let_cont ppf k body)
+
+and print_recursive_let_cont ppf (k : Bound_continuations.t)
+      ({continuation_map; body} as t : recursive_let_expr) =
+  fprintf ppf "[ %a ] " Bound_continuations.print k;
+  Name_abstraction.pattern_match_for_printing
+    (module Bound_parameters) continuation_map
+    ~apply_renaming_to_term:apply_renaming_cont_map
+    ~f:(fun k body ->
+      fprintf ppf "(%a)\n" Bound_parameters.print k;
+      Continuation.Map.iter (print_continuation_handler ppf) body;
+    );
+  fprintf ppf " in\n %a" print body
+
+and print_continuation_handler ppf key (t : continuation_handler) =
+  Name_abstraction.pattern_match_for_printing
+    (module Bound_parameters) t
+    ~apply_renaming_to_term:apply_renaming
+    ~f:(fun k body ->
+      fprintf ppf "fun %a -> %a" Bound_parameters.print k print body)
+
+and print_apply ppf
+      ({callee; continuation; exn_continuation; args; _} as t : apply_expr) =
+  fprintf ppf "%a %a %a "
+    print callee
+    Apply_expr.Result_continuation.print continuation
+    Continuation.print exn_continuation;
+  List.iter (print ppf) args
+
+and print_apply_cont ppf ({k ; args} as t : apply_cont_expr) =
+  fprintf ppf "%a " Continuation.print k;
+  List.iter (print ppf) args
+
+and print_switch ppf ({scrutinee; arms} as t : switch_expr) =
+  fprintf ppf "switch %a :" print scrutinee;
+  Targetint_31_63.Map.iter (print_arm ppf) arms
+
+and print_arm ppf key arm =
+  fprintf ppf "| %a -> %a\n"
+    Targetint_31_63.print key
+    print arm
+
 (** [ids_for_export] is the set of bound variables for a given expression **)
-let rec ids_for_export (t:core_exp) =
+let rec ids_for_export (t : core_exp) =
   match t with
   | Var t -> Ids_for_export.from_simple t
   | Let t -> ids_for_export_let t
