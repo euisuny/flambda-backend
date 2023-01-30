@@ -22,7 +22,24 @@ type core_exp =
    [e1] = body **)
 and let_expr =
   { let_abst : (Bound_pattern.t, core_exp) Name_abstraction.t;
-    body : Named.t; }
+    body : named; }
+
+and named =
+  | Simple of Simple.t
+  | Prim of Flambda_primitive.t
+  | Set_of_closures of Set_of_closures.t
+  | Static_consts of static_const_group
+  | Rec_info of Rec_info_expr.t
+
+and function_params_and_body =
+  (Bound_for_function.t, core_exp) Name_abstraction.t
+
+and static_const_or_code =
+  | Code of function_params_and_body Code0.t
+  | Deleted_code
+  | Static_const of Static_const.t
+
+and static_const_group = static_const_or_code list
 
 and let_cont_expr =
   (** Non-recursive case [let k x = e1 in e2]
@@ -91,8 +108,11 @@ and apply_renaming_let ({ let_abst; body } as t) renaming : let_expr =
       let_abst renaming
       ~apply_renaming_to_term:apply_renaming
   in
-  let defining_expr' = Named.apply_renaming body renaming in
+  let defining_expr' = apply_renaming_named body renaming in
   { let_abst = let_abst'; body = defining_expr' }
+
+and apply_renaming_named t renaming : named =
+  failwith "Unimplemented"
 
 (* renaming for [Let_cont] *)
 and apply_renaming_let_cont t renaming : let_cont_expr =
@@ -179,7 +199,10 @@ and print_let ppf ({let_abst; body} as t : let_expr) =
       fprintf ppf "let %a = %a in\n %a"
         Bound_pattern.print bound
         print let_body
-        Named.print body)
+        print_named body)
+
+and print_named ppf (t : named) =
+  failwith "Unimplemented"
 
 and print_let_cont ppf (t : let_cont_expr) =
   match t with
@@ -257,13 +280,16 @@ let rec ids_for_export (t : core_exp) =
 
 (* ids for [Let_expr] *)
 and ids_for_export_let { let_abst; body } =
-  let body_ids = Named.ids_for_export body in
+  let body_ids = ids_for_export_named body in
   let let_abst_ids =
     Name_abstraction.ids_for_export
       (module Bound_pattern)
       let_abst ~ids_for_export_of_term:ids_for_export
   in
   Ids_for_export.union body_ids let_abst_ids
+
+and ids_for_export_named (t : named) =
+  failwith "Unimplmented"
 
 (* ids for [Let_cont] *)
 and ids_for_export_let_cont (t : let_cont_expr) =
@@ -441,7 +467,11 @@ let rec flambda_expr_to_core (e: expr) : core_exp =
 
 and let_to_core (e : Let_expr.t) : core_exp =
   let (var, body) = Let_expr.pattern_match e ~f:(fun var ~body -> (var, body)) in
-  Core_let.create var (Let_expr.defining_expr e) (flambda_expr_to_core body)
+  Core_let.create var (Let_expr.defining_expr e |> named_to_core)
+    (flambda_expr_to_core body)
+
+and named_to_core (e : Flambda.named) : named =
+  failwith "Unimplemented"
 
 and let_cont_to_core (e : Let_cont_expr.t) : core_exp =
   match e with
@@ -586,29 +616,78 @@ and equiv_let env ({let_abst = let_abst1; body = body1} as e1)
 and equiv_let_symbol_exprs env
       (static1, const1, body1) (static2, const2, body2) : eq =
   equiv_bound_static env static1 static2 &&
-  equiv_static_consts env const1 const2 &&
+  (List.combine const1 const2 |>
+   List.fold_left (fun x (e1, e2) -> x && equiv_static_consts env e1 e2) true) &&
   equiv_named env body1 body2
 
-and equiv_bound_static env static1 static2 : eq =
+and equiv_static_consts env
+      (const1 : static_const_or_code) (const2 : static_const_or_code) : eq =
+  match const1, const2 with
+  | Code code1, Code code2 -> equiv_code env code1 code2
+  | Static_const (Block (tag1, mut1, fields1)),
+    Static_const (Block (tag2, mut2, fields2)) ->
+    equiv_block env (tag1, mut1, fields1) (tag2, mut2, fields2)
+  | Static_const (Set_of_closures set1), Static_const (Set_of_closures set2) ->
+    equiv_sets_of_closures env set1 set2
+  | _, _ -> compare const1 const2 = 0
+
+and equiv_code env code1 code2 =
   failwith "Unimplemented"
 
-and equiv_static_consts env
-      (const1 : Static_const_group.t) (const2 : Static_const_group.t) : eq =
-  failwith "Unimplemented"
+and equiv_block env block1 block2 = failwith "Unimplemented"
+
+and equiv_sets_of_closures env set1 set2 : eq = failwith "Unimplemented"
+
+and equiv_bound_static env static1 static2 : eq =
+  let static1 = Bound_static.to_list static1 in
+  let static2 = Bound_static.to_list static2 in
+  List.combine static1 static2 |>
+  (* TODO: subst_pattern *)
+  List.fold_left (fun x (e1, e2) -> x && equiv_pattern env e1 e2) true
+
+(* Compare equal patterns and add variables to environment *)
+and equiv_pattern env
+      (pat1 : Bound_static.Pattern.t) (pat2 : Bound_static.Pattern.t) : eq =
+  match pat1, pat2 with
+  | Code id1, Code id2 ->
+    Env.add_code_id env id1 id2; true
+  | Block_like sym1, Block_like sym2 ->
+    Env.add_symbol env sym1 sym2; true
+  | Set_of_closures clo1, Set_of_closures clo2 ->
+    let closure_bindings env (slot1, symbol1) (slot2, symbol2) : eq =
+      Env.add_symbol env symbol1 symbol2;
+      equiv_function_slots env slot1 slot2
+    in
+    (* TODO: subst_pattern *)
+    let clo1 = Function_slot.Lmap.bindings clo1 in
+    let clo2 = Function_slot.Lmap.bindings clo2 in
+    List.combine clo1 clo2 |>
+    List.fold_left (fun x (e1, e2) -> x && closure_bindings env e1 e2) true
+  | _, _ -> false
+
+and equiv_function_slots env slot1 slot2 =
+  match Env.find_function_slot env slot1 with
+  | Some function_slot ->
+    Function_slot.equal function_slot slot2
+  | None ->
+    match Env.find_function_slot_rev env slot2 with
+    | Some _ -> false
+    | None -> Env.add_function_slot env slot1 slot2; true
 
 and equiv_named env named1 named2 : eq =
   match named1, named2 with
   | Simple simple1, Simple simple2 ->
     equiv_simple env simple1 simple2
-  | Prim (prim1, _), Prim (prim2, _) ->
+  | Prim prim1, Prim prim2 ->
     equiv_primitives env prim1 prim2
   | Set_of_closures set1, Set_of_closures set2 ->
     equiv_sets_of_closures env set1 set2
   | Rec_info rec_info_expr1, Rec_info rec_info_expr2 ->
     equiv_rec_info env rec_info_expr1 rec_info_expr2
   | Static_consts const1, Static_consts const2 ->
-    equiv_static_consts env const1 const2
-  | (Simple _ | Prim _ | Set_of_closures _ | Static_consts _ | Rec_info _), _ ->
+    (List.combine const1 const2 |>
+     List.fold_left (fun x (e1, e2) -> x && equiv_static_consts env e1 e2) true)
+  | _, _ ->
     false
 
 and equiv_simple env simple1 simple2 : eq =
@@ -639,13 +718,28 @@ and equiv_symbols env sym1 sym2 : eq =
   Symbol.equal sym1 sym2
 
 and equiv_primitives env prim1 prim2 : eq =
-  failwith "Unimplemented"
+  match (prim1:Flambda_primitive.t), (prim2:Flambda_primitive.t) with
+  | Unary (op1, arg1), Unary (op2, arg2) ->
+    Flambda_primitive.equal_unary_primitive op1 op2 &&
+    equiv_simple env arg1 arg2
+  | Binary (op1, arg1_1, arg1_2), Binary (op2, arg2_1, arg2_2) ->
+    Flambda_primitive.equal_binary_primitive op1 op2 &&
+    equiv_simple env arg1_1 arg2_1 &&
+    equiv_simple env arg1_2 arg2_2
+  | Ternary (op1, arg1_1, arg1_2, arg1_3),
+    Ternary (op2, arg2_1, arg2_2, arg2_3) ->
+    Flambda_primitive.equal_ternary_primitive op1 op2 &&
+    equiv_simple env arg1_1 arg2_1 &&
+    equiv_simple env arg1_2 arg2_2 &&
+    equiv_simple env arg1_3 arg2_3
+  | Variadic (op1, args1), Variadic (op2, args2) ->
+    Flambda_primitive.equal_variadic_primitive op1 op2 &&
+    (List.combine args1 args2 |>
+      List.fold_left (fun x (e1, e2) -> x && equiv_simple env e1 e2) true)
+  | _, _ -> false
 
-and equiv_sets_of_closures env set1 set2 : eq =
-  failwith "Unimplemented"
-
-and equiv_rec_info env info1 info2 : eq =
-  failwith "Unimplemented"
+and equiv_rec_info _env info1 info2 : eq =
+  Rec_info_expr.equal info1 info2
 
 let core_eq = Env.create () |> equiv
 
