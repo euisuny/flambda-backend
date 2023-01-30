@@ -526,7 +526,23 @@ end
 module Core_function_params_and_body = struct
   module A = Name_abstraction.Make (Bound_for_function) (T0)
   let create = A.create
-  let pattern_match_pair = A.pattern_match_pair
+
+  let pattern_match_pair t1 t2 ~f =
+    A.pattern_match_pair t1 t2
+      ~f:(fun
+           bound_for_function body1 body2
+           ->
+             f
+               ~return_continuation:
+                 (Bound_for_function.return_continuation bound_for_function)
+               ~exn_continuation:
+                 (Bound_for_function.exn_continuation bound_for_function)
+               (Bound_for_function.params bound_for_function)
+               ~body1 ~body2
+               ~my_closure:(Bound_for_function.my_closure bound_for_function)
+               ~my_region:(Bound_for_function.my_region bound_for_function)
+               ~my_depth:(Bound_for_function.my_depth bound_for_function))
+
 end
 
 module Core_code = struct
@@ -752,12 +768,13 @@ let subst_symbol (env : Env.t) symbol =
 let rec equiv (env:Env.t) e1 e2 : eq =
   match e1, e2 with
   | Let e1, Let e2 -> equiv_let env e1 e2
-  | Let_cont _, Let_cont _ -> failwith "Unimplemented"
-  | Apply _, Apply _ -> failwith "Unimplemented"
-  | Apply_cont _, Apply_cont _ -> failwith "Unimplemented"
-  | Switch _, Switch _ -> failwith "Unimplemented"
+  | Let_cont e1, Let_cont e2 -> equiv_let_cont env e1 e2
+  | Apply e1, Apply e2 -> equiv_apply env e1 e2
+  | Apply_cont e1, Apply_cont e2 -> equiv_apply_cont env e1 e2
+  | Switch e1, Switch e2 -> equiv_switch env e1 e2
   | Invalid _, Invalid _ -> true
 
+(* [let_expr] *)
 and equiv_let env ({let_abst = let_abst1; body = body1} as e1)
                     ({let_abst = let_abst2; body = body2} as e2) : eq =
   Core_let.pattern_match_pair e1 e2
@@ -793,7 +810,12 @@ and equiv_static_consts env
 and equiv_code env code1 code2 =
   failwith "Unimplemented"
 
-and equiv_block env block1 block2 = failwith "Unimplemented"
+and equiv_block env (tag1, mut1, fields1) (tag2, mut2, fields2) =
+  Tag.Scannable.equal tag1 tag2 &&
+  Mutability.compare mut1 mut2 = 0 &&
+  (List.combine fields1 fields2 |>
+   List.fold_left (fun x (e1, e2) -> x && Field_of_static_block.equal e1 e2)
+     true)
 
 and equiv_sets_of_closures env set1 set2 : eq = failwith "Unimplemented"
 
@@ -899,6 +921,25 @@ and equiv_primitives env prim1 prim2 : eq =
 
 and equiv_rec_info _env info1 info2 : eq =
   Rec_info_expr.equal info1 info2
+
+(* [let_cont_expr] *)
+and equiv_let_cont env let_cont1 let_cont2 : eq =
+  match let_cont1, let_cont2 with
+  | Non_recursive {handler = handler1; body = body1},
+    Non_recursive {handler = handler2; body = body2} ->
+    failwith "Unimplemented"
+  | Recursive handlers1, Recursive handlers2 ->
+    failwith "Unimplemented"
+
+(* [let_apply] *)
+and equiv_apply env e1 e2 : eq =
+  failwith "Unimplemented"
+
+and equiv_apply_cont env e1 e2 : eq =
+  failwith "Unimplemented"
+
+and equiv_switch env e1 e2 : eq =
+  failwith "Unimplemented"
 
 let core_eq = Env.create () |> equiv
 
