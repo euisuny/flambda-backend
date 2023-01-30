@@ -112,7 +112,34 @@ and apply_renaming_let ({ let_abst; body } as t) renaming : let_expr =
   { let_abst = let_abst'; body = defining_expr' }
 
 and apply_renaming_named t renaming : named =
-  failwith "Unimplemented"
+  match t with
+  | Simple simple ->
+    Simple (Simple.apply_renaming simple renaming)
+  | Prim prim ->
+    Prim (Flambda_primitive.apply_renaming prim renaming)
+  | Set_of_closures set ->
+    Set_of_closures (Set_of_closures.apply_renaming set renaming)
+  | Static_consts consts ->
+    Static_consts (apply_renaming_static_const_group consts renaming)
+  | Rec_info info ->
+    Rec_info (Rec_info_expr.apply_renaming info renaming)
+
+and apply_renaming_static_const_group t renaming : static_const_group =
+  List.map (fun static_const ->
+    apply_renaming_static_const_or_code static_const renaming) t
+
+and apply_renaming_static_const_or_code t renaming : static_const_or_code =
+  match t with
+  | Code code ->
+    Code (Code0.apply_renaming
+            ~apply_renaming_function_params_and_body code renaming)
+  | Deleted_code -> Deleted_code
+  | Static_const const ->
+    Static_const (Static_const.apply_renaming const renaming)
+
+and apply_renaming_function_params_and_body t renaming =
+  Name_abstraction.apply_renaming
+    (module Bound_for_function) t renaming ~apply_renaming_to_term:apply_renaming
 
 (* renaming for [Let_cont] *)
 and apply_renaming_let_cont t renaming : let_cont_expr =
@@ -202,7 +229,31 @@ and print_let ppf ({let_abst; body} as t : let_expr) =
         print_named body)
 
 and print_named ppf (t : named) =
-  failwith "Unimplemented"
+  match t with
+  | Simple simple -> Simple.print ppf simple
+  | Prim prim -> Flambda_primitive.print ppf prim
+  | Set_of_closures clo -> Set_of_closures.print ppf clo
+  | Static_consts consts -> print_static_const_group ppf consts
+  | Rec_info info -> Rec_info_expr.print ppf info
+
+and print_static_const_group ppf t =
+  Format.pp_print_list ~pp_sep:Format.pp_print_space print_static_const_or_code ppf t
+
+and print_static_const_or_code ppf t =
+  match t with
+  | Code code -> Code0.print ~print_function_params_and_body ppf code
+  | Deleted_code -> fprintf ppf "Deleted_code"
+  | Static_const const -> Static_const.print ppf const
+
+and print_function_params_and_body ppf (t:function_params_and_body) =
+  Name_abstraction.pattern_match_for_printing
+    (module Bound_for_function) t
+    ~apply_renaming_to_term:apply_renaming
+    ~f:(fun bff expr ->
+      fprintf ppf "ret: %a; exn: %a; %a"
+        Continuation.print (Bound_for_function.return_continuation bff)
+        Continuation.print (Bound_for_function.exn_continuation bff)
+        print expr)
 
 and print_let_cont ppf (t : let_cont_expr) =
   match t with
@@ -289,7 +340,27 @@ and ids_for_export_let { let_abst; body } =
   Ids_for_export.union body_ids let_abst_ids
 
 and ids_for_export_named (t : named) =
-  failwith "Unimplmented"
+  match t with
+  | Simple simple -> Ids_for_export.from_simple simple
+  | Prim prim -> Flambda_primitive.ids_for_export prim
+  | Set_of_closures set -> Set_of_closures.ids_for_export set
+  | Static_consts consts -> ids_for_export_static_const_group consts
+  | Rec_info info -> Rec_info_expr.ids_for_export info
+
+and ids_for_export_static_const_group t =
+  List.map ids_for_export_static_const_or_code t |> Ids_for_export.union_list
+
+and ids_for_export_static_const_or_code t =
+  match t with
+  | Code code ->
+    Code0.ids_for_export ~ids_for_export_function_params_and_body code
+  | Deleted_code -> Ids_for_export.empty
+  | Static_const const -> Static_const.ids_for_export const
+
+and ids_for_export_function_params_and_body abst =
+  Name_abstraction.ids_for_export
+    (module Bound_for_function) abst
+    ~ids_for_export_of_term:ids_for_export
 
 (* ids for [Let_cont] *)
 and ids_for_export_let_cont (t : let_cont_expr) =
@@ -471,6 +542,26 @@ and let_to_core (e : Let_expr.t) : core_exp =
     (flambda_expr_to_core body)
 
 and named_to_core (e : Flambda.named) : named =
+  match e with
+  | Simple e -> Simple e
+  | Prim (t, _) -> Prim t
+  | Set_of_closures e -> Set_of_closures e
+  | Static_consts e -> Static_consts (static_consts_to_core e)
+  | Rec_info t -> Rec_info t
+
+and static_consts_to_core (e : Flambda.static_const_group) : static_const_group =
+  Static_const_group.to_list e |> List.map static_const_to_core
+
+and static_const_to_core (e : Flambda.static_const_or_code) : static_const_or_code =
+  match e with
+  | Code e -> Code (function_params_and_body_to_core (Code0.params_and_body e)
+                      (Code0.free_names_of_params_and_body e))
+  | Deleted_code -> Deleted_code
+  | Static_const t -> Static_const t
+
+(* TODO: there's some module stuff that's tricky to instantiate.. *)
+and function_params_and_body_to_core (e : Flambda.function_params_and_body) free
+  : function_params_and_body Code0.t =
   failwith "Unimplemented"
 
 and let_cont_to_core (e : Let_cont_expr.t) : core_exp =
