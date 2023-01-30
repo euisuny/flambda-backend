@@ -492,6 +492,11 @@ module Function_params_and_body : sig
     my_depth:Variable.t ->
     t
 
+  val pattern_match' :
+    t ->
+    f:(Bound_for_function.t -> body:expr -> 'a) ->
+    'a
+
   (** Choose a member of the alpha-equivalence class to enable examination of
       the parameters, relations thereon and the body over which they are
       scoped. *)

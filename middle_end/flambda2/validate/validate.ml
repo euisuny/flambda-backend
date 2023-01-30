@@ -456,7 +456,7 @@ module Core_let = struct
     | Simple _, Singleton _
     | Rec_info _, Singleton _
     | Set_of_closures _, Set_of_closures _ -> ()
-    | _ , _ -> failwith "[Let.create] Mismatched bound pattern and defining expr");
+    | _ , _ -> Misc.fatal_error "[Let.create] Mismatched bound pattern and defining expr");
     Let { let_abst = A.create bound_pattern body; body = defining_expr }
 
   module Pattern_match_pair_error = struct
@@ -523,6 +523,64 @@ module Core_recursive = struct
   let pattern_match_pair = A.pattern_match_pair
 end
 
+module Core_function_params_and_body = struct
+  module A = Name_abstraction.Make (Bound_for_function) (T0)
+  let create = A.create
+  let pattern_match_pair = A.pattern_match_pair
+end
+
+module Core_code = struct
+  type t = function_params_and_body Code0.t
+
+  let code_metadata = Code0.code_metadata
+
+  let params_and_body = Code0.params_and_body
+
+  module Metadata_view = struct
+    type nonrec 'a t = t
+
+    let metadata = code_metadata
+  end
+
+  include Code_metadata.Code_metadata_accessors [@inlined hint] (Metadata_view)
+
+  let create_with_metadata =
+    Code0.create_with_metadata
+      ~print_function_params_and_body:print_function_params_and_body
+
+  let create =
+    Code0.create
+      ~print_function_params_and_body:print_function_params_and_body
+
+  let with_code_id = Code0.with_code_id
+
+  let with_params_and_body =
+    Code0.with_params_and_body
+      ~print_function_params_and_body:print_function_params_and_body
+
+  let with_newer_version_of = Code0.with_newer_version_of
+
+  let free_names = Code0.free_names
+
+  let apply_renaming =
+    Code0.apply_renaming
+      ~apply_renaming_function_params_and_body:
+        apply_renaming_function_params_and_body
+
+  let print =
+    Code0.print
+      ~print_function_params_and_body:print_function_params_and_body
+
+  let ids_for_export =
+    Code0.ids_for_export
+      ~ids_for_export_function_params_and_body:
+        ids_for_export_function_params_and_body
+
+  let map_result_types = Code0.map_result_types
+
+  let free_names_of_params_and_body = Code0.free_names_of_params_and_body
+end
+
 (** Translation from flambda2 terms to simplified core language **)
 let simple_to_core (v : Simple.t) : core_exp = Var v
 
@@ -554,15 +612,25 @@ and static_consts_to_core (e : Flambda.static_const_group) : static_const_group 
 
 and static_const_to_core (e : Flambda.static_const_or_code) : static_const_or_code =
   match e with
-  | Code e -> Code (function_params_and_body_to_core (Code0.params_and_body e)
+  | Code e -> Code (function_params_and_body_to_code0
+                      (Code0.code_metadata e)
+                      (Code0.params_and_body e)
                       (Code0.free_names_of_params_and_body e))
   | Deleted_code -> Deleted_code
   | Static_const t -> Static_const t
 
-(* TODO: there's some module stuff that's tricky to instantiate.. *)
-and function_params_and_body_to_core (e : Flambda.function_params_and_body) free
+and function_params_and_body_to_code0 metadata (e : Flambda.function_params_and_body) free
   : function_params_and_body Code0.t =
-  failwith "Unimplemented"
+  Core_code.create_with_metadata
+    ~params_and_body:(function_params_and_body_to_core e)
+    ~free_names_of_params_and_body:free
+    ~code_metadata:metadata
+
+and function_params_and_body_to_core (t : Flambda.function_params_and_body) :
+  function_params_and_body =
+  Function_params_and_body.pattern_match' t
+    ~f:(fun (bound: Bound_for_function.t) ~body ->
+      Core_function_params_and_body.create bound (flambda_expr_to_core body))
 
 and let_cont_to_core (e : Let_cont_expr.t) : core_exp =
   match e with

@@ -991,6 +991,11 @@ module Function_params_and_body = struct
 
   let print = print_function_params_and_body
 
+  let pattern_match' t ~f =
+    let open A in
+    let<> bff, {expr; _} = t.abst in
+    f bff ~body:expr
+
   let pattern_match t ~f =
     let module BFF = Bound_for_function in
     let open A in
