@@ -888,6 +888,12 @@ let equiv_set_of_closures env
 let equiv_rec_info _env info1 info2 : eq =
   Rec_info_expr.equal info1 info2
 
+let equiv_method_kind env (k1 : Call_kind.Method_kind.t) (k2 : Call_kind.Method_kind.t)
+  : eq =
+  match k1, k2 with
+  | Self, Self | Public, Public | Cached, Cached -> true
+  | _, _ -> false
+
 let rec equiv (env:Env.t) e1 e2 : eq =
   match e1, e2 with
   | Let e1, Let e2 -> equiv_let env e1 e2
@@ -1059,15 +1065,80 @@ and equiv_cont_handler_map env
       (map1 : continuation_handler_map) (map2 : continuation_handler_map) =
   Continuation.Map.equal (equiv_cont_handler env) map1 map2
 
-(* [let_apply] *)
-and equiv_apply env e1 e2 : eq =
-  failwith "Unimplemented"
+(* [apply] *)
+and equiv_apply env (e1 : apply_expr) (e2 : apply_expr) : eq =
+  let equiv_conts =
+    Apply_expr.Result_continuation.equal (e1.continuation) (e2.continuation) &&
+    Continuation.equal (e1.exn_continuation) (e2.exn_continuation) in
+  let callee = equiv env (e1.callee) (e2.callee) in
+  let args =
+    zip_fold (e1.args) (e2.args)
+      ~f:(fun x (e1, e2) -> x && equiv env e1 e2) ~acc:true in
+  let call_kind = equiv_call_kind env (e1.call_kind) (e2.call_kind) in
+  equiv_conts && callee && args && call_kind
 
-and equiv_apply_cont env e1 e2 : eq =
-  failwith "Unimplemented"
+and equiv_call_kind env (k1 : Call_kind.t) (k2 : Call_kind.t) : eq =
+  match k1, k2 with
+  (* Direct OCaml function calls *)
+  | Function
+      { function_call =
+          Direct { code_id = code_id1; return_arity = return_arity1 }; _ },
+    Function
+      { function_call =
+          Direct { code_id = code_id2; return_arity = return_arity2 }; _ } ->
+    Code_id.equal code_id1 code_id2 &&
+    Flambda_arity.With_subkinds.equal return_arity1 return_arity2
 
-and equiv_switch env e1 e2 : eq =
-  failwith "Unimplemented"
+  (* Indirect OCaml function calls, with known arity  *)
+  | Function
+      { function_call =
+          Indirect_known_arity
+            { param_arity = param_arity1; return_arity = return_arity1 }},
+    Function
+      { function_call =
+          Indirect_known_arity
+            { param_arity = param_arity2; return_arity = return_arity2 }} ->
+    Flambda_arity.With_subkinds.equal param_arity1 param_arity2 &&
+    Flambda_arity.With_subkinds.equal return_arity1 return_arity2
+
+  (* Indirect OCaml function calls, with unknown arity  *)
+  | Function { function_call = Indirect_unknown_arity ; _ },
+    Function { function_call = Indirect_unknown_arity ; _ } -> true
+
+  (* OCaml method invocation *)
+  | Method { kind = kind1; obj = obj1; _ },
+    Method { kind = kind2; obj = obj2; _ } ->
+    equiv_method_kind env kind1 kind2 && equiv_simple env obj1 obj2
+
+  (* C calls *)
+  | C_call
+      { alloc = alloc1;
+        param_arity = param_arity1;
+        return_arity = return_arity1;
+        is_c_builtin = _},
+    C_call
+      { alloc = alloc2;
+        param_arity = param_arity2;
+        return_arity = return_arity2;
+        is_c_builtin = _} ->
+    Bool.equal alloc1 alloc2
+    && Flambda_arity.equal param_arity1 param_arity2
+    && Flambda_arity.equal return_arity1 return_arity2
+  | _, _ -> false
+
+(* [apply_cont] *)
+and equiv_apply_cont env
+      ({k = k1; args = args1} as e1 : apply_cont_expr)
+      ({k = k2; args = args2} as e2 : apply_cont_expr) : eq =
+  Continuation.equal k1 k2 &&
+  zip_fold args1 args2 ~f:(fun x (e1, e2) -> x && equiv env e1 e2) ~acc:true
+
+(* [switch] *)
+and equiv_switch env
+      ({scrutinee = scrutinee1; arms = arms1} as e1 : switch_expr)
+      ({scrutinee = scrutinee2; arms = arms2} as e2 : switch_expr) : eq =
+  equiv env scrutinee1 scrutinee2 &&
+  Targetint_31_63.Map.equal (equiv env) arms1 arms2
 
 let core_eq = Env.create () |> equiv
 
