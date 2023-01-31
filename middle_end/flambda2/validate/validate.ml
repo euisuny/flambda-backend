@@ -759,12 +759,145 @@ module Env = struct
     Value_slot.Map.find_opt value_slot t.value_slots_rev
 end
 
+(* Used for unification of environments while comparing function and value slots in
+  [set_of_closures]. This is necessary because function and value slots do not have
+  an explicit binding site. *)
 let subst_symbol (env : Env.t) symbol =
   Env.find_symbol env symbol |> Option.value ~default:symbol
+
+let subst_name env n =
+  Name.pattern_match n
+    ~var:(fun _ -> n)
+    ~symbol:(fun s -> Name.symbol (subst_symbol env s))
+
+let subst_simple env s =
+  Simple.pattern_match s
+    ~const:(fun _ -> s)
+    ~name:(fun n ~coercion:_ -> Simple.name (subst_name env n))
+
+let subst_code_id env code_id =
+  Env.find_code_id env code_id |> Option.value ~default:code_id
+
+(** Some util functions *)
+(** Match up equal elements in two lists and iterate through both of them, using
+    [f] analogously to [Map.S.merge] *)
+let iter2_merged l1 l2 ~compare ~f =
+  let l1 = List.sort compare l1 in
+  let l2 = List.sort compare l2 in
+  let rec go l1 l2 =
+    match l1, l2 with
+    | [], [] -> ()
+    | a1 :: l1, [] ->
+      f (Some a1) None;
+      go l1 []
+    | [], a2 :: l2 ->
+      f None (Some a2);
+      go [] l2
+    | a1 :: l1, a2 :: l2 -> (
+        match compare a1 a2 with
+        | 0 ->
+          f (Some a1) (Some a2);
+          go l1 l2
+        | c when c < 0 ->
+          f (Some a1) None;
+          go l1 (a2 :: l2)
+        | _ ->
+          f None (Some a2);
+          go (a1 :: l1) l2)
+  in
+  go l1 l2
 
 (** Equality between two programs given a context **)
 (* For now, following a naive alpha-equivalence equality from [compare/compare]
     (without the discriminant) *)
+
+let equiv_symbols env sym1 sym2 : eq =
+  Symbol.equal sym1 sym2
+
+let equiv_names env name1 name2 : eq =
+  Name.pattern_match name1
+    ~var:(fun var1 ->
+      Name.pattern_match name2
+        ~var:(fun var2 -> Variable.equal var1 var2)
+        ~symbol:(fun _ -> false))
+    ~symbol:(fun symbol1 ->
+      Name.pattern_match name2
+        ~var:(fun _ -> false)
+        ~symbol:(fun symbol2 -> equiv_symbols env symbol1 symbol2))
+
+let equiv_value_slots env value_slot1 value_slot2 : eq =
+  match Env.find_value_slot env value_slot1 with
+  | Some value_slot ->
+    Value_slot.equal value_slot value_slot2
+  | None ->
+      match Env.find_value_slot_rev env value_slot2 with
+      | Some _ -> false
+      | None -> Env.add_value_slot env value_slot1 value_slot2; false
+
+let zip_fold l1 l2 ~f ~acc =
+  List.combine l1 l2 |> List.fold_left f acc
+
+let zip_sort_fold l1 l2 ~compare ~f ~acc =
+  let l1 = List.sort compare l1 in
+  let l2 = List.sort compare l2 in
+  zip_fold l1 l2 ~f ~acc
+
+let equiv_function_slot env
+  (slot1 : Function_slot.t) (slot2 : Function_slot.t) : eq =
+  match Env.find_function_slot env slot1 with
+  | Some slot -> Function_slot.equal slot slot2
+  | None ->
+    match Env.find_function_slot_rev env slot2 with
+    | Some _ -> false
+    | None -> Env.add_function_slot env slot1 slot2; true
+
+let equiv_code_ids env id1 id2 =
+  let id1 = subst_code_id env id1 in
+  Code_id.equal id1 id2
+
+let equiv_function_decl = equiv_code_ids
+
+let equiv_set_of_closures env
+  (set1 : Set_of_closures.t) (set2 : Set_of_closures.t) : eq =
+  (* Unify value and function slots *)
+  (* Comparing value slots *)
+  let value_slots_by_value set =
+    Value_slot.Map.bindings (Set_of_closures.value_slots set)
+    |> List.map (fun (var, (value, kind)) -> kind, subst_simple env value, var)
+  in
+  let compare (kind1, value1, _var1) (kind2, value2, _var2) =
+    let c = Flambda_kind.With_subkind.compare kind1 kind2 in
+    if c = 0 then Simple.compare value1 value2 else c
+  in
+  let value_slots_eq =
+    zip_sort_fold (value_slots_by_value set1) (value_slots_by_value set2)
+      ~compare
+      ~f:(fun x ((_, _, var1), (_, _, var2)) ->
+            x && equiv_value_slots env var1 var2)
+      ~acc:true
+  in
+  (* Comparing function slots *)
+  let function_slots_and_fun_decls_by_code_id (set : Set_of_closures.t)
+      : (Code_id.t * (Function_slot.t * Code_id.t)) list =
+    let map = Function_declarations.funs (Set_of_closures.function_decls set) in
+    Function_slot.Map.bindings map
+    |> List.map (fun (function_slot, code_id) ->
+      subst_code_id env code_id, (function_slot, code_id))
+  in
+  let function_slots_eq =
+    zip_fold
+      (function_slots_and_fun_decls_by_code_id set1)
+      (function_slots_and_fun_decls_by_code_id set2)
+      ~f:(fun x ((id1, (slot1, decl1)), (id2, (slot2, decl2))) ->
+        equiv_function_slot env slot1 slot2 &&
+        equiv_function_decl env decl1 decl2)
+      ~acc: true
+  in
+  value_slots_eq && function_slots_eq
+
+let equiv_rec_info _env info1 info2 : eq =
+  Rec_info_expr.equal info1 info2
+
 let rec equiv (env:Env.t) e1 e2 : eq =
   match e1, e2 with
   | Let e1, Let e2 -> equiv_let env e1 e2
@@ -797,18 +930,31 @@ and equiv_let_symbol_exprs env
   equiv_named env body1 body2
 
 and equiv_static_consts env
-      (const1 : static_const_or_code) (const2 : static_const_or_code) : eq =
+  (const1 : static_const_or_code) (const2 : static_const_or_code) : eq =
   match const1, const2 with
   | Code code1, Code code2 -> equiv_code env code1 code2
   | Static_const (Block (tag1, mut1, fields1)),
     Static_const (Block (tag2, mut2, fields2)) ->
     equiv_block env (tag1, mut1, fields1) (tag2, mut2, fields2)
   | Static_const (Set_of_closures set1), Static_const (Set_of_closures set2) ->
-    equiv_sets_of_closures env set1 set2
+    equiv_set_of_closures env set1 set2
   | _, _ -> compare const1 const2 = 0
 
-and equiv_code env code1 code2 =
-  failwith "Unimplemented"
+and equiv_code env
+  (code1 : function_params_and_body Code0.t) (code2 : function_params_and_body Code0.t) =
+  let code1 : function_params_and_body = Core_code.params_and_body code1 in
+  let code2 : function_params_and_body = Core_code.params_and_body code2 in
+  Core_function_params_and_body.pattern_match_pair code1 code2
+    ~f:(fun
+         ~return_continuation
+         ~exn_continuation
+         params
+         ~body1
+         ~body2
+         ~my_closure
+         ~my_region
+         ~my_depth ->
+         equiv env body1 body2)
 
 and equiv_block env (tag1, mut1, fields1) (tag2, mut2, fields2) =
   Tag.Scannable.equal tag1 tag2 &&
@@ -817,13 +963,10 @@ and equiv_block env (tag1, mut1, fields1) (tag2, mut2, fields2) =
    List.fold_left (fun x (e1, e2) -> x && Field_of_static_block.equal e1 e2)
      true)
 
-and equiv_sets_of_closures env set1 set2 : eq = failwith "Unimplemented"
-
 and equiv_bound_static env static1 static2 : eq =
   let static1 = Bound_static.to_list static1 in
   let static2 = Bound_static.to_list static2 in
   List.combine static1 static2 |>
-  (* TODO: subst_pattern *)
   List.fold_left (fun x (e1, e2) -> x && equiv_pattern env e1 e2) true
 
 (* Compare equal patterns and add variables to environment *)
@@ -839,7 +982,6 @@ and equiv_pattern env
       Env.add_symbol env symbol1 symbol2;
       equiv_function_slots env slot1 slot2
     in
-    (* TODO: subst_pattern *)
     let clo1 = Function_slot.Lmap.bindings clo1 in
     let clo2 = Function_slot.Lmap.bindings clo2 in
     List.combine clo1 clo2 |>
@@ -862,7 +1004,7 @@ and equiv_named env named1 named2 : eq =
   | Prim prim1, Prim prim2 ->
     equiv_primitives env prim1 prim2
   | Set_of_closures set1, Set_of_closures set2 ->
-    equiv_sets_of_closures env set1 set2
+    equiv_set_of_closures env set1 set2
   | Rec_info rec_info_expr1, Rec_info rec_info_expr2 ->
     equiv_rec_info env rec_info_expr1 rec_info_expr2
   | Static_consts const1, Static_consts const2 ->
@@ -881,22 +1023,6 @@ and equiv_simple env simple1 simple2 : eq =
       Simple.pattern_match simple2
         ~name:(fun _ ~coercion:_ -> false)
         ~const:(fun const2 -> Reg_width_const.equal const1 const2))
-
-and equiv_names env name1 name2 : eq =
-  Name.pattern_match name1
-    ~var:(fun var1 ->
-      Name.pattern_match name2
-        ~var:(fun var2 -> Variable.equal var1 var2)
-        ~symbol:(fun _ -> false))
-    ~symbol:(fun symbol1 ->
-      Name.pattern_match name2
-        ~var:(fun _ -> false)
-        ~symbol:(fun symbol2 -> equiv_symbols env symbol1 symbol2))
-
-and equiv_symbols env sym1 sym2 : eq =
-  let symbol1 = subst_symbol env sym1 in
-  let symbol2 = subst_symbol env sym2 in
-  Symbol.equal sym1 sym2
 
 and equiv_primitives env prim1 prim2 : eq =
   match (prim1:Flambda_primitive.t), (prim2:Flambda_primitive.t) with
@@ -918,9 +1044,6 @@ and equiv_primitives env prim1 prim2 : eq =
     (List.combine args1 args2 |>
       List.fold_left (fun x (e1, e2) -> x && equiv_simple env e1 e2) true)
   | _, _ -> false
-
-and equiv_rec_info _env info1 info2 : eq =
-  Rec_info_expr.equal info1 info2
 
 (* [let_cont_expr] *)
 and equiv_let_cont env let_cont1 let_cont2 : eq =
