@@ -466,6 +466,11 @@ module Core_let = struct
       | Mismatched_let_bindings -> "Mismatched let bindings"
   end
 
+  let pattern_match t ~f =
+    let open A in
+    let<> bound_pattern, body = t.let_abst in
+    f bound_pattern body t.body
+
   (* Treat "dynamic binding" (statically scoped binding under lambda abstraction)
      and "static binding" (globally scoped mapping of statics) differently *)
   let pattern_match_pair
@@ -1143,16 +1148,37 @@ and equiv_switch env
 let core_eq = Env.create () |> equiv
 
 (** Normalization *)
-(* TODO *)
 let rec normalize (e:core_exp) : core_exp =
   match e with
-  | Var _ -> e
-  | Let e -> failwith "Unimplemented"
-  | Let_cont _ -> failwith "Unimplemented"
-  | Apply _ -> failwith "Unimplemented"
-  | Apply_cont _ -> failwith "Unimplemented"
-  | Switch _ -> failwith "Unimplemented"
-  | Invalid _ -> failwith "Unimplemented"
+  | Let { let_abst; body } ->
+    let bound, e, body =
+      Core_let.pattern_match {let_abst; body}
+        ~f:(fun bound e body -> (bound, e, body))
+    in
+    normalize_let bound e body
+  | Let_cont e ->
+    normalize_let_cont e
+  | Apply {callee; continuation; exn_continuation; args; call_kind} ->
+    normalize_apply callee continuation exn_continuation args call_kind
+  | Apply_cont {k ; args} ->
+    normalize_apply_cont k args
+  | Switch {scrutinee ; arms} ->
+    Switch
+      {scrutinee = normalize scrutinee;
+       arms = Targetint_31_63.Map.map normalize arms }
+  | Var _ | Invalid _ -> e
+
+and normalize_let (bound_pat : Bound_pattern.t) (e : core_exp) (body : named) : core_exp =
+  failwith "Unimplemented"
+
+and normalize_let_cont (e:let_cont_expr) : core_exp =
+  failwith "Unimplemented"
+
+and normalize_apply callee continuation exn_continuation args call_kind : core_exp =
+  failwith "Unimplemented"
+
+and normalize_apply_cont k args : core_exp =
+  failwith "Unimplemented"
 
 let simulation_relation src tgt =
   let {Simplify.unit = tgt; exported_offsets; cmx; all_code} = tgt in
