@@ -42,23 +42,23 @@ and static_const_or_code =
 and static_const_group = static_const_or_code list
 
 and let_cont_expr =
-  (** Non-recursive case [let k x = e1 in e2]
+  (* Non-recursive case [let k x = e1 in e2]
 
      [fun x -> e1] = handler
      bound variable [k] = Bound_continuation.t
-     [e2] = body (has bound variable [k] in scope) **)
+     [e2] = body (has bound variable [k] in scope) *)
   | Non_recursive of
     { handler : continuation_handler;
       body : (Bound_continuation.t, core_exp) Name_abstraction.t;}
 
-  (** Recursive case, we have a set of (mutually recursive) continuations
+  (* Recursive case, we have a set of (mutually recursive) continuations
      [let rec K x in e] where [K] is a map of continuations
      [x] is the set of invariant parameters
      bound variable [K] is in the scope of [e]
 
      [x] = invariant_params (Bound_parameters.t)
      [K] = continuation_map
-     [e] = body **)
+     [e] = body *)
   | Recursive of
       (Bound_continuations.t, recursive_let_expr) Name_abstraction.t
 
@@ -88,7 +88,6 @@ and switch_expr =
   { scrutinee : core_exp;
     arms : core_exp Targetint_31_63.Map.t }
 
-(** [Name_abstraction] setup for [core_exp]s **)
 (** Nominal renaming for [core_exp] **)
 let rec apply_renaming t renaming : core_exp =
   match t with
@@ -101,7 +100,7 @@ let rec apply_renaming t renaming : core_exp =
   | Invalid t -> Invalid t
 
 (* renaming for [Let] *)
-and apply_renaming_let ({ let_abst; body } as t) renaming : let_expr =
+and apply_renaming_let { let_abst; body } renaming : let_expr =
   let let_abst' =
     Name_abstraction.apply_renaming
       (module Bound_pattern)
@@ -159,7 +158,7 @@ and apply_renaming_let_cont t renaming : let_cont_expr =
         (module Bound_continuations)
         t renaming ~apply_renaming_to_term:apply_renaming_recursive_let_expr)
 
-and apply_renaming_recursive_let_expr ({continuation_map; body} as t) renaming
+and apply_renaming_recursive_let_expr {continuation_map; body} renaming
   : recursive_let_expr =
   let continuation_map =
     Name_abstraction.apply_renaming
@@ -183,7 +182,7 @@ and apply_renaming_cont_map t renaming : continuation_handler_map =
 
 (* renaming for [Apply] *)
 and apply_renaming_apply
-      ({ callee; continuation; exn_continuation; args; call_kind} as t) renaming:
+      { callee; continuation; exn_continuation; args; call_kind} renaming:
   apply_expr =
   let continuation =
     Apply_expr.Result_continuation.apply_renaming continuation renaming in
@@ -196,13 +195,13 @@ and apply_renaming_apply
     exn_continuation = exn_continuation; args = args; call_kind = call_kind }
 
 (* renaming for [Apply_cont] *)
-and apply_renaming_apply_cont ({k; args} as t) renaming : apply_cont_expr =
+and apply_renaming_apply_cont {k; args} renaming : apply_cont_expr =
   let k = Renaming.apply_continuation renaming k in
   let args = List.map (fun x -> apply_renaming x renaming) args in
   { k = k; args = args }
 
 (* renaming for [Switch] *)
-and apply_renaming_switch ({scrutinee; arms} as t) renaming : switch_expr =
+and apply_renaming_switch {scrutinee; arms} renaming : switch_expr =
   let scrutinee = apply_renaming scrutinee renaming in
   let arms = Targetint_31_63.Map.map (fun x -> apply_renaming x renaming) arms in
   { scrutinee = scrutinee; arms = arms }
@@ -218,7 +217,7 @@ let rec print ppf e =
   | Switch t -> print_switch ppf t
   | Invalid { message } -> fprintf ppf "Invalid %s" message
 
-and print_let ppf ({let_abst; body} as t : let_expr) =
+and print_let ppf ({let_abst; body} : let_expr) =
   Name_abstraction.pattern_match_for_printing
     (module Bound_pattern)
     let_abst ~apply_renaming_to_term:apply_renaming
@@ -279,7 +278,7 @@ and print_let_cont ppf (t : let_cont_expr) =
       ~f:(fun k body -> print_recursive_let_cont ppf k body)
 
 and print_recursive_let_cont ppf (k : Bound_continuations.t)
-      ({continuation_map; body} as t : recursive_let_expr) =
+      ({continuation_map; body} : recursive_let_expr) =
   fprintf ppf "[ %a ] " Bound_continuations.print k;
   Name_abstraction.pattern_match_for_printing
     (module Bound_parameters) continuation_map
@@ -295,21 +294,23 @@ and print_continuation_handler ppf key (t : continuation_handler) =
     (module Bound_parameters) t
     ~apply_renaming_to_term:apply_renaming
     ~f:(fun k body ->
-      fprintf ppf "fun %a -> %a" Bound_parameters.print k print body)
+      fprintf ppf "%s: fun %a -> %a"
+        (Continuation.name key)
+        Bound_parameters.print k print body)
 
 and print_apply ppf
-      ({callee; continuation; exn_continuation; args; _} as t : apply_expr) =
+      ({callee; continuation; exn_continuation; args; _} : apply_expr) =
   fprintf ppf "%a %a %a "
     print callee
     Apply_expr.Result_continuation.print continuation
     Continuation.print exn_continuation;
   List.iter (print ppf) args
 
-and print_apply_cont ppf ({k ; args} as t : apply_cont_expr) =
+and print_apply_cont ppf ({k ; args} : apply_cont_expr) =
   fprintf ppf "%a " Continuation.print k;
   List.iter (print ppf) args
 
-and print_switch ppf ({scrutinee; arms} as t : switch_expr) =
+and print_switch ppf ({scrutinee; arms} : switch_expr) =
   fprintf ppf "switch %a :" print scrutinee;
   Targetint_31_63.Map.iter (print_arm ppf) arms
 
@@ -327,7 +328,7 @@ let rec ids_for_export (t : core_exp) =
   | Apply t -> ids_for_export_apply t
   | Apply_cont t -> ids_for_export_apply_cont t
   | Switch t -> ids_for_export_switch t
-  | Invalid t -> Ids_for_export.empty
+  | Invalid _ -> Ids_for_export.empty
 
 (* ids for [Let_expr] *)
 and ids_for_export_let { let_abst; body } =
@@ -377,7 +378,7 @@ and ids_for_export_let_cont (t : let_cont_expr) =
       (module Bound_continuations)
       t ~ids_for_export_of_term:ids_for_export_recursive_let_expr
 
-and ids_for_export_recursive_let_expr ({continuation_map; body} as t : recursive_let_expr) =
+and ids_for_export_recursive_let_expr ({continuation_map; body} : recursive_let_expr) =
   let cont_map_ids =
     Name_abstraction.ids_for_export
       (module Bound_parameters)
@@ -456,14 +457,13 @@ module Core_let = struct
     | Simple _, Singleton _
     | Rec_info _, Singleton _
     | Set_of_closures _, Set_of_closures _ -> ()
-    | _ , _ -> Misc.fatal_error "[Let.create] Mismatched bound pattern and defining expr");
+    | (Prim _ | Simple _ | Rec_info _ | Set_of_closures _ | Static_consts _),
+      (Singleton _ | Set_of_closures _ | Static _) ->
+      Misc.fatal_error "[Let.create] Mismatched bound pattern and defining expr");
     Let { let_abst = A.create bound_pattern body; body = defining_expr }
 
   module Pattern_match_pair_error = struct
     type t = Mismatched_let_bindings
-
-    let to_string = function
-      | Mismatched_let_bindings -> "Mismatched let bindings"
   end
 
   let pattern_match t ~f =
@@ -474,8 +474,7 @@ module Core_let = struct
   (* Treat "dynamic binding" (statically scoped binding under lambda abstraction)
      and "static binding" (globally scoped mapping of statics) differently *)
   let pattern_match_pair
-        ({let_abst = let_abst1; body = body1} as t1)
-        ({let_abst = let_abst2; body = body2} as t2)
+        ({let_abst = let_abst1; body = _}) ({let_abst = let_abst2; body = _})
         (dynamic : Bound_pattern.t -> core_exp -> core_exp -> 'a)
         (static : Bound_static.t -> Bound_static.t -> core_exp -> core_exp -> 'a):
     ('a, Pattern_match_pair_error.t) Result.t =
@@ -499,7 +498,8 @@ module Core_let = struct
             let ans = static bound_static1 bound_static2 let_body1 let_body2 in
             Ok ans
           else Error Pattern_match_pair_error.Mismatched_let_bindings
-        | _,_ -> Error Pattern_match_pair_error.Mismatched_let_bindings
+        | (Singleton _ | Set_of_closures _ | Static _), _ ->
+            Error Pattern_match_pair_error.Mismatched_let_bindings
       )
     )
 end
@@ -587,38 +587,6 @@ module Core_code = struct
   let create_with_metadata =
     Code0.create_with_metadata
       ~print_function_params_and_body:print_function_params_and_body
-
-  let create =
-    Code0.create
-      ~print_function_params_and_body:print_function_params_and_body
-
-  let with_code_id = Code0.with_code_id
-
-  let with_params_and_body =
-    Code0.with_params_and_body
-      ~print_function_params_and_body:print_function_params_and_body
-
-  let with_newer_version_of = Code0.with_newer_version_of
-
-  let free_names = Code0.free_names
-
-  let apply_renaming =
-    Code0.apply_renaming
-      ~apply_renaming_function_params_and_body:
-        apply_renaming_function_params_and_body
-
-  let print =
-    Code0.print
-      ~print_function_params_and_body:print_function_params_and_body
-
-  let ids_for_export =
-    Code0.ids_for_export
-      ~ids_for_export_function_params_and_body:
-        ids_for_export_function_params_and_body
-
-  let map_result_types = Code0.map_result_types
-
-  let free_names_of_params_and_body = Code0.free_names_of_params_and_body
 end
 
 (** Translation from flambda2 terms to simplified core language **)
@@ -675,7 +643,7 @@ and function_params_and_body_to_core (t : Flambda.function_params_and_body) :
 and let_cont_to_core (e : Let_cont_expr.t) : core_exp =
   match e with
   | Non_recursive
-      {handler = h; num_free_occurrences; is_applied_with_traps} ->
+      {handler = h; num_free_occurrences = _; is_applied_with_traps = _} ->
     let (contvar, scoped_body) =
       Non_recursive_let_cont_handler.pattern_match
         h ~f:(fun contvar ~body -> (contvar, body)) in
@@ -806,7 +774,7 @@ let subst_code_id env code_id =
 (* For now, following a naive alpha-equivalence equality from [compare/compare]
     (without the discriminant) *)
 
-let equiv_symbols env sym1 sym2 : eq =
+let equiv_symbols _env sym1 sym2 : eq =
   Symbol.equal sym1 sym2
 
 let equiv_names env name1 name2 : eq =
@@ -883,7 +851,8 @@ let equiv_set_of_closures env
     zip_fold
       (function_slots_and_fun_decls_by_code_id set1)
       (function_slots_and_fun_decls_by_code_id set2)
-      ~f:(fun x ((id1, (slot1, decl1)), (id2, (slot2, decl2))) ->
+      ~f:(fun acc ((_, (slot1, decl1)), (_, (slot2, decl2))) ->
+        acc &&
         equiv_function_slot env slot1 slot2 &&
         equiv_function_decl env decl1 decl2)
       ~acc: true
@@ -893,42 +862,45 @@ let equiv_set_of_closures env
 let equiv_rec_info _env info1 info2 : eq =
   Rec_info_expr.equal info1 info2
 
-let equiv_method_kind env (k1 : Call_kind.Method_kind.t) (k2 : Call_kind.Method_kind.t)
+let equiv_method_kind _env (k1 : Call_kind.Method_kind.t) (k2 : Call_kind.Method_kind.t)
   : eq =
   match k1, k2 with
   | Self, Self | Public, Public | Cached, Cached -> true
-  | _, _ -> false
+  | (Self | Public | Cached), _ -> false
 
 let rec equiv (env:Env.t) e1 e2 : eq =
   match e1, e2 with
+  | Var v1, Var v2 -> equiv_simple env v1 v2
   | Let e1, Let e2 -> equiv_let env e1 e2
   | Let_cont e1, Let_cont e2 -> equiv_let_cont env e1 e2
   | Apply e1, Apply e2 -> equiv_apply env e1 e2
   | Apply_cont e1, Apply_cont e2 -> equiv_apply_cont env e1 e2
   | Switch e1, Switch e2 -> equiv_switch env e1 e2
   | Invalid _, Invalid _ -> true
+  | (Var _ | Let _ | Let_cont _ | Apply _ | Apply_cont _ | Switch _ | Invalid _), _ ->
+    false
 
 (* [let_expr] *)
-and equiv_let env ({let_abst = let_abst1; body = body1} as e1)
-                    ({let_abst = let_abst2; body = body2} as e2) : eq =
+and equiv_let env e1 e2 : eq =
   Core_let.pattern_match_pair e1 e2
-    (fun bound let_bound1 let_bound2 ->
-       equiv_named env body1 body2 && equiv env let_bound1 let_bound2)
+    (fun _bound let_bound1 let_bound2 ->
+       equiv_named env e1.body e2.body && equiv env let_bound1 let_bound2)
     (fun bound1 bound2 let_bound1 let_bound2 ->
-       match body1, body2 with
+       match e1.body, e2.body with
        | Static_consts consts1, Static_consts consts2 ->
          equiv_let_symbol_exprs env
-           (bound1, consts1, body1)
-           (bound2, consts2, body2)
-       | _, _ -> Misc.fatal_error "Static LHS has dynamic RHS")
-  |> function | Ok comp -> comp | _ -> false
+           (bound1, consts1, let_bound1)
+           (bound2, consts2, let_bound2)
+       | (Simple _ | Prim _ | Set_of_closures _ | Static_consts _ | Rec_info _), _ ->
+         Misc.fatal_error "Static LHS has dynamic RHS")
+  |> function | Ok comp -> comp | Error _ -> false
 
 and equiv_let_symbol_exprs env
       (static1, const1, body1) (static2, const2, body2) : eq =
   equiv_bound_static env static1 static2 &&
   (List.combine const1 const2 |>
-   List.fold_left (fun x (e1, e2) -> x && equiv_static_consts env e1 e2) true) &&
-  equiv_named env body1 body2
+   List.fold_left (fun x (e1, e2) -> x && equiv_static_consts env e1 e2) true)  &&
+  equiv env body1 body2
 
 and equiv_static_consts env
   (const1 : static_const_or_code) (const2 : static_const_or_code) : eq =
@@ -939,7 +911,21 @@ and equiv_static_consts env
     equiv_block env (tag1, mut1, fields1) (tag2, mut2, fields2)
   | Static_const (Set_of_closures set1), Static_const (Set_of_closures set2) ->
     equiv_set_of_closures env set1 set2
-  | _, _ -> compare const1 const2 = 0
+  | Deleted_code, Deleted_code -> true
+  (* IY: Is it fine to ignore all the other static constants? *)
+  | (Static_const (Set_of_closures _) |
+     Static_const (Block _) |
+     Static_const (Boxed_float _) |
+     Static_const (Boxed_int32 _) |
+     Static_const (Boxed_int64 _) |
+     Static_const (Boxed_nativeint _) |
+     Static_const (Immutable_float_block _) |
+     Static_const (Immutable_float_array _) |
+     Static_const (Immutable_value_array _) |
+     Static_const Empty_array |
+     Static_const (Mutable_string _)|
+     Static_const (Immutable_string _)|
+     Code _ | Deleted_code), _ -> compare const1 const2 = 0
 
 and equiv_code env
   (code1 : function_params_and_body Code0.t) (code2 : function_params_and_body Code0.t) =
@@ -947,17 +933,17 @@ and equiv_code env
   let code2 : function_params_and_body = Core_code.params_and_body code2 in
   Core_function_params_and_body.pattern_match_pair code1 code2
     ~f:(fun
-         ~return_continuation
-         ~exn_continuation
-         params
+         ~return_continuation:_
+         ~exn_continuation:_
+         _params
          ~body1
          ~body2
-         ~my_closure
-         ~my_region
-         ~my_depth ->
+         ~my_closure:_
+         ~my_region:_
+         ~my_depth:_ ->
          equiv env body1 body2)
 
-and equiv_block env (tag1, mut1, fields1) (tag2, mut2, fields2) =
+and equiv_block _env (tag1, mut1, fields1) (tag2, mut2, fields2) =
   Tag.Scannable.equal tag1 tag2 &&
   Mutability.compare mut1 mut2 = 0 &&
   (List.combine fields1 fields2 |>
@@ -987,7 +973,7 @@ and equiv_pattern env
     let clo2 = Function_slot.Lmap.bindings clo2 in
     List.combine clo1 clo2 |>
     List.fold_left (fun x (e1, e2) -> x && closure_bindings env e1 e2) true
-  | _, _ -> false
+  | (Code _ | Block_like _ | Set_of_closures _), _ -> false
 
 and equiv_function_slots env slot1 slot2 =
   match Env.find_function_slot env slot1 with
@@ -1011,7 +997,7 @@ and equiv_named env named1 named2 : eq =
   | Static_consts const1, Static_consts const2 ->
     (List.combine const1 const2 |>
      List.fold_left (fun x (e1, e2) -> x && equiv_static_consts env e1 e2) true)
-  | _, _ ->
+  | (Simple _ | Prim _ | Set_of_closures _ | Rec_info _ | Static_consts _ ), _ ->
     false
 
 and equiv_simple env simple1 simple2 : eq =
@@ -1043,8 +1029,14 @@ and equiv_primitives env prim1 prim2 : eq =
   | Variadic (op1, args1), Variadic (op2, args2) ->
     Flambda_primitive.equal_variadic_primitive op1 op2 &&
     (List.combine args1 args2 |>
-      List.fold_left (fun x (e1, e2) -> x && equiv_simple env e1 e2) true)
-  | _, _ -> false
+     List.fold_left (fun x (e1, e2) -> x && equiv_simple env e1 e2) true)
+  | Nullary (Invalid _), Nullary (Invalid _) -> true
+  | Nullary (Optimised_out _), Nullary (Optimised_out _) -> true
+  | Nullary (Probe_is_enabled _), Nullary (Probe_is_enabled _) -> true
+  | Nullary Begin_region, Nullary Begin_region -> true
+  | (Nullary (Invalid _) | Nullary (Optimised_out _ ) | Nullary (Probe_is_enabled _)
+    | Nullary (Begin_region)
+    | Unary _ | Binary _ | Ternary _ | Variadic _), _ -> false
 
 (* [let_cont_expr] *)
 and equiv_let_cont env let_cont1 let_cont2 : eq =
@@ -1053,7 +1045,7 @@ and equiv_let_cont env let_cont1 let_cont2 : eq =
     Non_recursive {handler = handler2; body = body2} ->
     equiv_cont_handler env handler1 handler2 &&
     Core_letcont_body.pattern_match_pair body1 body2
-      (fun bound b1 b2 -> equiv env b1 b2)
+      (fun _bound b1 b2 -> equiv env b1 b2)
   | Recursive handlers1, Recursive handlers2 ->
     Core_recursive.pattern_match_pair handlers1 handlers2
       (fun (_params : Bound_parameters.t)
@@ -1061,10 +1053,11 @@ and equiv_let_cont env let_cont1 let_cont2 : eq =
         (map1 : continuation_handler_map) (map2 : continuation_handler_map) ->
         equiv env body1 body2 &&
         equiv_cont_handler_map env map1 map2)
+  | (Non_recursive _ | Recursive _), _ -> false
 
 and equiv_cont_handler env handler1 handler2 =
   Core_continuation_handler.pattern_match_pair handler1 handler2
-    (fun bound h1 h2 -> equiv env h1 h2)
+    (fun _bound h1 h2 -> equiv env h1 h2)
 
 and equiv_cont_handler_map env
       (map1 : continuation_handler_map) (map2 : continuation_handler_map) =
@@ -1098,11 +1091,11 @@ and equiv_call_kind env (k1 : Call_kind.t) (k2 : Call_kind.t) : eq =
   | Function
       { function_call =
           Indirect_known_arity
-            { param_arity = param_arity1; return_arity = return_arity1 }},
+            { param_arity = param_arity1; return_arity = return_arity1 }; _},
     Function
       { function_call =
           Indirect_known_arity
-            { param_arity = param_arity2; return_arity = return_arity2 }} ->
+            { param_arity = param_arity2; return_arity = return_arity2 }; _} ->
     Flambda_arity.With_subkinds.equal param_arity1 param_arity2 &&
     Flambda_arity.With_subkinds.equal return_arity1 return_arity2
 
@@ -1129,19 +1122,23 @@ and equiv_call_kind env (k1 : Call_kind.t) (k2 : Call_kind.t) : eq =
     Bool.equal alloc1 alloc2
     && Flambda_arity.equal param_arity1 param_arity2
     && Flambda_arity.equal return_arity1 return_arity2
-  | _, _ -> false
+
+  | (Function { function_call = Direct _ ; _}
+      | Function { function_call = Indirect_known_arity _ ; _}
+      | Function { function_call = Indirect_unknown_arity ; _}
+      | Method _ | C_call _), _ -> false
 
 (* [apply_cont] *)
 and equiv_apply_cont env
-      ({k = k1; args = args1} as e1 : apply_cont_expr)
-      ({k = k2; args = args2} as e2 : apply_cont_expr) : eq =
+      ({k = k1; args = args1} : apply_cont_expr)
+      ({k = k2; args = args2} : apply_cont_expr) : eq =
   Continuation.equal k1 k2 &&
   zip_fold args1 args2 ~f:(fun x (e1, e2) -> x && equiv env e1 e2) ~acc:true
 
 (* [switch] *)
 and equiv_switch env
-      ({scrutinee = scrutinee1; arms = arms1} as e1 : switch_expr)
-      ({scrutinee = scrutinee2; arms = arms2} as e2 : switch_expr) : eq =
+      ({scrutinee = scrutinee1; arms = arms1} : switch_expr)
+      ({scrutinee = scrutinee2; arms = arms2} : switch_expr) : eq =
   equiv env scrutinee1 scrutinee2 &&
   Targetint_31_63.Map.equal (equiv env) arms1 arms2
 
@@ -1168,20 +1165,20 @@ let rec normalize (e:core_exp) : core_exp =
        arms = Targetint_31_63.Map.map normalize arms }
   | Var _ | Invalid _ -> e
 
-and normalize_let (bound_pat : Bound_pattern.t) (e : core_exp) (body : named) : core_exp =
+and normalize_let (_bound_pat : Bound_pattern.t) (_e : core_exp) (_body : named) : core_exp =
   failwith "Unimplemented"
 
-and normalize_let_cont (e:let_cont_expr) : core_exp =
+and normalize_let_cont (_e:let_cont_expr) : core_exp =
   failwith "Unimplemented"
 
-and normalize_apply callee continuation exn_continuation args call_kind : core_exp =
+and normalize_apply _callee _continuation _exn_continuation _args _call_kind : core_exp =
   failwith "Unimplemented"
 
-and normalize_apply_cont k args : core_exp =
+and normalize_apply_cont _k _args : core_exp =
   failwith "Unimplemented"
 
 let simulation_relation src tgt =
-  let {Simplify.unit = tgt; exported_offsets; cmx; all_code} = tgt in
+  let {Simplify.unit = tgt; _} = tgt in
   let src_core = Flambda_unit.body src |> flambda_expr_to_core in
   let tgt_core = Flambda_unit.body tgt |> flambda_expr_to_core in
   core_eq src_core tgt_core

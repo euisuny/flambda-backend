@@ -1364,8 +1364,6 @@ module Named = struct
     | Static_consts consts -> Static_const_group.free_names consts
     | Rec_info rec_info_expr -> Rec_info_expr.free_names rec_info_expr
 
-  let print = print_named
-
   let apply_renaming = apply_renaming_named
 
   let ids_for_export = ids_for_export_named
