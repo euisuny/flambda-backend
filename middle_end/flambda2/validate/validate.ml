@@ -501,14 +501,22 @@ end
 
 module Core_continuation_handler = struct
   module A = Name_abstraction.Make (Bound_parameters) (T0)
+  type t = continuation_handler
   let create = A.create
-  let pattern_match_pair = A.pattern_match_pair
+  let pattern_match_pair (t1 : t) (t2 : t)
+        (f : Bound_parameters.t -> core_exp -> core_exp -> 'a) : 'a =
+    A.pattern_match_pair t1 t2 ~f:(fun params body1 body2 ->
+        f params body1 body2)
 end
 
-module Core_letrec_body = struct
+module Core_letcont_body = struct
   module A = Name_abstraction.Make (Bound_continuation) (T0)
+  type t = (Bound_continuation.t, core_exp) Name_abstraction.t
   let create = A.create
-  let pattern_match_pair = A.pattern_match_pair
+  let pattern_match_pair (t1 : t) (t2 : t)
+        (f : Bound_continuation.t -> core_exp -> core_exp -> 'a) : 'a =
+    A.pattern_match_pair t1 t2 ~f:(fun cont body1 body2 ->
+      f cont body1 body2)
 end
 
 module Core_continuation_map = struct
@@ -519,8 +527,22 @@ end
 
 module Core_recursive = struct
   module A = Name_abstraction.Make (Bound_continuations) (RecursiveLetExpr)
+
+  type t = (Bound_continuations.t, recursive_let_expr) Name_abstraction.t
   let create = A.create
-  let pattern_match_pair = A.pattern_match_pair
+  let pattern_match_pair (t1 : t) (t2 : t)
+    (f : Bound_parameters.t ->
+         core_exp ->
+         core_exp -> continuation_handler_map -> continuation_handler_map -> 'a)
+    = A.pattern_match_pair t1 t2
+        ~f:(fun (_:Bound_continuations.t)
+                (t1 : recursive_let_expr)
+                (t2 : recursive_let_expr) ->
+          let body1 = t1.body in
+          let body2 = t2.body in
+          Core_continuation_map.pattern_match_pair
+            t1.continuation_map t2.continuation_map
+            ~f:(fun params h1 h2 -> f params body1 body2 h1 h2))
 end
 
 module Core_function_params_and_body = struct
@@ -531,18 +553,15 @@ module Core_function_params_and_body = struct
     A.pattern_match_pair t1 t2
       ~f:(fun
            bound_for_function body1 body2
-           ->
-             f
-               ~return_continuation:
+           -> f ~return_continuation:
                  (Bound_for_function.return_continuation bound_for_function)
-               ~exn_continuation:
-                 (Bound_for_function.exn_continuation bound_for_function)
-               (Bound_for_function.params bound_for_function)
-               ~body1 ~body2
-               ~my_closure:(Bound_for_function.my_closure bound_for_function)
-               ~my_region:(Bound_for_function.my_region bound_for_function)
-               ~my_depth:(Bound_for_function.my_depth bound_for_function))
-
+                ~exn_continuation:
+                  (Bound_for_function.exn_continuation bound_for_function)
+                (Bound_for_function.params bound_for_function)
+                ~body1 ~body2
+                ~my_closure:(Bound_for_function.my_closure bound_for_function)
+                ~my_region:(Bound_for_function.my_region bound_for_function)
+                ~my_depth:(Bound_for_function.my_depth bound_for_function))
 end
 
 module Core_code = struct
@@ -659,7 +678,7 @@ and let_cont_to_core (e : Let_cont_expr.t) : core_exp =
       handler =
         Non_recursive_let_cont_handler.handler h |> cont_handler_to_core;
       body = flambda_expr_to_core scoped_body |>
-        Core_letrec_body.create contvar;})
+        Core_letcont_body.create contvar;})
 
   | Recursive r ->
     let (bound, params, body, handler) = Recursive_let_cont_handlers.pattern_match_bound
@@ -1021,9 +1040,24 @@ and equiv_let_cont env let_cont1 let_cont2 : eq =
   match let_cont1, let_cont2 with
   | Non_recursive {handler = handler1; body = body1},
     Non_recursive {handler = handler2; body = body2} ->
-    failwith "Unimplemented"
+    equiv_cont_handler env handler1 handler2 &&
+    Core_letcont_body.pattern_match_pair body1 body2
+      (fun bound b1 b2 -> equiv env b1 b2)
   | Recursive handlers1, Recursive handlers2 ->
-    failwith "Unimplemented"
+    Core_recursive.pattern_match_pair handlers1 handlers2
+      (fun (_params : Bound_parameters.t)
+        (body1 : core_exp) (body2 : core_exp)
+        (map1 : continuation_handler_map) (map2 : continuation_handler_map) ->
+        equiv env body1 body2 &&
+        equiv_cont_handler_map env map1 map2)
+
+and equiv_cont_handler env handler1 handler2 =
+  Core_continuation_handler.pattern_match_pair handler1 handler2
+    (fun bound h1 h2 -> equiv env h1 h2)
+
+and equiv_cont_handler_map env
+      (map1 : continuation_handler_map) (map2 : continuation_handler_map) =
+  Continuation.Map.equal (equiv_cont_handler env) map1 map2
 
 (* [let_apply] *)
 and equiv_apply env e1 e2 : eq =
