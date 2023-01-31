@@ -704,7 +704,7 @@ and switch_to_core (e : Switch.t) : core_exp =
 type eq = bool
 
 (** Simple program context **)
-(* FIXME: Same structure used as [compare/compare.ml],
+(* LATER: Same structure used as [compare/compare.ml],
    might be useful to refactor the structure out of the file *)
 module Env = struct
   type t =
@@ -777,35 +777,6 @@ let subst_simple env s =
 
 let subst_code_id env code_id =
   Env.find_code_id env code_id |> Option.value ~default:code_id
-
-(** Some util functions *)
-(** Match up equal elements in two lists and iterate through both of them, using
-    [f] analogously to [Map.S.merge] *)
-let iter2_merged l1 l2 ~compare ~f =
-  let l1 = List.sort compare l1 in
-  let l2 = List.sort compare l2 in
-  let rec go l1 l2 =
-    match l1, l2 with
-    | [], [] -> ()
-    | a1 :: l1, [] ->
-      f (Some a1) None;
-      go l1 []
-    | [], a2 :: l2 ->
-      f None (Some a2);
-      go [] l2
-    | a1 :: l1, a2 :: l2 -> (
-        match compare a1 a2 with
-        | 0 ->
-          f (Some a1) (Some a2);
-          go l1 l2
-        | c when c < 0 ->
-          f (Some a1) None;
-          go l1 (a2 :: l2)
-        | _ ->
-          f None (Some a2);
-          go (a1 :: l1) l2)
-  in
-  go l1 l2
 
 (** Equality between two programs given a context **)
 (* For now, following a naive alpha-equivalence equality from [compare/compare]
