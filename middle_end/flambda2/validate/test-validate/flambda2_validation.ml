@@ -5,14 +5,8 @@ let cwd = "/usr/local/home/iyoon/workspaces/validation/flambda-backend/"
 let extension = ".fl"
 
 (** Test file locations **)
-let simple =
-  "/middle_end/flambda2/validate/test-validate/tests/simple.fl"
-let simple_alpha =
-  "/middle_end/flambda2/validate/test-validate/tests/simple-alpha.fl"
-let simple_cont =
-  "/middle_end/flambda2/validate/test-validate/tests/simple-cont.fl"
-let simple_cont_alpha =
-  "/middle_end/flambda2/validate/test-validate/tests/simple-cont-alpha.fl"
+let test_dir =
+  "/middle_end/flambda2/validate/test-validate/tests/"
 
 (** Parsing **)
 let parse_flambda file : Flambda_unit.t =
@@ -29,10 +23,12 @@ let parse_flambda file : Flambda_unit.t =
 
 (** Test suite for checking alpha-equivalence checker [Validate.equiv].
    To add more test cases, add a pair of files that should be alpha-equivalent
-   to this list. **)
+    to this list. **)
+(* IY: Why does having [extension] concatenated throw an error? *)
 let alpha_equivalence_suite =
-  [(simple, simple_alpha);
-   (simple_cont, simple_cont_alpha)]
+  [("simple.fl", "simple-alpha.fl");
+   ("simple-cont.fl", "simple-cont-alpha.fl");
+   ("closures.fl", "closures-alpha.fl")]
 
 let check_alpha_equivalence file1 file2 : unit =
   let comp_unit =
@@ -42,11 +38,10 @@ let check_alpha_equivalence file1 file2 : unit =
 
   Format.fprintf Format.std_formatter
     "==============================================================================@.";
-
-  let fl_output = parse_flambda (cwd ^ file1) in
+  let fl_output = parse_flambda (cwd ^ test_dir ^ file1) in
   let core_output = flambda_unit_to_core fl_output in
 
-  let fl_output_alpha = parse_flambda (cwd ^ file2) in
+  let fl_output_alpha = parse_flambda (cwd ^ test_dir ^ file2) in
   let core_output_alpha = flambda_unit_to_core fl_output_alpha in
 
   (* Alpha equivalence check *)
@@ -69,6 +64,6 @@ let alpha_equivalence_test_suite =
 
 (** Top-level driver for testing **)
 let () =
-  Format.fprintf Format.std_formatter "Running Flambda2 Validator...@.";
+  Format.fprintf Format.std_formatter "Running Flambda2 Validator...@. ";
   alpha_equivalence_test_suite;
   ()
