@@ -57,6 +57,8 @@ val simple_to_core : Simple.t -> core_exp
 
 val flambda_expr_to_core : Flambda.expr -> core_exp
 
+val flambda_unit_to_core : Flambda_unit.t -> core_exp
+
 val normalize : core_exp -> core_exp
 
 val simulation_relation : Flambda_unit.t -> Simplify.simplify_result -> eq

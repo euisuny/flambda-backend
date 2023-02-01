@@ -206,34 +206,88 @@ and apply_renaming_switch {scrutinee; arms} renaming : switch_expr =
   let arms = Targetint_31_63.Map.map (fun x -> apply_renaming x renaming) arms in
   { scrutinee = scrutinee; arms = arms }
 
-(** Basic pretty-printer for [core_exp]s **)
+(** Sexp-ish simple pretty-printer for [core_exp]s.
+  Ignores name_stamp, compilation_unit, and debug_info for simplicity. **)
 let rec print ppf e =
-  match e with
-  | Var t -> Simple.print ppf t
-  | Let t -> print_let ppf t
-  | Let_cont t -> print_let_cont ppf t
-  | Apply t -> print_apply ppf t
-  | Apply_cont t -> print_apply_cont ppf t
-  | Switch t -> print_switch ppf t
-  | Invalid { message } -> fprintf ppf "Invalid %s" message
+  fprintf ppf "(@[<hov 1>";
+  (match e with
+   | Var t ->
+     fprintf ppf "var@ ";
+     Simple.print ppf t;
+   | Let t ->
+     fprintf ppf "let@ ";
+     print_let ppf t;
+   | Let_cont t ->
+     fprintf ppf "let_cont@ ";
+     print_let_cont ppf t;
+   | Apply t ->
+     fprintf ppf "apply@ ";
+     print_apply ppf t;
+   | Apply_cont t ->
+     fprintf ppf "apply_cont@ ";
+     print_apply_cont ppf t;
+   | Switch t ->
+     fprintf ppf "switch@ ";
+     print_switch ppf t;
+   | Invalid { message } ->
+     fprintf ppf "invalid %s" message);
+  fprintf ppf "@])";
 
 and print_let ppf ({let_abst; body} : let_expr) =
   Name_abstraction.pattern_match_for_printing
     (module Bound_pattern)
     let_abst ~apply_renaming_to_term:apply_renaming
     ~f:(fun bound let_body ->
-      fprintf ppf "let %a = %a in\n %a"
-        Bound_pattern.print bound
-        print let_body
-        print_named body)
+        fprintf ppf "(bound@ (%a),@ body@ (%a))@ in=%a"
+        print_bound_pattern bound
+        print_named body
+        print let_body)
+
+and print_bound_pattern ppf (t : Bound_pattern.t) =
+  match t with
+  | Singleton v ->
+    fprintf ppf "singleton@ %a"
+      Bound_var.print v
+  | Set_of_closures v ->
+    fprintf ppf "set_of_closures@ %a"
+      (Format.pp_print_list ~pp_sep:Format.pp_print_space
+         Bound_var.print) v
+  | Static v ->
+    fprintf ppf "static@ %a"
+      print_bound_static v
+
+and print_bound_static ppf (t : Bound_static.t) =
+  Format.fprintf ppf "@[<hov 0>%a@]"
+    (Format.pp_print_list ~pp_sep:Format.pp_print_space print_static_pattern)
+    (t |> Bound_static.to_list)
+
+and print_static_pattern ppf (t : Bound_static.Pattern.t) =
+  match t with
+  | Code v ->
+    fprintf ppf "code@ %a" Code_id.print v
+  | Set_of_closures v ->
+    Format.fprintf ppf "set_of_closures@ %a"
+      (Function_slot.Lmap.print Symbol.print) v
+  | Block_like v ->
+    Format.fprintf ppf "(block_like@ %a)" Symbol.print v
 
 and print_named ppf (t : named) =
   match t with
-  | Simple simple -> Simple.print ppf simple
-  | Prim prim -> Flambda_primitive.print ppf prim
-  | Set_of_closures clo -> Set_of_closures.print ppf clo
-  | Static_consts consts -> print_static_const_group ppf consts
-  | Rec_info info -> Rec_info_expr.print ppf info
+  | Simple simple ->
+    fprintf ppf "simple@ %a"
+    Simple.print simple;
+  | Prim prim ->
+    fprintf ppf "prim@ %a"
+    Flambda_primitive.print prim;
+  | Set_of_closures clo ->
+    fprintf ppf "set_of_closures@ %a"
+    Set_of_closures.print clo
+  | Static_consts consts ->
+    fprintf ppf "static_consts@ %a"
+    print_static_const_group consts
+  | Rec_info info ->
+    fprintf ppf "rec_info@ %a"
+    Rec_info_expr.print info
 
 and print_static_const_group ppf t =
   Format.pp_print_list ~pp_sep:Format.pp_print_space print_static_const_or_code ppf t
@@ -241,7 +295,7 @@ and print_static_const_group ppf t =
 and print_static_const_or_code ppf t =
   match t with
   | Code code -> Code0.print ~print_function_params_and_body ppf code
-  | Deleted_code -> fprintf ppf "Deleted_code"
+  | Deleted_code -> fprintf ppf "deleted_code"
   | Static_const const -> Static_const.print ppf const
 
 and print_function_params_and_body ppf (t:function_params_and_body) =
@@ -260,26 +314,37 @@ and print_let_cont ppf (t : let_cont_expr) =
     Name_abstraction.pattern_match_for_printing
       (module Bound_continuation) body
       ~apply_renaming_to_term:apply_renaming
-      ~f:(fun k body ->
-        Bound_continuation.print ppf k;
+      ~f:(fun cont body ->
         Name_abstraction.pattern_match_for_printing
           (module Bound_parameters) handler
           ~apply_renaming_to_term:apply_renaming
           ~f:(fun k let_body ->
-            fprintf ppf "letc %a = %a in \n %a"
-            Bound_parameters.print k
+            fprintf ppf "(cont@ %a,@ param@ %a,@ body@ %a)@ in=%a"
+            print_cont cont
+            print_params k
             print let_body
             print body))
   | Recursive t ->
-    fprintf ppf "letc ";
+    fprintf ppf "letc@ ";
     Name_abstraction.pattern_match_for_printing
       (module Bound_continuations) t
       ~apply_renaming_to_term:apply_renaming_recursive_let_expr
       ~f:(fun k body -> print_recursive_let_cont ppf k body)
 
+and print_params ppf (k : Bound_parameters.t) =
+  Format.fprintf ppf "@[<hov 0>%a@]"
+    (Format.pp_print_list ~pp_sep:Format.pp_print_space print_param)
+    (k |> Bound_parameters.to_list)
+
+and print_param ppf (k : Bound_parameter.t) =
+  fprintf ppf "%s" (Bound_parameter.var k |> Variable.name)
+
+and print_cont ppf (k : Bound_continuation.t) =
+  fprintf ppf "%s" (Continuation.name k)
+
 and print_recursive_let_cont ppf (k : Bound_continuations.t)
       ({continuation_map; body} : recursive_let_expr) =
-  fprintf ppf "[ %a ] " Bound_continuations.print k;
+  fprintf ppf "[@ %a@ ] " Bound_continuations.print k;
   Name_abstraction.pattern_match_for_printing
     (module Bound_parameters) continuation_map
     ~apply_renaming_to_term:apply_renaming_cont_map
@@ -287,7 +352,7 @@ and print_recursive_let_cont ppf (k : Bound_continuations.t)
       fprintf ppf "(%a)\n" Bound_parameters.print k;
       Continuation.Map.iter (print_continuation_handler ppf) body;
     );
-  fprintf ppf " in\n %a" print body
+  fprintf ppf "@ in\n %a" print body
 
 and print_continuation_handler ppf key (t : continuation_handler) =
   Name_abstraction.pattern_match_for_printing
@@ -304,11 +369,11 @@ and print_apply ppf
     print callee
     Apply_expr.Result_continuation.print continuation
     Continuation.print exn_continuation;
-  List.iter (print ppf) args
+  Format.pp_print_list ~pp_sep:Format.pp_print_space print ppf args
 
 and print_apply_cont ppf ({k ; args} : apply_cont_expr) =
-  fprintf ppf "%a " Continuation.print k;
-  List.iter (print ppf) args
+  fprintf ppf "%a@ " print_cont k;
+  Format.pp_print_list ~pp_sep:Format.pp_print_space print ppf args
 
 and print_switch ppf ({scrutinee; arms} : switch_expr) =
   fprintf ppf "switch %a :" print scrutinee;
@@ -456,7 +521,8 @@ module Core_let = struct
     | Prim _, Singleton _
     | Simple _, Singleton _
     | Rec_info _, Singleton _
-    | Set_of_closures _, Set_of_closures _ -> ()
+    | Set_of_closures _, Set_of_closures _
+    | Static_consts _, Static _ -> ()
     | (Prim _ | Simple _ | Rec_info _ | Set_of_closures _ | Static_consts _),
       (Singleton _ | Set_of_closures _ | Static _) ->
       Misc.fatal_error "[Let.create] Mismatched bound pattern and defining expr");
@@ -691,6 +757,9 @@ and switch_to_core (e : Switch.t) : core_exp =
   Switch {
     scrutinee = Switch_expr.scrutinee e |> simple_to_core;
     arms = Switch_expr.arms e |> Targetint_31_63.Map.map apply_cont_to_core;}
+
+let flambda_unit_to_core e : core_exp =
+  Flambda_unit.body e |> flambda_expr_to_core
 
 (* The most naive equality type, a boolean *)
 type eq = bool
