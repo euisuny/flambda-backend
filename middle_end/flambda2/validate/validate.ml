@@ -955,7 +955,7 @@ let rec equiv (env:Env.t) e1 e2 : eq =
 and equiv_let env e1 e2 : eq =
   Core_let.pattern_match_pair e1 e2
     (fun _bound let_bound1 let_bound2 ->
-       equiv_named env e1.body e2.body && equiv env let_bound1 let_bound2)
+       equiv env let_bound1 let_bound2 && equiv_named env e1.body e2.body)
     (fun bound1 bound2 let_bound1 let_bound2 ->
        match e1.body, e2.body with
        | Static_consts consts1, Static_consts consts2 ->
@@ -1203,8 +1203,16 @@ and equiv_call_kind env (k1 : Call_kind.t) (k2 : Call_kind.t) : eq =
 and equiv_apply_cont env
       ({k = k1; args = args1} : apply_cont_expr)
       ({k = k2; args = args2} : apply_cont_expr) : eq =
-  Continuation.equal k1 k2 &&
+  equiv_cont env k1 k2 &&
   zip_fold args1 args2 ~f:(fun x (e1, e2) -> x && equiv env e1 e2) ~acc:true
+
+and equiv_cont _env (e1 : Continuation.t) (e2 : Continuation.t) : eq =
+  match Continuation.sort e1, Continuation.sort e2 with
+  | Toplevel_return, Toplevel_return -> true
+  | Normal_or_exn, Normal_or_exn
+  | Return, Return
+  | Define_root_symbol, Define_root_symbol -> Continuation.equal e1 e2
+  | (Normal_or_exn | Return | Define_root_symbol | Toplevel_return), _ -> false
 
 (* [switch] *)
 and equiv_switch env
