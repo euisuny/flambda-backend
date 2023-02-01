@@ -1,9 +1,5 @@
-(include_subdirs no)
-
-(library
- (name flambda2_validate)
- (wrapped true)
- (instrumentation (backend bisect_ppx))
+(tests
+ (names flambda2_validation)
  (flags
   (:standard
     -principal
@@ -27,14 +23,19 @@
     Flambda2_terms
     -open
     Flambda2_simplify
- ))
- (ocamlopt_flags
-  (:standard -O3))
+    -open
+    Flambda2_validate
+    -open
+    Flambda2_parser
+  )
+ )
  (libraries
    ocamlcommon
-   flambda2_cmx
-   flambda2_simplify
-   flambda2_simplify_shared
-   flambda2_algorithms
+   ocamloptcomp
+   flambda2
+   flambda2_compare
+   flambda2_parser
    flambda2_terms
-))
+   flambda2_cmx))
+
+(include_subdirs no)

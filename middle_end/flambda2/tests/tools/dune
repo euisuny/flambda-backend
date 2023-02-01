@@ -1,5 +1,5 @@
 (executables
-  (names flexpect fldiff flvalidate parseflambda)
+  (names flexpect fldiff parseflambda)
   (modes native)
   (flags (:standard -principal))
   (libraries
@@ -9,5 +9,4 @@
     flambda2_compare
     flambda2_parser
     flambda2_terms
-    flambda2_validate
     flambda2_cmx))
