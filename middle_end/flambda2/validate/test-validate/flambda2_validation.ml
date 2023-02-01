@@ -45,7 +45,7 @@ let () =
 
   let alpha_eq = core_eq core_output core_output_alpha in
 
-  Format.fprintf Format.std_formatter "@.@.Alpha_equality:%s "
+  Format.fprintf Format.std_formatter "@.@.Alpha_equivalence:%s"
     (alpha_eq |> Validate.eq_string);
 
   ()
