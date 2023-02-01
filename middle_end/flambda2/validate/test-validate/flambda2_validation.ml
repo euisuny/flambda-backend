@@ -16,6 +16,6 @@ let parse_flambda file : Flambda_unit.t =
 let () =
   print_endline "Running Flambda2 Validator...";
   let _ =
-    parse_flambda (cwd ^ "/middle_end/flambda2/validate/test-validate/foo.fl")
+    parse_flambda (cwd ^ "/middle_end/flambda2/validate/test-validate/tests/foo.fl")
   in
   ()
