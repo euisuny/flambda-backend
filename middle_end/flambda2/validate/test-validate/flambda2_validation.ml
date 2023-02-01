@@ -4,7 +4,7 @@ open! Validate
 let cwd = "/usr/local/home/iyoon/workspaces/validation/flambda-backend/"
 let extension = ".fl"
 
-(* Test files *)
+(** Test file locations **)
 let simple =
   "/middle_end/flambda2/validate/test-validate/tests/simple.fl"
 let simple_alpha =
@@ -14,7 +14,7 @@ let simple_cont =
 let simple_cont_alpha =
   "/middle_end/flambda2/validate/test-validate/tests/simple-cont-alpha.fl"
 
-(* Parsing *)
+(** Parsing **)
 let parse_flambda file : Flambda_unit.t =
   match Parse_flambda.parse file with
   | Ok unit -> unit
@@ -27,7 +27,9 @@ let parse_flambda file : Flambda_unit.t =
           Flambda_lex.pp_error error);
     exit 1
 
-(* Test suite for checking alpha-equivalence checker [Validate.equiv] *)
+(** Test suite for checking alpha-equivalence checker [Validate.equiv].
+   To add more test cases, add a pair of files that should be alpha-equivalent
+   to this list. **)
 let alpha_equivalence_suite =
   [(simple, simple_alpha);
    (simple_cont, simple_cont_alpha)]
@@ -38,6 +40,9 @@ let check_alpha_equivalence file1 file2 : unit =
     Parse_flambda.make_compilation_unit ~extension ~filename:file1 () in
   Compilation_unit.set_current (Some comp_unit);
 
+  Format.fprintf Format.std_formatter
+    "==============================================================================@.";
+
   let fl_output = parse_flambda (cwd ^ file1) in
   let core_output = flambda_unit_to_core fl_output in
 
@@ -46,21 +51,23 @@ let check_alpha_equivalence file1 file2 : unit =
 
   (* Alpha equivalence check *)
   print Format.std_formatter core_output;
-  Format.fprintf Format.std_formatter "@.@.";
+  Format.fprintf Format.std_formatter
+    "@.------------------------------------------------------------------------------@.";
   print Format.std_formatter core_output_alpha;
 
   let alpha_eq = core_eq core_output core_output_alpha in
 
-  Format.fprintf Format.std_formatter "@.@.====[Alpha_equivalence:%s]====@.@."
+  Format.fprintf Format.std_formatter
+    "@.=============================[α-equivalent?:%s]=============================@.@."
     (alpha_eq |> Validate.eq_string)
 
 let alpha_equivalence_test_suite =
-  Format.fprintf Format.std_formatter "Alpha equivalence test suite:@.@.";
+  Format.fprintf Format.std_formatter "⟪α-Equivalence Test Suite⟫@.@.";
   let _ =
     List.map (fun (e1, e2) -> check_alpha_equivalence e1 e2) alpha_equivalence_suite
   in ()
 
-(* Top-level driver for testing *)
+(** Top-level driver for testing **)
 let () =
   Format.fprintf Format.std_formatter "Running Flambda2 Validator...@.";
   alpha_equivalence_test_suite;
