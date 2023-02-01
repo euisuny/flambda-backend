@@ -764,6 +764,8 @@ let flambda_unit_to_core e : core_exp =
 (* The most naive equality type, a boolean *)
 type eq = bool
 
+let eq_string = string_of_bool
+
 (** Simple program context **)
 (* LATER: Same structure used as [compare/compare.ml],
    might be useful to refactor the structure out of the file *)

@@ -46,6 +46,8 @@ val print : Format.formatter -> core_exp -> unit
 
 type eq
 
+val eq_string : eq -> string
+
 val core_eq : core_exp -> core_exp -> eq
 
 (** [simple_to_core] is a value-lifting translation:
