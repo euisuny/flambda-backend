@@ -1241,7 +1241,14 @@ let rec subst_params (params : Bound_parameters.t) (e : core_exp)
     Apply_cont
       {k = k;
        args = List.map (fun x -> subst_params params x args) args'}
-  | (Let _ | Let_cont _ | Apply _ | Switch _) -> failwith "Unimplemented"
+  | Let _ ->
+    failwith "Unimplemented_param_let"
+  | Let_cont _ ->
+    failwith "Unimplemented_param_letcont"
+  | Apply _ ->
+    failwith "Unimplemented_param_apply"
+  | Switch _ ->
+    failwith "Unimplemented_param_switch"
   | Invalid _ -> e
 
 let rec subst_cont (cont : Bound_continuation.t) (e : core_exp)
@@ -1278,7 +1285,7 @@ let rec normalize (e:core_exp) : core_exp =
   | Let { let_abst; body } ->
     let bound, e, body =
       Core_let.pattern_match {let_abst; body}
-        ~f:(fun bound e body -> (bound, e, body))
+        ~f:(fun bound e body -> (bound, normalize e, body))
     in
     normalize_let bound e body
   | Let_cont e ->
@@ -1312,13 +1319,13 @@ and normalize_let_cont (e:let_cont_expr) : core_exp =
     (* As an intial pass, do something very aggressive here:
        flatten all non_recursive continuations *)
     normalize_let_cont_nonrec handler body
-  | Recursive _handlers -> failwith "Unimplemented"
+  | Recursive _handlers -> failwith "Unimplemented_recursive"
 
 and normalize_apply _callee _continuation _exn_continuation _args _call_kind : core_exp =
-  failwith "Unimplemented"
+  failwith "Unimplemented_apply"
 
-and normalize_apply_cont _k _args : core_exp =
-  failwith "Unimplemented"
+and normalize_apply_cont k args : core_exp =
+  Apply_cont {k = k; args = List.map (fun x -> normalize x) args}
 
 let simulation_relation src tgt =
   let {Simplify.unit = tgt; _} = tgt in
