@@ -325,7 +325,7 @@ and print_let_cont ppf (t : let_cont_expr) =
             print let_body
             print body))
   | Recursive t ->
-    fprintf ppf "letc@ ";
+    fprintf ppf "rec@ ";
     Name_abstraction.pattern_match_for_printing
       (module Bound_continuations) t
       ~apply_renaming_to_term:apply_renaming_recursive_let_expr
@@ -574,6 +574,8 @@ module Core_continuation_handler = struct
   module A = Name_abstraction.Make (Bound_parameters) (T0)
   type t = continuation_handler
   let create = A.create
+  let pattern_match (e : t) (f : Bound_parameters.t -> core_exp -> 'a) : 'a =
+    A.pattern_match e ~f:(fun cont body -> f cont body)
   let pattern_match_pair (t1 : t) (t2 : t)
         (f : Bound_parameters.t -> core_exp -> core_exp -> 'a) : 'a =
     A.pattern_match_pair t1 t2 ~f:(fun params body1 body2 ->
@@ -584,6 +586,8 @@ module Core_letcont_body = struct
   module A = Name_abstraction.Make (Bound_continuation) (T0)
   type t = (Bound_continuation.t, core_exp) Name_abstraction.t
   let create = A.create
+  let pattern_match (e : t) (f : Bound_continuation.t -> core_exp -> 'a) : 'a =
+    A.pattern_match e ~f:(fun cont body -> f cont body)
   let pattern_match_pair (t1 : t) (t2 : t)
         (f : Bound_continuation.t -> core_exp -> core_exp -> 'a) : 'a =
     A.pattern_match_pair t1 t2 ~f:(fun cont body1 body2 ->
@@ -983,7 +987,7 @@ and equiv_static_consts env
   | Static_const (Set_of_closures set1), Static_const (Set_of_closures set2) ->
     equiv_set_of_closures env set1 set2
   | Deleted_code, Deleted_code -> true
-  (* IY: Is it fine to ignore all the other static constants? *)
+  (* IY: Is it fine to treat all the other static constants uniformly? *)
   | (Static_const (Set_of_closures _) |
      Static_const (Block _) |
      Static_const (Boxed_float _) |
@@ -1223,6 +1227,51 @@ and equiv_switch env
 
 let core_eq = Env.create () |> equiv
 
+let rec subst_params (params : Bound_parameters.t) (e : core_exp)
+          (args : core_exp list) : core_exp =
+  let param_list = Bound_parameters.to_list params |>
+                   List.map (fun x -> Bound_parameter.simple x) in
+  let param_args = List.combine param_list args in
+  match e with
+  | Var v ->
+    (match List.assoc_opt v param_args with
+    | Some arg_v -> arg_v
+    | None -> e)
+  | Apply_cont {k ; args =  args'} ->
+    Apply_cont
+      {k = k;
+       args = List.map (fun x -> subst_params params x args) args'}
+  | (Let _ | Let_cont _ | Apply _ | Switch _) -> failwith "Unimplemented"
+  | Invalid _ -> e
+
+let rec subst_cont (cont : Bound_continuation.t) (e : core_exp)
+      (handler : continuation_handler) : core_exp =
+  match e with
+  | Let { let_abst; body } ->
+    let bound, e, body =
+      Core_let.pattern_match {let_abst; body}
+        ~f:(fun bound (e : core_exp) (body : named) ->
+            (bound, subst_cont cont e handler, body))
+    in
+    Core_let.create bound body e
+  | Let_cont _ ->
+    failwith "Unimplemented_letcont"
+  | Apply _ ->
+    failwith "Unimplemented_apply"
+  | Apply_cont {k ; args} ->
+    if Continuation.equal k cont
+    then
+      Core_continuation_handler.pattern_match handler
+        (fun bound body -> subst_params bound body args)
+    else failwith "Unimplemented_applycont"
+  | Switch _ ->
+    failwith "Unimplemented_switch"
+  | Var _ | Invalid _ -> e
+
+let normalize_let_cont_nonrec (handler : continuation_handler)
+      (body : (Bound_continuation.t, core_exp) Name_abstraction.t) : core_exp =
+  Core_letcont_body.pattern_match body (fun cont exp -> subst_cont cont exp handler)
+
 (** Normalization *)
 let rec normalize (e:core_exp) : core_exp =
   match e with
@@ -1244,11 +1293,26 @@ let rec normalize (e:core_exp) : core_exp =
        arms = Targetint_31_63.Map.map normalize arms }
   | Var _ | Invalid _ -> e
 
-and normalize_let (_bound_pat : Bound_pattern.t) (_e : core_exp) (_body : named) : core_exp =
-  failwith "Unimplemented"
+and normalize_let (bound_pat : Bound_pattern.t) (e : core_exp) (body : named) : core_exp =
+  match body with
+  | Simple _v ->
+    failwith "Unimplemented_simple"
+  | Prim _v ->
+    failwith "Unimplmented_prim"
+  | Set_of_closures _v ->
+    failwith "Unimplemented_set_of_closures"
+  | Static_consts _v -> (* FIXME ? *)
+    Core_let.create bound_pat body e
+  | Rec_info _v ->
+    failwith "Unimplemented_rec_info"
 
-and normalize_let_cont (_e:let_cont_expr) : core_exp =
-  failwith "Unimplemented"
+and normalize_let_cont (e:let_cont_expr) : core_exp =
+  match e with
+  | Non_recursive {handler; body} ->
+    (* As an intial pass, do something very aggressive here:
+       flatten all non_recursive continuations *)
+    normalize_let_cont_nonrec handler body
+  | Recursive _handlers -> failwith "Unimplemented"
 
 and normalize_apply _callee _continuation _exn_continuation _args _call_kind : core_exp =
   failwith "Unimplemented"
