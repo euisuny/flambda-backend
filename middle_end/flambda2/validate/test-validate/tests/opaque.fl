@@ -1,0 +1,5 @@
+(let a = %Opaque 42 in cont k (a))
+  where
+    k (a) =
+      let $camlT1 = Block 1 (a) in
+      cont done ($camlT1)

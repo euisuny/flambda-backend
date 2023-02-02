@@ -1,1 +1,3 @@
-(let a = 42 in cont done (a))
+(let $camlSimple = Block 0 (42) in cont k ($camlSimple))
+  where k define_root_symbol (arg) =
+    cont done (arg)
