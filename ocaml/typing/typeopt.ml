@@ -21,6 +21,9 @@ open Asttypes
 open Typedtree
 open Lambda
 
+(* Flag to turn on/off value kind tracking  *)
+let value_kind_flag : bool ref = ref false
+
 (* Expand a type, looking through ordinary synonyms, private synonyms,
    links, and [@@unboxed] types. The returned type will be therefore be none
    of these cases. *)
@@ -181,7 +184,6 @@ let bigarray_type_kind_and_layout env typ =
   | _ ->
     (Pbigarray_unknown, Pbigarray_unknown_layout)
 
-(* IY : Turned off *)
 let value_kind env ty =
   let rec loop env ~visited ~depth ~num_nodes_visited ty
       : int * Lambda.value_kind =
@@ -358,8 +360,7 @@ let value_kind env ty =
     loop env ~visited:Numbers.Int.Set.empty ~depth:0
       ~num_nodes_visited:0 ty
   in
-  value_kind
-  (* Pgenval *)
+  if !value_kind_flag then value_kind else Pgenval
 
 let function_return_value_kind env ty =
   match is_function_type env ty with
