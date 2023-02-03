@@ -1240,9 +1240,17 @@ and subst_pattern_singleton ~bound ~let_body e : core_exp =
    | Named (Simple s) ->
      let v = Simple.var v in
      if (Simple.equal s v) then let_body else e
-   | Named (Prim _) -> e (* TODO *)
-   | Named (Set_of_closures _)
-   | Named (Static_consts _)
+
+   | Named (Prim (Binary (Block_load _, a1, _))) ->
+     if (Simple.equal (Simple.var v) a1) then let_body else e
+
+   | Named (Static_consts [_]) ->
+     (* FIXME WARNING: Here, we will need to substitute something that was bound
+        to a variable as a static constant *) e
+   | Named (Static_consts _) ->
+     failwith "Unimplemented_singleton_static_consts"
+   | Named (Set_of_closures _) ->
+     failwith "Unimplemented_sets_of_closures"
    | Named (Rec_info _) -> e
 
    | Let {let_abst; body} ->
