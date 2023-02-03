@@ -150,8 +150,8 @@ let normalize_term file : unit =
 let () =
   Format.fprintf Format.std_formatter "Running Flambda2 Validator...@.@.";
   (* alpha_equivalence_test_suite (); *)
-  simplify_term "foo.fl";
-  normalize_term "foo.fl";
-  (* simplify_term "let.fl";
-   * normalize_term "let.fl"; *)
+  (* simplify_term "foo.fl";
+   * normalize_term "foo.fl"; *)
+  simplify_term "let.fl";
+  normalize_term "let.fl";
   ()
