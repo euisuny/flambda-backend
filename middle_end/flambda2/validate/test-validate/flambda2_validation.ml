@@ -148,7 +148,7 @@ let normalize_term file : unit =
 
 (** Top-level driver for testing **)
 let () =
-  Format.fprintf Format.std_formatter "Running Flambda2 Validator...@.@. ";
+  Format.fprintf Format.std_formatter "Running Flambda2 Validator...@.@.";
   (* alpha_equivalence_test_suite (); *)
   simplify_term "foo.fl";
   normalize_term "foo.fl";

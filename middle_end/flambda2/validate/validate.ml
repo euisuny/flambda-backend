@@ -516,7 +516,7 @@ end
 
 module Core_let = struct
   module A = Name_abstraction.Make (Bound_pattern) (T0)
-  let create (bound_pattern : Bound_pattern.t) (defining_expr : core_exp) body =
+  let create (bound_pattern : Bound_pattern.t) (defining_expr : core_exp) (body : core_exp) =
     Let { let_abst = A.create bound_pattern body; body = defining_expr }
 
   module Pattern_match_pair_error = struct
@@ -1214,20 +1214,24 @@ and equiv_switch env
 
 let core_eq = Env.create () |> equiv
 
-let _std_print = fprintf Format.std_formatter "@.TERM:%a@." print
+let _std_print =
+  fprintf Format.std_formatter "@.TERM:%a@." print
 
 (** Normalization
 
     - CBV-style reduction for [let] and [letcont] expressions
     - Assumes that the [typeopt/value_kind] flag is [false] *)
 
-(* [Let-β] *)
+(* Substitution funtions for β-reduction *)
+
+(* [Let-β]
+      e[bound\let_body] *)
 let rec subst_pattern ~(bound : Bound_pattern.t) ~let_body (e : core_exp) : core_exp =
   match bound with
   | Singleton bound -> subst_pattern_singleton ~bound ~let_body e
   | Set_of_closures _ ->
     failwith "Unimplemented_subst_clo"
-  | Static static -> subst_pattern_static ~bound ~let_body static e
+  | Static static -> subst_pattern_static_list ~bound ~let_body static e
 
 and subst_pattern_singleton ~bound ~let_body e : core_exp =
   let v : Variable.t = Bound_var.var bound in
@@ -1239,41 +1243,64 @@ and subst_pattern_singleton ~bound ~let_body e : core_exp =
    | Named (Set_of_closures _)
    | Named (Static_consts _)
    | Named (Rec_info _) -> e
-   | Let _ ->
-     failwith "Unimplemented_subst_let"
+
+   | Let {let_abst; body} ->
+     Core_let.pattern_match {let_abst; body}
+       ~f:(fun bound_pat expr body ->
+          Core_let.create
+            bound_pat
+            (subst_pattern_singleton ~bound ~let_body expr)
+            (subst_pattern_singleton ~bound ~let_body body))
+
    | Let_cont _ ->
      failwith "Unimplemented_subst_letcont"
    | Apply _ ->
      failwith "Unimplemented_subst_apply"
-   | Apply_cont _ ->
-     failwith "Unimplemented_subst_applycont"
+
+   | Apply_cont {k; args} ->
+     Apply_cont
+       { k = k;
+         args = List.map (subst_pattern_singleton ~bound ~let_body) args }
    | Switch _ ->
      failwith "Unimplemented_subst_switch"
    | Invalid _ -> e)
 
-and subst_pattern_static ~bound ~let_body static e : core_exp =
-  let static : Bound_static.Pattern.t list = Bound_static.to_list static in
-  let subst_static_pattern (s : Bound_static.Pattern.t) (e : core_exp) =
-    (match e, s with
-     | Named (Static_consts _), _ -> failwith "Unimplemented_static_consts"
-     | Named (Simple v), Block_like s ->
-       if Simple.equal v (Simple.symbol s) then let_body else e
-     | Named (Simple _), (Code _ | Set_of_closures _) ->
-       failwith "Unimplemented_static_named"
-     | Named (Prim _ | Set_of_closures _ | Rec_info _), _ ->
-       failwith "Unimplemented_static_named"
-     | Apply_cont {k ; args}, _ ->
-       Apply_cont
-         {k = k;
-          args = List.map (subst_pattern ~bound ~let_body) args}
-     | ((Let _ | Let_cont _| Apply _|Switch _| Invalid _), _) ->
-        failwith "Unimplemented_static_named"
-    ) in
-  let rec subst_static (s : Bound_static.Pattern.t list) (e : core_exp) =
+and subst_block_like (_bound : Bound_pattern.t) let_body (s : Symbol.t) e =
+  match e with
+  | Named (Simple v) ->
+    if Simple.equal v (Simple.symbol s) then let_body else e
+  | Named (Static_consts _) ->
+    failwith "Unimplemented_static_consts"
+  | Named (Set_of_closures _ | Prim _ | Rec_info _ ) ->
+    failwith "Unimplemented_block_like"
+  | (Let _ | Let_cont _ | Apply _ | Apply_cont _ | Switch _ | Invalid _) ->
+    failwith "Unimplemented"
+
+and subst_pattern_static
+      bound let_body (s : Bound_static.Pattern.t) (e : core_exp) =
+  match e with
+  | Apply_cont {k ; args} ->
+    Apply_cont
+      {k = k;
+       args = List.map (subst_pattern_static bound let_body s) args}
+  | (Named _ | Let _ | Let_cont _ | Apply _ | Switch _) ->
+    (match s with
+    | Block_like s -> subst_block_like bound let_body s e
+    | Set_of_closures _ ->
+      failwith "Unimplemented_static_clo"
+    | Code _ ->
+      failwith "Unimplemented_static_clo")
+  | Invalid _ -> e
+
+(* NOTE: Be careful with dominator-style [Static] scoping.. *)
+and subst_pattern_static_list ~bound ~let_body static e : core_exp =
+  let rec subst_pattern_static_list_ s e =
     (match s with
      | [] -> e
-     | hd :: tl -> subst_static tl (subst_static_pattern hd e)) in
-  subst_static static e
+     | hd :: tl ->
+       subst_pattern_static_list_ tl
+         (subst_pattern_static bound let_body hd e)) in
+  subst_pattern_static_list_ (Bound_static.to_list static) e
 
 let rec subst_params (params : Bound_parameters.t) (e : core_exp)
           (args : core_exp list) : core_exp =
@@ -1286,9 +1313,12 @@ let rec subst_params (params : Bound_parameters.t) (e : core_exp)
     (match List.assoc_opt s param_args with
     | Some arg_v -> arg_v
     | None -> e)
-  | Named (Prim _) | Named (Set_of_closures _) | Named (Static_consts _ )
-  | Named (Rec_info _) ->
-    failwith "Unimplemented_param_named"
+  | Named (Prim _) ->
+    failwith "Unimplemented_param_named_prim"
+  | Named (Set_of_closures _) ->
+    failwith "Unimplemented_param_named_clo"
+  | Named (Static_consts _)
+  | Named (Rec_info _) -> e
   | Apply_cont {k ; args =  args'} ->
     Apply_cont
       {k = k;
@@ -1329,8 +1359,7 @@ let rec subst_cont (cont : Bound_continuation.t) (e : core_exp)
   | Invalid _ -> e
 
 (* TODO : IY: Is there an evaluator for primitives already? *)
-let eval_prim (_v : Flambda_primitive.t) : Flambda_primitive.t =
-  failwith "Unimplemented_eval_prim"
+let eval_prim (v : Flambda_primitive.t) : Flambda_primitive.t = v
 
 (* This is a "normalization" of [named] expression, in quotations because there
   is some simple evaluation that occurs for primitive arithmetic expressions *)
@@ -1384,6 +1413,7 @@ and normalize_let_cont (e:let_cont_expr) : core_exp =
       Core_continuation_handler.pattern_match handler
         (fun bound body -> (bound, normalize body))
     in
+    (* std_print let_body; *)
     let cont, body =
       Core_letcont_body.pattern_match body (fun bound body -> (bound, body))
     in
@@ -1400,7 +1430,7 @@ and normalize_apply_cont k args : core_exp =
             args ⟶ args'
       --------------------------
         k args ⟶ k args'       *)
-  Apply_cont {k = k; args = List.map (fun x -> normalize x) args}
+  Apply_cont {k = k; args = List.map normalize args}
 
 let simulation_relation src tgt =
   let {Simplify.unit = tgt; _} = tgt in
