@@ -61,10 +61,10 @@ let check_alpha_equivalence file1 file2 : unit =
     "@..............................[α-equivalent?:%s]............................@.@."
     (alpha_eq |> Validate.eq_string |> String.uppercase_ascii)
 
-let alpha_equivalence_test_suite =
+let alpha_equivalence_test_suite (_ : unit) =
   Format.fprintf Format.std_formatter "⟪α-Equivalence Test Suite⟫@.@.";
-  let _ =
-    List.map (fun (e1, e2) -> check_alpha_equivalence e1 e2) alpha_equivalence_suite
+  let _ = List.map (fun (e1, e2) ->
+    check_alpha_equivalence e1 e2) alpha_equivalence_suite
   in ()
 
 let simplify_term file : unit =
@@ -102,11 +102,11 @@ let simplify_term file : unit =
     "@.-----------------------------↓↓--[simplify]--↓↓-------------------------------@.";
   print Format.std_formatter tgt_core;
   Format.fprintf Format.std_formatter
-    "@.------------------------------------------------------------------------------@."
+    "@.@.------------------------------------------------------------------------------@."
 
 
 (* FIXME: Flushing to stdoutput seems to behave erratically, can't factor out the
-   stylizied breaklines *)
+   stylized breaklines *)
 let normalize_term file : unit =
   let comp_unit =
     Parse_flambda.make_compilation_unit ~extension ~filename:file () in
@@ -123,7 +123,7 @@ let normalize_term file : unit =
   let tgt_core = flambda_unit_to_core simplify_result in
 
   Format.fprintf Format.std_formatter
-    "----------------[Try your best at normalizing]--------------------------------@.";
+    "\t\t\t\tNormalizing...\t\t\t@.";
   Format.fprintf Format.std_formatter
     "------------------------------------------------------------------------------@.";
 
@@ -149,8 +149,9 @@ let normalize_term file : unit =
 (** Top-level driver for testing **)
 let () =
   Format.fprintf Format.std_formatter "Running Flambda2 Validator...@.@. ";
-  alpha_equivalence_test_suite;
+  (* alpha_equivalence_test_suite (); *)
   simplify_term "foo.fl";
   normalize_term "foo.fl";
-  (* simplify_term "let.fl"; *)
+  (* simplify_term "let.fl";
+   * normalize_term "let.fl"; *)
   ()

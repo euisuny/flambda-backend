@@ -1214,7 +1214,7 @@ and equiv_switch env
 
 let core_eq = Env.create () |> equiv
 
-let std_print = fprintf Format.std_formatter "@.TERM:%a@." print
+let _std_print = fprintf Format.std_formatter "@.TERM:%a@." print
 
 (** Normalization
 
@@ -1224,46 +1224,56 @@ let std_print = fprintf Format.std_formatter "@.TERM:%a@." print
 (* [Let-β] *)
 let rec subst_pattern ~(bound : Bound_pattern.t) ~let_body (e : core_exp) : core_exp =
   match bound with
-  | Singleton v -> (* Singletons are only used for [Simple]s *)
-    let v : Variable.t = Bound_var.var v in
-    (match e with
-     | Named (Simple s) ->
-       let v = Simple.var v in
-       if (Simple.equal s v) then let_body else e
-     | Named (Prim _) -> e (* TODO *)
-     | Named (Set_of_closures _)
-     | Named (Static_consts _)
-     | Named (Rec_info _) -> e
-     | Let { let_abst; body } ->
-       failwith "Unimplemented_subst_let"
-     | Let_cont e ->
-       failwith "Unimplemented_subst_letcont"
-     | Apply e ->
-       failwith "Unimplemented_subst_apply"
-     | Apply_cont e ->
-       failwith "Unimplemented_subst_applycont"
-     | Switch e ->
-       failwith "Unimplemented_subst_switch"
-     | Invalid _ -> e)
-  | Set_of_closures set_of_clo ->
+  | Singleton bound -> subst_pattern_singleton ~bound ~let_body e
+  | Set_of_closures _ ->
     failwith "Unimplemented_subst_clo"
-  | Static static -> (
-    let static : Bound_static.Pattern.t list = Bound_static.to_list static in
-    let subst_static_pattern (s : Bound_static.Pattern.t) (e : core_exp) =
-      (match e, s with
-      | Named (Static_consts s), _ -> failwith "Unimplemented_static_consts"
-      | Named (Simple v), Block_like s ->
-        if Simple.equal v (Simple.symbol s) then let_body else e
-      | Apply_cont {k ; args}, _ ->
-        Apply_cont
-          {k = k;
-           args = List.map (subst_pattern ~bound ~let_body) args}) in
-    let rec subst_static (s : Bound_static.Pattern.t list) (e : core_exp) =
-      (match s with
-       | [] -> e
-       | hd :: tl -> subst_static tl (subst_static_pattern hd e)) in
-    subst_static static e)
-  | _ -> failwith "Unimplemented_static"
+  | Static static -> subst_pattern_static ~bound ~let_body static e
+
+and subst_pattern_singleton ~bound ~let_body e : core_exp =
+  let v : Variable.t = Bound_var.var bound in
+  (match e with
+   | Named (Simple s) ->
+     let v = Simple.var v in
+     if (Simple.equal s v) then let_body else e
+   | Named (Prim _) -> e (* TODO *)
+   | Named (Set_of_closures _)
+   | Named (Static_consts _)
+   | Named (Rec_info _) -> e
+   | Let _ ->
+     failwith "Unimplemented_subst_let"
+   | Let_cont _ ->
+     failwith "Unimplemented_subst_letcont"
+   | Apply _ ->
+     failwith "Unimplemented_subst_apply"
+   | Apply_cont _ ->
+     failwith "Unimplemented_subst_applycont"
+   | Switch _ ->
+     failwith "Unimplemented_subst_switch"
+   | Invalid _ -> e)
+
+and subst_pattern_static ~bound ~let_body static e : core_exp =
+  let static : Bound_static.Pattern.t list = Bound_static.to_list static in
+  let subst_static_pattern (s : Bound_static.Pattern.t) (e : core_exp) =
+    (match e, s with
+     | Named (Static_consts _), _ -> failwith "Unimplemented_static_consts"
+     | Named (Simple v), Block_like s ->
+       if Simple.equal v (Simple.symbol s) then let_body else e
+     | Named (Simple _), (Code _ | Set_of_closures _) ->
+       failwith "Unimplemented_static_named"
+     | Named (Prim _ | Set_of_closures _ | Rec_info _), _ ->
+       failwith "Unimplemented_static_named"
+     | Apply_cont {k ; args}, _ ->
+       Apply_cont
+         {k = k;
+          args = List.map (subst_pattern ~bound ~let_body) args}
+     | ((Let _ | Let_cont _| Apply _|Switch _| Invalid _), _) ->
+        failwith "Unimplemented_static_named"
+    ) in
+  let rec subst_static (s : Bound_static.Pattern.t list) (e : core_exp) =
+    (match s with
+     | [] -> e
+     | hd :: tl -> subst_static tl (subst_static_pattern hd e)) in
+  subst_static static e
 
 let rec subst_params (params : Bound_parameters.t) (e : core_exp)
           (args : core_exp list) : core_exp =
@@ -1276,7 +1286,8 @@ let rec subst_params (params : Bound_parameters.t) (e : core_exp)
     (match List.assoc_opt s param_args with
     | Some arg_v -> arg_v
     | None -> e)
-  | Named _ ->
+  | Named (Prim _) | Named (Set_of_closures _) | Named (Static_consts _ )
+  | Named (Rec_info _) ->
     failwith "Unimplemented_param_named"
   | Apply_cont {k ; args =  args'} ->
     Apply_cont
@@ -1296,6 +1307,7 @@ let rec subst_params (params : Bound_parameters.t) (e : core_exp)
 let rec subst_cont (cont : Bound_continuation.t) (e : core_exp)
     (handler_params : Bound_parameters.t) (handler_body : core_exp) : core_exp =
   match e with
+  | Named _ -> failwith "Unimplemented_named"
   | Let { let_abst; body } ->
     let bound, e, body =
       Core_let.pattern_match {let_abst; body}
@@ -1314,14 +1326,10 @@ let rec subst_cont (cont : Bound_continuation.t) (e : core_exp)
       failwith "Unimplemented_apply_cont"
   | Switch _ ->
     failwith "Unimplemented_subst_cont"
-
-let normalize_let_cont_nonrec ~(handler_bound : Bound_parameters.t)
-      ~(handler_body : core_exp)
-      (body : (Bound_continuation.t, core_exp) Name_abstraction.t) : core_exp =
-  failwith "Unimplemented_normlize_letcont_nonrec"
+  | Invalid _ -> e
 
 (* TODO : IY: Is there an evaluator for primitives already? *)
-let eval_prim (v : Flambda_primitive.t) : Flambda_primitive.t =
+let eval_prim (_v : Flambda_primitive.t) : Flambda_primitive.t =
   failwith "Unimplemented_eval_prim"
 
 (* This is a "normalization" of [named] expression, in quotations because there
@@ -1346,12 +1354,11 @@ let rec normalize (e:core_exp) : core_exp =
   | Apply {callee; continuation; exn_continuation; args; call_kind} ->
     normalize_apply callee continuation exn_continuation args call_kind |> normalize
   | Apply_cont {k ; args} ->
+    (* The recursive call for [apply_cont] is done for the arguments *)
     normalize_apply_cont k args
-  | Switch {scrutinee ; arms} ->
-    Switch
-      {scrutinee = normalize scrutinee;
-       arms = Targetint_31_63.Map.map normalize arms }
-  | Named _ | Invalid _ -> e
+  | Switch _ -> failwith "Unimplemented"
+  | Named e -> Named (normalize_named e)
+  | Invalid _ -> e
 
 and normalize_let let_abst body : core_exp =
   (* [LetL]
