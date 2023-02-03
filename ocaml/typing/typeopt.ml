@@ -179,8 +179,9 @@ let bigarray_type_kind_and_layout env typ =
        bigarray_decode_type env layout_type layout_table
                             Pbigarray_unknown_layout)
   | _ ->
-      (Pbigarray_unknown, Pbigarray_unknown_layout)
+    (Pbigarray_unknown, Pbigarray_unknown_layout)
 
+(* IY : Turned off *)
 let value_kind env ty =
   let rec loop env ~visited ~depth ~num_nodes_visited ty
       : int * Lambda.value_kind =
@@ -358,6 +359,7 @@ let value_kind env ty =
       ~num_nodes_visited:0 ty
   in
   value_kind
+  (* Pgenval *)
 
 let function_return_value_kind env ty =
   match is_function_type env ty with
