@@ -8,7 +8,7 @@ let fprintf = Format.fprintf
    (3) Ignored traps for now *)
 
 type core_exp =
-  | Var of Simple.t
+  | Named of named
   | Let of let_expr
   | Let_cont of let_cont_expr
   | Apply of apply_expr
@@ -22,7 +22,7 @@ type core_exp =
    [e1] = body **)
 and let_expr =
   { let_abst : (Bound_pattern.t, core_exp) Name_abstraction.t;
-    body : named; }
+    body : core_exp; }
 
 and named =
   | Simple of Simple.t
@@ -42,7 +42,7 @@ and static_const_or_code =
 and static_const_group = static_const_or_code list
 
 and let_cont_expr =
-  (* Non-recursive case [let k x = e1 in e2]
+  (* Non-recursive case [e2 where k x = e1]
 
      [fun x -> e1] = handler
      bound variable [k] = Bound_continuation.t
@@ -91,7 +91,7 @@ and switch_expr =
 (** Nominal renaming for [core_exp] **)
 let rec apply_renaming t renaming : core_exp =
   match t with
-  | Var t -> Var (Simple.apply_renaming t renaming)
+  | Named t -> Named (apply_renaming_named t renaming)
   | Let t -> Let (apply_renaming_let t renaming)
   | Let_cont t -> Let_cont (apply_renaming_let_cont t renaming)
   | Apply t -> Apply (apply_renaming_apply t renaming)
@@ -107,7 +107,7 @@ and apply_renaming_let { let_abst; body } renaming : let_expr =
       let_abst renaming
       ~apply_renaming_to_term:apply_renaming
   in
-  let defining_expr' = apply_renaming_named body renaming in
+  let defining_expr' = apply_renaming body renaming in
   { let_abst = let_abst'; body = defining_expr' }
 
 and apply_renaming_named t renaming : named =
@@ -211,9 +211,9 @@ and apply_renaming_switch {scrutinee; arms} renaming : switch_expr =
 let rec print ppf e =
   fprintf ppf "(@[<hov 1>";
   (match e with
-   | Var t ->
-     fprintf ppf "var@ ";
-     Simple.print ppf t;
+   | Named t ->
+     fprintf ppf "named@ ";
+     print_named ppf t;
    | Let t ->
      fprintf ppf "let@ ";
      print_let ppf t;
@@ -240,7 +240,7 @@ and print_let ppf ({let_abst; body} : let_expr) =
     ~f:(fun bound let_body ->
         fprintf ppf "(bound@ (%a),@ body@ (%a))@ in=%a"
         print_bound_pattern bound
-        print_named body
+        print body
         print let_body)
 
 and print_bound_pattern ppf (t : Bound_pattern.t) =
@@ -387,7 +387,7 @@ and print_arm ppf key arm =
 (** [ids_for_export] is the set of bound variables for a given expression **)
 let rec ids_for_export (t : core_exp) =
   match t with
-  | Var t -> Ids_for_export.from_simple t
+  | Named t -> ids_for_export_named t
   | Let t -> ids_for_export_let t
   | Let_cont t -> ids_for_export_let_cont t
   | Apply t -> ids_for_export_apply t
@@ -397,7 +397,7 @@ let rec ids_for_export (t : core_exp) =
 
 (* ids for [Let_expr] *)
 and ids_for_export_let { let_abst; body } =
-  let body_ids = ids_for_export_named body in
+  let body_ids = ids_for_export body in
   let let_abst_ids =
     Name_abstraction.ids_for_export
       (module Bound_pattern)
@@ -516,16 +516,7 @@ end
 
 module Core_let = struct
   module A = Name_abstraction.Make (Bound_pattern) (T0)
-  let create (bound_pattern : Bound_pattern.t) (defining_expr : named) body =
-    (match defining_expr, bound_pattern with
-    | Prim _, Singleton _
-    | Simple _, Singleton _
-    | Rec_info _, Singleton _
-    | Set_of_closures _, Set_of_closures _
-    | Static_consts _, Static _ -> ()
-    | (Prim _ | Simple _ | Rec_info _ | Set_of_closures _ | Static_consts _),
-      (Singleton _ | Set_of_closures _ | Static _) ->
-      Misc.fatal_error "[Let.create] Mismatched bound pattern and defining expr");
+  let create (bound_pattern : Bound_pattern.t) (defining_expr : core_exp) body =
     Let { let_abst = A.create bound_pattern body; body = defining_expr }
 
   module Pattern_match_pair_error = struct
@@ -660,7 +651,7 @@ module Core_code = struct
 end
 
 (** Translation from flambda2 terms to simplified core language **)
-let simple_to_core (v : Simple.t) : core_exp = Var v
+let simple_to_core (v : Simple.t) : core_exp = Named (Simple v)
 
 let rec flambda_expr_to_core (e: expr) : core_exp =
   let e = Expr.descr e in
@@ -677,13 +668,14 @@ and let_to_core (e : Let_expr.t) : core_exp =
   Core_let.create var (Let_expr.defining_expr e |> named_to_core)
     (flambda_expr_to_core body)
 
-and named_to_core (e : Flambda.named) : named =
-  match e with
-  | Simple e -> Simple e
-  | Prim (t, _) -> Prim t
-  | Set_of_closures e -> Set_of_closures e
-  | Static_consts e -> Static_consts (static_consts_to_core e)
-  | Rec_info t -> Rec_info t
+and named_to_core (e : Flambda.named) : core_exp =
+  Named (
+    match e with
+    | Simple e -> Simple e
+    | Prim (t, _) -> Prim t
+    | Set_of_closures e -> Set_of_closures e
+    | Static_consts e -> Static_consts (static_consts_to_core e)
+    | Rec_info t -> Rec_info t)
 
 and static_consts_to_core (e : Flambda.static_const_group) : static_const_group =
   Static_const_group.to_list e |> List.map static_const_to_core
@@ -945,36 +937,31 @@ let equiv_method_kind _env (k1 : Call_kind.Method_kind.t) (k2 : Call_kind.Method
 
 let rec equiv (env:Env.t) e1 e2 : eq =
   match e1, e2 with
-  | Var v1, Var v2 -> equiv_simple env v1 v2
+  | Named v1, Named v2 -> equiv_named env v1 v2
   | Let e1, Let e2 -> equiv_let env e1 e2
   | Let_cont e1, Let_cont e2 -> equiv_let_cont env e1 e2
   | Apply e1, Apply e2 -> equiv_apply env e1 e2
   | Apply_cont e1, Apply_cont e2 -> equiv_apply_cont env e1 e2
   | Switch e1, Switch e2 -> equiv_switch env e1 e2
   | Invalid _, Invalid _ -> true
-  | (Var _ | Let _ | Let_cont _ | Apply _ | Apply_cont _ | Switch _ | Invalid _), _ ->
+  | (Named _ | Let _ | Let_cont _ | Apply _ | Apply_cont _ | Switch _ | Invalid _), _ ->
     false
 
 (* [let_expr] *)
 and equiv_let env e1 e2 : eq =
   Core_let.pattern_match_pair e1 e2
     (fun _bound let_bound1 let_bound2 ->
-       equiv env let_bound1 let_bound2 && equiv_named env e1.body e2.body)
+       equiv env let_bound1 let_bound2 && equiv env e1.body e2.body)
     (fun bound1 bound2 let_bound1 let_bound2 ->
-       match e1.body, e2.body with
-       | Static_consts consts1, Static_consts consts2 ->
          equiv_let_symbol_exprs env
-           (bound1, consts1, let_bound1)
-           (bound2, consts2, let_bound2)
-       | (Simple _ | Prim _ | Set_of_closures _ | Static_consts _ | Rec_info _), _ ->
-         Misc.fatal_error "Static LHS has dynamic RHS")
+           (bound1, e1.body, let_bound1)
+           (bound2, e2.body, let_bound2))
   |> function | Ok comp -> comp | Error _ -> false
 
 and equiv_let_symbol_exprs env
       (static1, const1, body1) (static2, const2, body2) : eq =
   equiv_bound_static env static1 static2 &&
-  (List.combine const1 const2 |>
-   List.fold_left (fun x (e1, e2) -> x && equiv_static_consts env e1 e2) true)  &&
+  equiv env const1 const2 &&
   equiv env body1 body2
 
 and equiv_static_consts env
@@ -1227,16 +1214,70 @@ and equiv_switch env
 
 let core_eq = Env.create () |> equiv
 
+let std_print = fprintf Format.std_formatter "@.TERM:%a@." print
+
+(** Normalization
+
+    - CBV-style reduction for [let] and [letcont] expressions
+    - Assumes that the [typeopt/value_kind] flag is [false] *)
+
+(* [Let-β] *)
+let rec subst_pattern ~(bound : Bound_pattern.t) ~let_body (e : core_exp) : core_exp =
+  match bound with
+  | Singleton v -> (* Singletons are only used for [Simple]s *)
+    let v : Variable.t = Bound_var.var v in
+    (match e with
+     | Named (Simple s) ->
+       let v = Simple.var v in
+       if (Simple.equal s v) then let_body else e
+     | Named (Prim _) -> e (* TODO *)
+     | Named (Set_of_closures _)
+     | Named (Static_consts _)
+     | Named (Rec_info _) -> e
+     | Let { let_abst; body } ->
+       failwith "Unimplemented_subst_let"
+     | Let_cont e ->
+       failwith "Unimplemented_subst_letcont"
+     | Apply e ->
+       failwith "Unimplemented_subst_apply"
+     | Apply_cont e ->
+       failwith "Unimplemented_subst_applycont"
+     | Switch e ->
+       failwith "Unimplemented_subst_switch"
+     | Invalid _ -> e)
+  | Set_of_closures set_of_clo ->
+    failwith "Unimplemented_subst_clo"
+  | Static static -> (
+    let static : Bound_static.Pattern.t list = Bound_static.to_list static in
+    let subst_static_pattern (s : Bound_static.Pattern.t) (e : core_exp) =
+      (match e, s with
+      | Named (Static_consts s), _ -> failwith "Unimplemented_static_consts"
+      | Named (Simple v), Block_like s ->
+        if Simple.equal v (Simple.symbol s) then let_body else e
+      | Apply_cont {k ; args}, _ ->
+        Apply_cont
+          {k = k;
+           args = List.map (subst_pattern ~bound ~let_body) args}) in
+    let rec subst_static (s : Bound_static.Pattern.t list) (e : core_exp) =
+      (match s with
+       | [] -> e
+       | hd :: tl -> subst_static tl (subst_static_pattern hd e)) in
+    subst_static static e)
+  | _ -> failwith "Unimplemented_static"
+
 let rec subst_params (params : Bound_parameters.t) (e : core_exp)
           (args : core_exp list) : core_exp =
-  let param_list = Bound_parameters.to_list params |>
-                   List.map (fun x -> Bound_parameter.simple x) in
+  let param_list =
+    Bound_parameters.to_list params |> List.map Bound_parameter.simple
+  in
   let param_args = List.combine param_list args in
   match e with
-  | Var v ->
-    (match List.assoc_opt v param_args with
+  | Named (Simple s) ->
+    (match List.assoc_opt s param_args with
     | Some arg_v -> arg_v
     | None -> e)
+  | Named _ ->
+    failwith "Unimplemented_param_named"
   | Apply_cont {k ; args =  args'} ->
     Apply_cont
       {k = k;
@@ -1251,14 +1292,15 @@ let rec subst_params (params : Bound_parameters.t) (e : core_exp)
     failwith "Unimplemented_param_switch"
   | Invalid _ -> e
 
+(* [LetCont-β] *)
 let rec subst_cont (cont : Bound_continuation.t) (e : core_exp)
-      (handler : continuation_handler) : core_exp =
+    (handler_params : Bound_parameters.t) (handler_body : core_exp) : core_exp =
   match e with
   | Let { let_abst; body } ->
     let bound, e, body =
       Core_let.pattern_match {let_abst; body}
-        ~f:(fun bound (e : core_exp) (body : named) ->
-            (bound, subst_cont cont e handler, body))
+        ~f:(fun bound (e : core_exp) (body : core_exp) ->
+            (bound, subst_cont cont e handler_params handler_body, body))
     in
     Core_let.create bound body e
   | Let_cont _ ->
@@ -1267,64 +1309,90 @@ let rec subst_cont (cont : Bound_continuation.t) (e : core_exp)
     failwith "Unimplemented_apply"
   | Apply_cont {k ; args} ->
     if Continuation.equal k cont
-    then
-      Core_continuation_handler.pattern_match handler
-        (fun bound body -> subst_params bound body args)
-    else failwith "Unimplemented_applycont"
+    then subst_params handler_params handler_body args
+    else
+      failwith "Unimplemented_apply_cont"
   | Switch _ ->
-    failwith "Unimplemented_switch"
-  | Var _ | Invalid _ -> e
+    failwith "Unimplemented_subst_cont"
 
-let normalize_let_cont_nonrec (handler : continuation_handler)
+let normalize_let_cont_nonrec ~(handler_bound : Bound_parameters.t)
+      ~(handler_body : core_exp)
       (body : (Bound_continuation.t, core_exp) Name_abstraction.t) : core_exp =
-  Core_letcont_body.pattern_match body (fun cont exp -> subst_cont cont exp handler)
+  failwith "Unimplemented_normlize_letcont_nonrec"
 
-(** Normalization *)
+(* TODO : IY: Is there an evaluator for primitives already? *)
+let eval_prim (v : Flambda_primitive.t) : Flambda_primitive.t =
+  failwith "Unimplemented_eval_prim"
+
+(* This is a "normalization" of [named] expression, in quotations because there
+  is some simple evaluation that occurs for primitive arithmetic expressions *)
+let normalize_named (body : named) : named =
+  match body with
+  | Simple _ (* A [Simple] is a register-sized value *)
+  | Set_of_closures _ (* Map of [Code_id]s and [Simple]s corresponding to
+                         function and value slots*)
+  | Rec_info _ (* Information about inlining recursive calls, an integer variable *)
+  | Static_consts _ -> (* [Static_consts] are statically-allocated values *)
+    body (* TODO (LATER): For [Static_consts], we might want to implement η-rules for
+                 [Blocks]? *)
+  | Prim v -> Prim (eval_prim v)
+
 let rec normalize (e:core_exp) : core_exp =
   match e with
   | Let { let_abst; body } ->
-    let bound, e, body =
-      Core_let.pattern_match {let_abst; body}
-        ~f:(fun bound e body -> (bound, normalize e, body))
-    in
-    normalize_let bound e body
+    normalize_let let_abst body |> normalize
   | Let_cont e ->
-    normalize_let_cont e
+    normalize_let_cont e |> normalize
   | Apply {callee; continuation; exn_continuation; args; call_kind} ->
-    normalize_apply callee continuation exn_continuation args call_kind
+    normalize_apply callee continuation exn_continuation args call_kind |> normalize
   | Apply_cont {k ; args} ->
     normalize_apply_cont k args
   | Switch {scrutinee ; arms} ->
     Switch
       {scrutinee = normalize scrutinee;
        arms = Targetint_31_63.Map.map normalize arms }
-  | Var _ | Invalid _ -> e
+  | Named _ | Invalid _ -> e
 
-and normalize_let (bound_pat : Bound_pattern.t) (e : core_exp) (body : named) : core_exp =
-  match body with
-  | Simple _v ->
-    failwith "Unimplemented_simple"
-  | Prim _v ->
-    failwith "Unimplmented_prim"
-  | Set_of_closures _v ->
-    failwith "Unimplemented_set_of_closures"
-  | Static_consts _v -> (* FIXME ? *)
-    Core_let.create bound_pat body e
-  | Rec_info _v ->
-    failwith "Unimplemented_rec_info"
+and normalize_let let_abst body : core_exp =
+  (* [LetL]
+                  e1 ⟶ e1'
+     -------------------------------------
+     let x = e1 in e2 ⟶ let x = e1' in e2 *)
+  let bound, e, let_body =
+    Core_let.pattern_match {let_abst; body}
+      ~f:(fun bound e body -> (bound, e, normalize body))
+  in
+  (* [Let-β]
+    let x = v in e2 ⟶ e2 [x\v] *)
+  subst_pattern ~bound ~let_body e
 
 and normalize_let_cont (e:let_cont_expr) : core_exp =
   match e with
   | Non_recursive {handler; body} ->
-    (* As an intial pass, do something very aggressive here:
-       flatten all non_recursive continuations *)
-    normalize_let_cont_nonrec handler body
+    (* [LetContR]
+                        e2 ⟶ e2'
+       --------------------------------------------
+       e1 where k args = e2 ⟶ e1 where k args = e2' *)
+    let bound, let_body =
+      Core_continuation_handler.pattern_match handler
+        (fun bound body -> (bound, normalize body))
+    in
+    let cont, body =
+      Core_letcont_body.pattern_match body (fun bound body -> (bound, body))
+    in
+    (* [LetCont-β]
+       e1 where k args = v ⟶ e1 [k \ λ args. v] *)
+    subst_cont cont body bound let_body
   | Recursive _handlers -> failwith "Unimplemented_recursive"
 
 and normalize_apply _callee _continuation _exn_continuation _args _call_kind : core_exp =
   failwith "Unimplemented_apply"
 
 and normalize_apply_cont k args : core_exp =
+  (* [ApplyCont]
+            args ⟶ args'
+      --------------------------
+        k args ⟶ k args'       *)
   Apply_cont {k = k; args = List.map (fun x -> normalize x) args}
 
 let simulation_relation src tgt =
