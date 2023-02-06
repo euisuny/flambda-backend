@@ -1235,18 +1235,30 @@ let rec subst_pattern ~(bound : Bound_pattern.t) ~let_body (e : core_exp) : core
   | Static static -> subst_pattern_static_list ~bound ~let_body static e
 
 and subst_pattern_singleton ~bound ~let_body e : core_exp =
-  let v : Variable.t = Bound_var.var bound in
   (match e with
    | Named (Simple s) ->
-     let v = Simple.var v in
-     if (Simple.equal s v) then let_body else e
+     let bound : Variable.t = Bound_var.var bound in
+     let bound = Simple.var bound in
+     if (Simple.equal s bound) then let_body else e
 
    | Named (Prim (Binary (Block_load _, a1, _))) ->
-     if (Simple.equal (Simple.var v) a1) then let_body else e
+     let bound : Variable.t = Bound_var.var bound in
+     if (Simple.equal a1 (Simple.var bound)) then let_body else e
 
-   | Named (Static_consts [_]) ->
-     (* FIXME WARNING: Here, we will need to substitute something that was bound
-        to a variable as a static constant *) e
+   | Named (Static_consts [Static_const (Block (tag, mut, [x]))]) ->
+     let bound : Variable.t = Bound_var.var bound in
+     (* N.B: static constants can refer to variables. *)
+      (match x with
+      | Field_of_static_block.Symbol s ->
+        if (Simple.same (Simple.symbol s) (Simple.var bound))
+        then let_body
+        else e
+      | Tagged_immediate _ -> e
+      | Dynamically_computed (var, _) ->
+        if (Simple.same (Simple.var var) (Simple.var bound))
+        then let_body
+        else e)
+
    | Named (Static_consts _) ->
      failwith "Unimplemented_singleton_static_consts"
    | Named (Set_of_closures _) ->
@@ -1406,8 +1418,35 @@ let rec subst_cont (cont_e1: core_exp) (k: Bound_continuation.t)
     failwith "Unimplemented_subst_cont"
   | Invalid _ -> cont_e1
 
-(* TODO : IY: Is there an evaluator for primitives already? *)
-let eval_prim (v : Flambda_primitive.t) : Flambda_primitive.t = v
+(* TODO : Need to write an evaluator for primitives *)
+let eval_prim (v : Flambda_primitive.t) : named =
+  match v with
+  | Binary (Block_load (kind, mut), arg1, arg2) ->
+    failwith "Unimplemented_eval_prim_binary_block_load"
+  | Variadic
+      (Make_block
+         (Values (tag, [kind]), mut, alloc_mode), [n]) ->
+    (match Flambda_kind.With_subkind.kind kind with
+     | Value ->
+       let constant =
+         Simple.pattern_match' n
+           ~var:(fun _ ~coercion:_ -> failwith "No variables allowed")
+           ~symbol:(fun _ ~coercion:_ -> failwith "No symbols allowed")
+           ~const:(fun t -> t) in
+       (match Int_ids.Const.descr constant with
+        | Tagged_immediate i ->
+          let block =
+            (Static_const.block tag Immutable
+              [Tagged_immediate i]) in
+          Static_consts [(Static_const block)]
+        | _ -> failwith "Unimplemented constant")
+
+      | _ ->
+        failwith "[Unimplemented eval_prim] Making block for non-value kind")
+  | Binary (b, arg1, arg2) ->
+    failwith "Unimplemented_eval_prim_binary"
+  | (Nullary _ | Unary _ | Ternary _ | Variadic _) ->
+    failwith "Unimplemented_eval_prim"
 
 (* This is a "normalization" of [named] expression, in quotations because there
   is some simple evaluation that occurs for primitive arithmetic expressions *)
@@ -1420,7 +1459,7 @@ let normalize_named (body : named) : named =
   | Static_consts _ -> (* [Static_consts] are statically-allocated values *)
     body (* TODO (LATER): For [Static_consts], we might want to implement η-rules for
                  [Blocks]? *)
-  | Prim v -> Prim (eval_prim v)
+  | Prim v -> eval_prim v
 
 let rec normalize (e:core_exp) : core_exp =
   match e with
@@ -1445,7 +1484,7 @@ and normalize_let let_abst body : core_exp =
                   e1 ⟶ e1'
      -------------------------------------
      let x = e1 in e2 ⟶ let x = e1' in e2 *)
-  let x, e1, e2=
+  let x, e1, e2 =
     Core_let.pattern_match {let_abst; body}
       ~f:(fun ~x ~e1 ~e2 -> (x, normalize e1, e2))
   in
