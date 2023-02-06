@@ -517,7 +517,7 @@ end
 module Core_let = struct
   module A = Name_abstraction.Make (Bound_pattern) (T0)
   let create ~(x : Bound_pattern.t) ~(e1 : core_exp) ~(e2 : core_exp)  =
-    Let { let_abst = A.create x e2; body = e1}
+    Let { let_abst = A.create x e2; body = e1 }
 
   module Pattern_match_pair_error = struct
     type t = Mismatched_let_bindings
@@ -1301,10 +1301,12 @@ and subst_block_like
     -> failwith "Unimplemented_block_like_prim_unary"
   | Prim (Ternary _)
     -> failwith "Unimplemented_block_like_prim_ternary"
-  | Prim (Variadic _)
-    -> failwith "Unimplemented_block_like_prim_variadic"
+  | Prim (Variadic (Make_block (Values (tag, [kind]), mut, alloc_mode), [n])) ->
+    (* FIXME double-check *) Named e
+  | Prim (Variadic _) ->
+    failwith "Unimplemented_block_like_prim_variadic"
   | Static_consts _ ->
-    failwith "Unimplemented_static_consts "
+    (* FIXME double-check *) Named e
   | Set_of_closures _ | Rec_info _ ->
     failwith "Unimplemented_block_like"
 
@@ -1334,7 +1336,28 @@ and subst_pattern_static
       failwith "Unimplemented_static_clo"
     | Code _ ->
       failwith "Unimplemented_static_clo")
-  | Let_cont _ | Apply _ -> failwith "Unimplemented_subst_pattern_static"
+  | Let_cont e ->
+    (match e with
+     | Non_recursive {handler; body} ->
+       Let_cont
+         (Non_recursive
+            { handler =
+                Core_continuation_handler.pattern_match handler
+                  (fun param exp ->
+                      Core_continuation_handler.create
+                        param (subst_pattern_static bound let_body s exp));
+              body =
+                Core_letcont_body.pattern_match body
+                  (fun cont exp ->
+                     Core_letcont_body.create
+                       cont (subst_pattern_static bound let_body s exp))})
+     | Recursive handlers ->
+       failwith "Unimplemented_static_clo_recursive"
+    )
+
+      (* { handler : continuation_handler;
+       *   body : (Bound_continuation.t, core_exp) Name_abstraction.t;} *)
+  | Apply _ -> failwith "Unimplemented_subst_pattern_static"
   | Invalid _ -> e
 
 (* NOTE: Be careful with dominator-style [Static] scoping.. *)
@@ -1418,7 +1441,6 @@ let rec subst_cont (cont_e1: core_exp) (k: Bound_continuation.t)
     failwith "Unimplemented_subst_cont"
   | Invalid _ -> cont_e1
 
-(* TODO : Need to write an evaluator for primitives *)
 let eval_prim (v : Flambda_primitive.t) : named =
   match v with
   | Binary (Block_load (kind, mut), arg1, arg2) ->

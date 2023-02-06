@@ -152,6 +152,10 @@ let () =
   (* alpha_equivalence_test_suite (); *)
   (* simplify_term "foo.fl";
    * normalize_term "foo.fl"; *)
-  simplify_term "let.fl";
-  normalize_term "let.fl";
+  (* simplify_term "let.fl";
+   * normalize_term "let.fl"; *)
+  (* simplify_term "let2.fl";
+   * normalize_term "let2.fl"; *)
+  (* simplify_term "let3.fl"; *)
+  normalize_term "let3.fl";
   ()
