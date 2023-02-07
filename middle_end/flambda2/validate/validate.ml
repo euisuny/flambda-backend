@@ -1245,20 +1245,34 @@ and subst_pattern_singleton ~bound ~let_body e : core_exp =
      let bound : Variable.t = Bound_var.var bound in
      if (Simple.equal a1 (Simple.var bound)) then let_body else e
 
-   | Named (Static_consts [Static_const (Block (tag, mut, [x]))]) ->
+   | Named (Prim (Binary
+     ((Array_load _ |
+       String_or_bigstring_load _ |
+       Bigarray_load _ |
+       Phys_equal _ |
+       Int_arith _ |
+       Int_shift _ |
+       Int_comp _ |
+       Float_arith _|
+       Float_comp _) , _, _))) ->
+     failwith "Unimplemented_singleton_static_named_prim_binary"
+
+   | Named (Prim (Nullary _ | Unary _ | Ternary _ | Variadic _ )) ->
+     failwith "Unimplemented_singleton_static_named_prim"
+
+   | Named (Static_consts [Static_const (Block (_tag, _mut, [x]))]) ->
      let bound : Variable.t = Bound_var.var bound in
      (* N.B: static constants can refer to variables. *)
       (match x with
-      | Field_of_static_block.Symbol s ->
-        if (Simple.same (Simple.symbol s) (Simple.var bound))
-        then let_body
-        else e
-      | Tagged_immediate _ -> e
-      | Dynamically_computed (var, _) ->
-        if (Simple.same (Simple.var var) (Simple.var bound))
-        then let_body
-        else e)
+       | Field_of_static_block.Symbol s ->
+         failwith "Unimplemented_static_consts_symbol"
+       | Tagged_immediate _ -> e
+       | Dynamically_computed (var, _) ->
+         if (Simple.same (Simple.var var) (Simple.var bound))
+         then let_body
+         else e)
 
+   | Named (Static_consts [Code _ | Deleted_code])
    | Named (Static_consts _) ->
      failwith "Unimplemented_singleton_static_consts"
    | Named (Set_of_closures _) ->
@@ -1291,9 +1305,18 @@ and subst_block_like
   match e with
   | Simple v ->
     if Simple.equal v (Simple.symbol s) then let_body else Named e
-  | Prim (Binary (Block_load _, a1, _)) ->
+  | Prim (Binary (Block_load ((Values _ | Naked_floats _), _), a1, _)) ->
     if Simple.equal a1 (Simple.symbol s) then let_body else Named e
-  | Prim (Binary _)
+  | Prim (Binary
+            ((Array_load _ |
+             String_or_bigstring_load _ |
+             Bigarray_load _ |
+             Phys_equal _ |
+             Int_arith _ |
+             Int_shift _ |
+             Int_comp _ |
+             Float_arith _|
+             Float_comp _), _, _))
     -> failwith "Unimplemented_block_like_prim_binary"
   | Prim (Nullary _)
     -> failwith "Unimplemented_block_like_prim_nullary"
@@ -1301,9 +1324,11 @@ and subst_block_like
     -> failwith "Unimplemented_block_like_prim_unary"
   | Prim (Ternary _)
     -> failwith "Unimplemented_block_like_prim_ternary"
-  | Prim (Variadic (Make_block (Values (tag, [kind]), mut, alloc_mode), [n])) ->
+  | Prim (Variadic (Make_block (Values (_tag, _), _mut, _alloc_mode), _)) ->
     (* FIXME double-check *) Named e
-  | Prim (Variadic _) ->
+  | Prim (Variadic (Make_block (Naked_floats, _mut, _alloc_mode), _)) ->
+    (* FIXME double-check *) Named e
+  | Prim (Variadic (Make_array _, _)) ->
     failwith "Unimplemented_block_like_prim_variadic"
   | Static_consts _ ->
     (* FIXME double-check *) Named e
@@ -1351,12 +1376,9 @@ and subst_pattern_static
                   (fun cont exp ->
                      Core_letcont_body.create
                        cont (subst_pattern_static bound let_body s exp))})
-     | Recursive handlers ->
+     | Recursive _ ->
        failwith "Unimplemented_static_clo_recursive"
     )
-
-      (* { handler : continuation_handler;
-       *   body : (Bound_continuation.t, core_exp) Name_abstraction.t;} *)
   | Apply _ -> failwith "Unimplemented_subst_pattern_static"
   | Invalid _ -> e
 
@@ -1387,14 +1409,27 @@ let rec subst_params
     (match List.assoc_opt a1 param_args with
      | Some (Named (Simple arg_v)) ->
        Named (Prim (Binary (Block_load (l1, l2), arg_v, a2)))
-     | _ -> failwith "Unimplemented block load"
+     | Some (Named (Prim _ | Set_of_closures _ | Static_consts _ | Rec_info _)) ->
+       failwith "Unimplemented_param_prim_block_load"
+     | Some (Let _|Let_cont _|Apply _|Apply_cont _|Switch _|Invalid _) ->
+       failwith "Unimplemented_param_prim_block_load"
      | None -> e)
-  | Named (Prim _) ->
+  | Named
+      (Prim (Binary (
+         (Array_load _ |
+          String_or_bigstring_load _ |
+          Bigarray_load _ |
+          Phys_equal _ |
+          Int_arith _ |
+          Int_shift _ |
+          Int_comp _ |
+          Float_arith _ |
+          Float_comp _), _, _)))
+  | Named (Prim (Nullary _ | Unary _ | Ternary _ | Variadic _)) ->
     failwith "Unimplemented_param_named_prim"
   | Named (Set_of_closures _) ->
     failwith "Unimplemented_param_named_clo"
-  | Named (Static_consts _)
-  | Named (Rec_info _) -> e
+  | Named (Static_consts _ | Rec_info _) -> e
   | Let e ->
     Core_let.pattern_match e
       ~f:(fun ~x ~e1 ~e2 ->
@@ -1443,11 +1478,9 @@ let rec subst_cont (cont_e1: core_exp) (k: Bound_continuation.t)
 
 let eval_prim (v : Flambda_primitive.t) : named =
   match v with
-  | Binary (Block_load (kind, mut), arg1, arg2) ->
-    failwith "Unimplemented_eval_prim_binary_block_load"
   | Variadic
       (Make_block
-         (Values (tag, [kind]), mut, alloc_mode), [n]) ->
+         (Values (tag, [kind]), _mut, _alloc_mode), [n]) ->
     (match Flambda_kind.With_subkind.kind kind with
      | Value ->
        let constant =
@@ -1461,13 +1494,21 @@ let eval_prim (v : Flambda_primitive.t) : named =
             (Static_const.block tag Immutable
               [Tagged_immediate i]) in
           Static_consts [(Static_const block)]
-        | _ -> failwith "Unimplemented constant")
-
-      | _ ->
-        failwith "[Unimplemented eval_prim] Making block for non-value kind")
-  | Binary (b, arg1, arg2) ->
+        | (Naked_immediate _ | Naked_float _
+          | Naked_int32 _ | Naked_int64 _ | Naked_nativeint _) ->
+          failwith "Unimplemented constant")
+      | (Naked_number _ | Region | Rec_info) ->
+        failwith "Unimplemented_eval_prim: making block for non-value kind")
+  | Variadic (Make_block (Values (_, _), _, _), _) ->
+    failwith "Unimplemented_eval_prim: making block for value with list args"
+  | Variadic
+      (Make_block (Naked_floats, _, _), _) ->
+    failwith "Unimplemented_eval_prim: making block for naked floats"
+  | Variadic (Make_array (_,_,_), _) ->
+    failwith "Unimplemented_eval_prim: variadic make array"
+  | Binary _ ->
     failwith "Unimplemented_eval_prim_binary"
-  | (Nullary _ | Unary _ | Ternary _ | Variadic _) ->
+  | (Nullary _ | Unary _ | Ternary _) ->
     failwith "Unimplemented_eval_prim"
 
 (* This is a "normalization" of [named] expression, in quotations because there
@@ -1497,7 +1538,7 @@ let rec normalize (e:core_exp) : core_exp =
   | Apply_cont {k ; args} ->
     (* The recursive call for [apply_cont] is done for the arguments *)
     normalize_apply_cont k args
-  | Switch _ -> failwith "Unimplemented"
+  | Switch _ -> failwith "Unimplemented_normalize_switch"
   | Named e -> Named (normalize_named e)
   | Invalid _ -> e
 
@@ -1527,7 +1568,7 @@ and normalize_let_cont (e:let_cont_expr) : core_exp =
     (* [LetCont-β]
        e1 where k args = e2 ⟶ e1 [k \ λ args. e2] *)
     subst_cont e1 k args e2
-  | Recursive _handlers -> failwith "Unimplemented_recursive"
+  | Recursive _handlers -> failwith "Unimplemented_recursive "
 
 and normalize_apply _callee _continuation _exn_continuation _args _call_kind : core_exp =
   failwith "Unimplemented_apply"
