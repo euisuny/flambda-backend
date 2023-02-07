@@ -1216,7 +1216,7 @@ and equiv_switch env
 let core_eq = Env.create () |> equiv
 
 let _std_print =
-  fprintf Format.std_formatter "@.TERM:%a@." print
+  fprintf Format.std_formatter "@. TERM:%a@." print
 
 (** Normalization
 
@@ -1227,39 +1227,75 @@ let _std_print =
 
 (* [Let-β]
       e[bound\let_body] *)
-let rec subst_pattern ~(bound : Bound_pattern.t) ~let_body (e : core_exp) : core_exp =
+let rec subst_pattern ~(bound : Bound_pattern.t) ~(let_body : core_exp) (e : core_exp)
+  : core_exp =
   match bound with
-  | Singleton bound -> subst_pattern_singleton ~bound ~let_body e
-  | Set_of_closures _ ->
-    failwith "Unimplemented_subst_clo"
-  | Static static -> subst_pattern_static_list ~bound ~let_body static e
+  | Singleton bound ->
+    subst_pattern_singleton ~bound ~let_body e
+  | Set_of_closures bound ->
+    subst_pattern_set_of_closures ~bound ~let_body e
+  | Static bound ->
+    subst_pattern_static_list ~bound ~let_body e
 
-and subst_pattern_singleton ~bound ~let_body e : core_exp =
+and subst_pattern_set_of_closures
+      ~(bound : Bound_var.t list) ~(let_body : core_exp) (e : core_exp) : core_exp =
+  e (* FIXME: WRONG *)
+
+and subst_pattern_primitive
+      ~(bound : Bound_var.t) ~(let_body : core_exp) (e : Flambda_primitive.t) : core_exp =
+  match e with
+  | Nullary _ ->
+    failwith "Unimplemented_subst_pattern_primitive_nullary"
+  | Unary _ ->
+    failwith "Unimplemented_subst_pattern_primitive_unary"
+  | Binary (e, a1, a2) ->
+    subst_pattern_primitive_binary ~bound ~let_body (e, a1, a2)
+  | Ternary _ ->
+    failwith "Unimplemented_subst_pattern_primitive"
+  | Variadic (e, args) ->
+    subst_pattern_primitive_variadic ~bound ~let_body (e, args)
+
+and subst_pattern_primitive_binary
+      ~(bound : Bound_var.t) ~(let_body : core_exp)
+      ((e, a1, a2) : Flambda_primitive.binary_primitive * Simple.t * Simple.t) : core_exp =
+  match e with
+  | Block_load (kind, mut) ->
+    let bound : Variable.t = Bound_var.var bound in
+    if Simple.equal a1 (Simple.var bound)
+    then let_body
+    else Named (Prim (Binary (e, a1, a2)))
+  | Array_load _
+  | String_or_bigstring_load _
+  | Bigarray_load _
+  | Phys_equal _
+  | Int_arith _
+  | Int_shift _
+  | Int_comp _
+  | Float_arith _
+  | Float_comp _ ->
+    failwith "Unimplemented_subst_pattern_primitive_binary"
+
+and subst_pattern_primitive_variadic
+      ~(bound : Bound_var.t) ~(let_body : core_exp)
+      ((e, args) : Flambda_primitive.variadic_primitive * Simple.t list) =
+  match e with
+  | Make_block (Values (tag, kinds), mut, _) ->
+    failwith "Unimplemented_subst_pattern_primitive_variadic_make_block"
+  | Make_block (Naked_floats, mut, _) ->
+    failwith "Unimplemented_subst_pattern_primitive_variadic_make_block_floats"
+  | Make_array _ ->
+    failwith "Unimplemented_subst_pattern_primitive_variadic"
+
+and subst_pattern_singleton
+      ~(bound : Bound_var.t) ~(let_body : core_exp) (e : core_exp) : core_exp =
   (match e with
    | Named (Simple s) ->
      let bound : Variable.t = Bound_var.var bound in
+     (* TODO: Is it OK to assign a Simple to a Variable? *)
      let bound = Simple.var bound in
      if (Simple.equal s bound) then let_body else e
-
-   | Named (Prim (Binary (Block_load _, a1, _))) ->
-     let bound : Variable.t = Bound_var.var bound in
-     if (Simple.equal a1 (Simple.var bound)) then let_body else e
-
-   | Named (Prim (Binary
-     ((Array_load _ |
-       String_or_bigstring_load _ |
-       Bigarray_load _ |
-       Phys_equal _ |
-       Int_arith _ |
-       Int_shift _ |
-       Int_comp _ |
-       Float_arith _|
-       Float_comp _) , _, _))) ->
-     failwith "Unimplemented_singleton_static_named_prim_binary"
-
-   | Named (Prim (Nullary _ | Unary _ | Ternary _ | Variadic _ )) ->
-     failwith "Unimplemented_singleton_static_named_prim"
-
+   | Named (Prim p) ->
+     subst_pattern_primitive ~bound ~let_body p
    | Named (Static_consts [Static_const (Block (_tag, _mut, [x]))]) ->
      let bound : Variable.t = Bound_var.var bound in
      (* N.B: static constants can refer to variables. *)
@@ -1271,14 +1307,12 @@ and subst_pattern_singleton ~bound ~let_body e : core_exp =
          if (Simple.same (Simple.var var) (Simple.var bound))
          then let_body
          else e)
-
    | Named (Static_consts [Code _ | Deleted_code])
    | Named (Static_consts _) ->
-     failwith "Unimplemented_singleton_static_consts"
+     (* FIXME: WRONG *) e
    | Named (Set_of_closures _) ->
      failwith "Unimplemented_sets_of_closures"
    | Named (Rec_info _) -> e
-
    | Let {let_abst; body} ->
      Core_let.pattern_match {let_abst; body}
        ~f:(fun ~x ~e1 ~e2 ->
@@ -1286,12 +1320,10 @@ and subst_pattern_singleton ~bound ~let_body e : core_exp =
             ~x
             ~e1:(subst_pattern_singleton ~bound ~let_body e1)
             ~e2:(subst_pattern_singleton ~bound ~let_body e2))
-
    | Let_cont _ ->
      failwith "Unimplemented_subst_letcont"
    | Apply _ ->
      failwith "Unimplemented_subst_apply"
-
    | Apply_cont {k; args} ->
      Apply_cont
        { k = k;
@@ -1301,66 +1333,54 @@ and subst_pattern_singleton ~bound ~let_body e : core_exp =
    | Invalid _ -> e)
 
 and subst_block_like
-    (_bound : Bound_pattern.t) let_body (s : Symbol.t) (e : named) : core_exp =
+      ~(bound : Symbol.t) ~(let_body : core_exp) (e : named) : core_exp =
   match e with
   | Simple v ->
-    if Simple.equal v (Simple.symbol s) then let_body else Named e
+    if Simple.equal v (Simple.symbol bound) then let_body else Named e
   | Prim (Binary (Block_load ((Values _ | Naked_floats _), _), a1, _)) ->
-    if Simple.equal a1 (Simple.symbol s) then let_body else Named e
-  | Prim (Binary
-            ((Array_load _ |
-             String_or_bigstring_load _ |
-             Bigarray_load _ |
-             Phys_equal _ |
-             Int_arith _ |
-             Int_shift _ |
-             Int_comp _ |
-             Float_arith _|
-             Float_comp _), _, _))
-    -> failwith "Unimplemented_block_like_prim_binary"
-  | Prim (Nullary _)
-    -> failwith "Unimplemented_block_like_prim_nullary"
-  | Prim (Unary _)
-    -> failwith "Unimplemented_block_like_prim_unary"
-  | Prim (Ternary _)
-    -> failwith "Unimplemented_block_like_prim_ternary"
-  | Prim (Variadic (Make_block (Values (_tag, _), _mut, _alloc_mode), _)) ->
-    (* FIXME double-check *) Named e
-  | Prim (Variadic (Make_block (Naked_floats, _mut, _alloc_mode), _)) ->
-    (* FIXME double-check *) Named e
-  | Prim (Variadic (Make_array _, _)) ->
-    failwith "Unimplemented_block_like_prim_variadic"
+    if Simple.equal a1 (Simple.symbol bound) then let_body else Named e
+  | Prim _ -> Named e (* FIXME: double-check *)
   | Static_consts _ ->
     (* FIXME double-check *) Named e
-  | Set_of_closures _ | Rec_info _ ->
+  | Set_of_closures set ->
+    let function_decls : Code_id.t Function_slot.Map.t =
+      Set_of_closures.function_decls set |> Function_declarations.funs in
+    let value_slots : (Simple.t * Flambda_kind.With_subkind.t) Value_slot.Map.t =
+      Set_of_closures.value_slots set in
+    Named e (* FIXME: WRONG *)
+  | Rec_info _ ->
     failwith "Unimplemented_block_like"
 
+and subst_code ~(bound: Code_id.t) ~(let_body : core_exp) (e : named) : core_exp =
+  Named e (* FIXME: WRONG *)
+
 and subst_pattern_static
-      bound let_body (s : Bound_static.Pattern.t) (e : core_exp) : core_exp =
+      ~(bound : Bound_static.Pattern.t) ~(let_body : core_exp) (e : core_exp) : core_exp =
   match e with
   | Apply_cont {k ; args} ->
     Apply_cont
       {k = k;
-       args = List.map (subst_pattern_static bound let_body s) args}
+       args = List.map (subst_pattern_static ~bound ~let_body) args}
   | Let {let_abst; body} ->
     Core_let.pattern_match {let_abst; body}
       ~f:(fun ~x ~e1 ~e2 ->
         Core_let.create
           ~x
-          ~e1:(subst_pattern_static bound let_body s e1)
-          ~e2:(subst_pattern_static bound let_body s e2))
+          ~e1:(subst_pattern_static bound let_body e1)
+          ~e2:(subst_pattern_static bound let_body e2))
   | Switch {scrutinee; arms} ->
     Switch
-      {scrutinee = subst_pattern_static bound let_body s scrutinee;
+      {scrutinee = subst_pattern_static bound let_body scrutinee;
         arms = Targetint_31_63.Map.map
-                 (subst_pattern_static bound let_body s) arms}
+                 (subst_pattern_static ~bound ~let_body) arms}
   | Named named ->
-    (match s with
-    | Block_like s -> subst_block_like bound let_body s named
-    | Set_of_closures _ ->
-      failwith "Unimplemented_static_clo"
-    | Code _ ->
-      failwith "Unimplemented_static_clo")
+    (match bound with
+     | Block_like bound ->
+       subst_block_like ~bound ~let_body named
+     | Set_of_closures set ->
+       e (* FIXME: WRONG *)
+     | Code id ->
+       subst_code id let_body named)
   | Let_cont e ->
     (match e with
      | Non_recursive {handler; body} ->
@@ -1370,12 +1390,12 @@ and subst_pattern_static
                 Core_continuation_handler.pattern_match handler
                   (fun param exp ->
                       Core_continuation_handler.create
-                        param (subst_pattern_static bound let_body s exp));
+                        param (subst_pattern_static bound let_body exp));
               body =
                 Core_letcont_body.pattern_match body
                   (fun cont exp ->
                      Core_letcont_body.create
-                       cont (subst_pattern_static bound let_body s exp))})
+                       cont (subst_pattern_static bound let_body exp))})
      | Recursive _ ->
        failwith "Unimplemented_static_clo_recursive"
     )
@@ -1383,14 +1403,14 @@ and subst_pattern_static
   | Invalid _ -> e
 
 (* NOTE: Be careful with dominator-style [Static] scoping.. *)
-and subst_pattern_static_list ~bound ~let_body static e : core_exp =
+and subst_pattern_static_list ~(bound : Bound_static.t) ~let_body e : core_exp =
   let rec subst_pattern_static_list_ s e =
     (match s with
      | [] -> e
      | hd :: tl ->
        subst_pattern_static_list_ tl
-         (subst_pattern_static bound let_body hd e)) in
-  subst_pattern_static_list_ (Bound_static.to_list static) e
+         (subst_pattern_static hd let_body e)) in
+  subst_pattern_static_list_ (Bound_static.to_list bound) e
 
 (* ∀ p i, p ∈ params -> params[i] = p -> e [p \ args[i]] *)
 (* [Bound_parameters] are [Variable]s *)
@@ -1476,6 +1496,7 @@ let rec subst_cont (cont_e1: core_exp) (k: Bound_continuation.t)
     failwith "Unimplemented_subst_cont"
   | Invalid _ -> cont_e1
 
+(* TODO: Refactor with separate functions for unary/binary/etc.. *)
 let eval_prim (v : Flambda_primitive.t) : named =
   match v with
   | Variadic
@@ -1500,7 +1521,8 @@ let eval_prim (v : Flambda_primitive.t) : named =
       | (Naked_number _ | Region | Rec_info) ->
         failwith "Unimplemented_eval_prim: making block for non-value kind")
   | Variadic (Make_block (Values (_, _), _, _), _) ->
-    failwith "Unimplemented_eval_prim: making block for value with list args"
+    (* FIXME : WRONG *)
+    Prim (v)
   | Variadic
       (Make_block (Naked_floats, _, _), _) ->
     failwith "Unimplemented_eval_prim: making block for naked floats"
@@ -1527,6 +1549,7 @@ let normalize_named (body : named) : named =
 let rec normalize (e:core_exp) : core_exp =
   match e with
   | Let { let_abst; body } ->
+    _std_print e;
     normalize_let let_abst body
     |> normalize
   | Let_cont e ->
