@@ -78,7 +78,7 @@
   \inferrule
       [Apply-$\beta$]
       {}
-      {\apply{(\abst{x}{e})}{res_k}{exn_k}{\args{args}} \step \subst{e}{x}{\args{args}}}
+      {\apply{(\abst{\args{x}}{e})}{res_k}{exn_k}{\args{v}} \step \subst{e}{x}{\args{v}} \hookrightarrow res_k/exn_k}
 
   \inferrule
       [Switch]
@@ -88,13 +88,13 @@
   \inferrule
       [Switch-$\beta$]
       {}
-      {\switch{e_1}{[x \mapsto e_2]} \step \subst{e_2}{x}{e_1}}
+      {\switch{v}{[x \mapsto e]} \step \subst{e}{x}{v}}
 
       \overrightarrow{args} \step \overrightarrow{args}' := \forall a, a \in \overrightarrow{args}. \exists a', a \step^\ast a' \land a \in \overrightarrow{args}'
 \end{mathpar}
 
 
-\todo{LetR, Apply}
+\todo{LetR}
 
 This language has a call-by-value style reduction strategy.
 Notice the unusual [LetR] rule---the expression $N$ refers to an expression in
@@ -105,6 +105,12 @@ lambda abstraction is always implicit in let expressions, ensuring that the
 because for the case of several effectful expressions (such as a print
 statement), inlining the occurence of the expression multiple times will be
 behaviorally different from the original expression.
+
+The [Apply-$\beta$] rule describes the case when the callee is a lambda
+expression, and the argument is fully evaluated.
+The expression is beta-reduced, then the resulting value get passed on as an
+argument to either the return or exception continuation, depending on whether
+or not the expression throws an exception.
 
 \section{Rewrite Rules}
 
@@ -140,7 +146,15 @@ A wishlist of desirable inlining/semantic features to support for the validator.
 \subsection{Primitives evaluation}
 \begin{itemize}
 \item arithmetic evaluation: commutative and associative laws for arithmetic?
-\item normalizing other primitives
+  It is likely that the commutative/associative laws are not necessary for the simplifier
+\item block-based primitives (makeblock, loading from block)
+  The blocks have a tag, corresponding to the constructors (i.e. tag0 is the first constructor)
+  values either are immediate tags or blocks
+  Mutability corresponds to reference cells
+
+  Being able to treat the block-related primitives will resolve supporting the structures below
+  (except for arrays, which have a tricky case involving storing floating-point values.
+  See floating-point valued array optimization)
 \end{itemize}
 TODO: Refactor [simplify\_primitive].
 
