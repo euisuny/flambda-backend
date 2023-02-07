@@ -1,0 +1,155 @@
+\documentclass[11pt,fleqn]{amsart}
+\usepackage{amssymb}
+\usepackage{proofs}
+\usepackage{mathpartir}
+\usepackage[color=yellow]{todonotes}
+
+
+
+\begin{document}
+
+\title{Validator for Flambda2 Simplifier}
+\date{}
+\maketitle{}
+
+%% \section{Flambda2 Simplifier}
+
+\section{Core language}
+
+\section{Reduction strategy}
+
+%%  Macros for core exps
+\newcommand{\letexp}[3]{\mathsf{let}\; #1 \; = \; #2 \; \mathsf{in} \; #3}
+\newcommand{\subst}[3]{#1 \; [ #2 \setminus #3 ]}
+\newcommand{\letcont}[4]{#1 \; \mathsf{where} \; #2 \; #3 \; = \; #4}
+\newcommand{\step}{\longrightarrow}
+\newcommand{\applycont}[2]{#1 \; #2}
+\newcommand{\apply}[4]{#1 \; \, #2 \; \, #3 \; \, #4}
+\newcommand{\abst}[2]{\lambda \; #1.\, #2}
+\newcommand{\switch}[2]{\mathsf{switch}\; (#1) \; #2}
+\newcommand{\args}[1]{\overrightarrow{#1}}
+
+\begin{mathpar}
+  \inferrule
+      [Let-$\beta$]
+      {}
+      {\letexp{x}{v}{e_2} \step \subst{e_2}{x}{v}}
+
+  \inferrule
+      [LetL]
+      {e_1 \step e_1'}
+      {\letexp{x}{e_1}{e_2} \step \letexp{x}{e_1'}{e_2}}
+
+  \inferrule
+      [LetR]
+      {e_2 \step e_2'}
+      {\letexp{x}{N}{e_2} \step \letexp{x}{N}{e_2'}}
+
+  \inferrule
+      [LetCont-$\beta$]
+      {}
+      {\letcont{e_1}{k}{\args{args}}{e_2} \step \subst{e_1}{k}{\abst{\args{args}}{e_2}}}
+
+  \inferrule
+      [ApplyContR]
+      {\args{args} \step \args{args}'}
+      {\applycont{v}{\args{args}} \step \applycont{v}{\args{args}'}}
+
+  \inferrule
+      [ApplyContL]
+      {k \step k'}
+      {\applycont{k}{\args{args}} \step \applycont{k'}{\args{args}}}
+
+  \inferrule
+      [ApplyCont-$\beta$]
+      {}
+      {\applycont{(\abst{x}{e})}{v} \step \subst{e}{x}{v}}
+
+  \inferrule
+      [ApplyR]
+      {\args{args} \step \args{args}'}
+      {\apply{e}{res_k}{exn_k}{\args{args}} \step \apply{e}{res_k}{exn_k}{\args{args}'}}
+
+  \inferrule
+      [ApplyL]
+      {e \step e'}
+      {\apply{e}{res_k}{exn_k}{\args{args}} \step \apply{e'}{res_k}{exn_k}{\args{args}}}
+
+  \inferrule
+      [Apply-$\beta$]
+      {}
+      {\apply{(\abst{x}{e})}{res_k}{exn_k}{\args{args}} \step \subst{e}{x}{\args{args}}}
+
+  \inferrule
+      [Switch]
+      {e \step e'}
+      {\switch{e}{arms} \step \switch{e'}{arms}}
+
+  \inferrule
+      [Switch-$\beta$]
+      {}
+      {\switch{e_1}{[x \mapsto e_2]} \step \subst{e_2}{x}{e_1}}
+
+      \overrightarrow{args} \step \overrightarrow{args}' := \forall a, a \in \overrightarrow{args}. \exists a', a \step^\ast a' \land a \in \overrightarrow{args}'
+\end{mathpar}
+
+
+\todo{LetR, Apply}
+
+This language has a call-by-value style reduction strategy.
+Notice the unusual [LetR] rule---the expression $N$ refers to an expression in
+the normal form, which may refer to a normalized effectful expression.
+This rule is \textit{not} analogous to the [ApplyContR] rule, since the
+lambda abstraction is always implicit in let expressions, ensuring that the
+``lefthand-side'' of the application is always a value. This is necessary
+because for the case of several effectful expressions (such as a print
+statement), inlining the occurence of the expression multiple times will be
+behaviorally different from the original expression.
+
+\section{Rewrite Rules}
+
+\begin{mathpar}
+  \inferrule
+      [FlattenMatch]
+      {}
+      {\switch{\switch{e_1}{[A \mapsto e_2 : B | .. ]}}{[B \mapsto e_2' | .. ]} \step \switch{e_1}{[A \mapsto \subst{e_2'}{B}{e_2} | .. ]}}
+\end{mathpar}
+
+
+\section{Features}
+
+A wishlist of desirable inlining/semantic features to support for the validator.
+
+\subsection{Inlining}
+\begin{itemize}
+\item function calls
+\item recursive functions
+\item inlining (direct calls, within same function)
+\item cross-module inlining
+\item low-priority: locals
+\end{itemize}
+
+\subsection{Semantics}
+\begin{itemize}
+\item mutable state
+\item exceptions
+\item effects (printing, etc.)
+\item external calls
+\end{itemize}
+
+\subsection{Primitives evaluation}
+\begin{itemize}
+\item arithmetic evaluation: commutative and associative laws for arithmetic?
+\item normalizing other primitives
+\end{itemize}
+TODO: Refactor [simplify\_primitive].
+
+\subsection{Supported structures}
+\begin{itemize}
+\item structs
+\item tuples
+\item lists
+\item arrays
+\end{itemize}
+
+\end{document}
