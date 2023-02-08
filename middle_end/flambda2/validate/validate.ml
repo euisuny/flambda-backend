@@ -1487,8 +1487,54 @@ and subst_block_like
   | Rec_info _ ->
     failwith "Unimplemented_block_like"
 
-and subst_set_of_closures (set : Symbol.t Function_slot.Lmap.t) ~let_body (e : named) =
-  Named e (* NEXT *)
+and subst_set_of_closures (bound : Symbol.t Function_slot.Lmap.t) ~let_body (e : named) =
+  match e with
+  | Simple v ->
+    print_static_pattern Format.std_formatter (Bound_static.Pattern.set_of_closures bound);
+    _std_print let_body;
+    failwith "subst_set_of_closures"
+  | Prim (Nullary e) -> Named (Prim (Nullary e))
+  | Prim (Unary (e, arg1)) ->
+    let arg1 =
+      subst_pattern_static
+        ~bound:(Bound_static.Pattern.set_of_closures bound) ~let_body arg1
+    in
+    Named (Prim (Unary (e, arg1)))
+  | Prim (Binary (e, arg1, arg2)) ->
+    let arg1 =
+      subst_pattern_static
+        ~bound:(Bound_static.Pattern.set_of_closures bound) ~let_body arg1
+    in
+    let arg2 =
+      subst_pattern_static
+        ~bound:(Bound_static.Pattern.set_of_closures bound) ~let_body arg2
+    in
+    Named (Prim (Binary (e, arg1, arg2)))
+  | Prim (Ternary (e, arg1, arg2, arg3)) ->
+    let arg1 =
+      subst_pattern_static
+        ~bound:(Bound_static.Pattern.set_of_closures bound) ~let_body arg1
+    in
+    let arg2 =
+      subst_pattern_static
+        ~bound:(Bound_static.Pattern.set_of_closures bound) ~let_body arg2
+    in
+    let arg3 =
+      subst_pattern_static ~bound:(Bound_static.Pattern.set_of_closures bound) ~let_body arg3
+    in
+    Named (Prim (Ternary (e, arg1, arg2, arg3)))
+  | Prim (Variadic (e, args)) ->
+    let args =
+      List.map
+        (subst_pattern_static ~bound:(Bound_static.Pattern.set_of_closures bound) ~let_body) args
+    in
+    Named (Prim (Variadic (e, args)))
+  | Static_consts _ ->
+    (* FIXME double-check *) Named e
+  | Set_of_closures set ->
+    Named e (* NEXT *)
+  | Rec_info _ ->
+    failwith "Unimplemented_block_like"
 
 and subst_pattern_static
       ~(bound : Bound_static.Pattern.t) ~(let_body : core_exp) (e : core_exp) : core_exp =
@@ -1606,8 +1652,7 @@ let rec subst_cont (cont_e1: core_exp) (k: Bound_continuation.t)
     failwith "Unimplemented_apply"
   | Apply_cont {k = cont; args = concrete_args} ->
     if Continuation.equal cont k
-    then
-      subst_params args cont_e2 concrete_args
+    then subst_params args cont_e2 concrete_args
     else
       failwith "Unimplemented_apply_cont"
   | Switch _ ->
@@ -1764,10 +1809,30 @@ and normalize_let let_abst body : core_exp =
     (let bound = Bound_static.to_list bound in
      match bound with
      (* [LetCode]
-                      e2 ⟶ e2'
-        -------------------------------------
-        let code x = e1 in e2 -> let code x = e1 in e2' *)
-      | [Code _] -> Core_let.create ~x ~e1 ~e2:(normalize e2)
+                          e2 ⟶ e2'
+        ----------------------------------------------
+        let code x = e1 in e2 -> let code x = e1 in e2'
+
+        [LetCodeDeleted]
+        let code x = Deleted in e2 -> e2
+
+        [LetCodeNew]
+        let code (newer_version_of x) x' = e1 in e2 ->
+        let code x = e1 in e2 [x\x'] *)
+     | [Code m] ->
+       let letcode () = Core_let.create ~x ~e1 ~e2:(normalize e2) in
+       (match e1 with
+        | Named (Static_consts [Deleted_code]) -> normalize e2
+        | Named (Static_consts [Code code]) ->
+          let metadata = Core_code.code_metadata code in
+          (match Code_metadata.newer_version_of metadata with
+           | Some n ->
+             Core_let.create
+               ~x:(Bound_pattern.static (Bound_static.create [Bound_static.Pattern.code n]))
+               ~e1:(apply_renaming e1 (Renaming.add_code_id Renaming.empty m n) |> normalize)
+               ~e2:(apply_renaming e2 (Renaming.add_code_id Renaming.empty m n) |> normalize)
+           | None -> letcode ())
+        | _ -> letcode ())
       | _ -> subst_pattern ~bound:x ~let_body:e1 e2 |> normalize)
 
   (* [Let-β]
