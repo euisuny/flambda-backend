@@ -1,5 +1,6 @@
 open! Flambda
 
+module P = Flambda_primitive
 let fprintf = Format.fprintf
 
 (** Simplified core of [flambda2] terms **)
@@ -26,10 +27,17 @@ and let_expr =
 
 and named =
   | Simple of Simple.t
-  | Prim of Flambda_primitive.t
+  | Prim of primitive
   | Set_of_closures of Set_of_closures.t
   | Static_consts of static_const_group
   | Rec_info of Rec_info_expr.t
+
+and primitive =
+  | Nullary of P.nullary_primitive
+  | Unary of P.unary_primitive * core_exp
+  | Binary of P.binary_primitive * core_exp * core_exp
+  | Ternary of P.ternary_primitive * core_exp * core_exp * core_exp
+  | Variadic of P.variadic_primitive * core_exp list
 
 and function_params_and_body =
   (Bound_for_function.t, core_exp) Name_abstraction.t
@@ -115,13 +123,37 @@ and apply_renaming_named t renaming : named =
   | Simple simple ->
     Simple (Simple.apply_renaming simple renaming)
   | Prim prim ->
-    Prim (Flambda_primitive.apply_renaming prim renaming)
+    Prim (apply_renaming_prim prim renaming)
   | Set_of_closures set ->
     Set_of_closures (Set_of_closures.apply_renaming set renaming)
   | Static_consts consts ->
     Static_consts (apply_renaming_static_const_group consts renaming)
   | Rec_info info ->
     Rec_info (Rec_info_expr.apply_renaming info renaming)
+
+and apply_renaming_prim t renaming : primitive =
+  match t with
+  | Nullary (Invalid _ | Optimised_out _ | Probe_is_enabled _ | Begin_region) ->
+    t
+  | Unary (prim, arg) ->
+    let prim = P.apply_renaming_unary_primitive prim renaming in
+    let arg = apply_renaming arg renaming in
+    Unary (prim, arg)
+  | Binary (prim, arg1, arg2) ->
+    let prim = P.apply_renaming_binary_primitive prim renaming in
+    let arg1 = apply_renaming arg1 renaming in
+    let arg2 = apply_renaming arg2 renaming in
+    Binary (prim, arg1, arg2)
+  | Ternary (prim, arg1, arg2, arg3) ->
+    let prim = P.apply_renaming_ternary_primitive prim renaming in
+    let arg1 = apply_renaming arg1 renaming in
+    let arg2 = apply_renaming arg2 renaming in
+    let arg3 = apply_renaming arg3 renaming in
+    Ternary (prim, arg1, arg2, arg3)
+  | Variadic (prim, args) ->
+    let prim = P.apply_renaming_variadic_primitive prim renaming in
+    let args = List.map (fun x -> apply_renaming x renaming) args in
+    Variadic (prim, args)
 
 and apply_renaming_static_const_group t renaming : static_const_group =
   List.map (fun static_const ->
@@ -278,7 +310,7 @@ and print_named ppf (t : named) =
     Simple.print simple;
   | Prim prim ->
     fprintf ppf "prim@ %a"
-    Flambda_primitive.print prim;
+    print_prim prim;
   | Set_of_closures clo ->
     fprintf ppf "set_of_closures@ %a"
     Set_of_closures.print clo
@@ -288,6 +320,43 @@ and print_named ppf (t : named) =
   | Rec_info info ->
     fprintf ppf "rec_info@ %a"
     Rec_info_expr.print info
+
+and print_prim ppf (t : primitive) =
+  match t with
+  | Nullary prim ->
+    print_nullary_prim ppf prim
+  | Unary (prim, arg) ->
+    fprintf ppf "(%a, %a)"
+     P.print_unary_primitive prim
+     print arg
+  | Binary (prim, arg1, arg2) ->
+    fprintf ppf "(%a, %a, %a)"
+    P.print_binary_primitive prim
+    print arg1
+    print arg2
+  | Ternary (prim, arg1, arg2, arg3) ->
+    fprintf ppf "(%a, %a, %a, %a)"
+    P.print_ternary_primitive prim
+    print arg1
+    print arg2
+    print arg3
+  | Variadic (prim, args) ->
+    fprintf ppf "(%a, %a)"
+    P.print_variadic_primitive prim
+    (Format.pp_print_list ~pp_sep: Format.pp_print_space print) args
+
+
+
+and print_nullary_prim ppf (t : P.nullary_primitive) =
+  match t with
+  | Invalid _ ->
+    fprintf ppf "Invalid"
+  | Optimised_out _ ->
+    fprintf ppf "Optimised_out"
+  | Probe_is_enabled { name } ->
+    fprintf ppf "(Probe_is_enabled@ %s)" name
+  | Begin_region ->
+    fprintf ppf "Begin_region"
 
 and print_static_const_group ppf t =
   Format.pp_print_list ~pp_sep:Format.pp_print_space print_static_const_or_code ppf t
@@ -408,10 +477,38 @@ and ids_for_export_let { let_abst; body } =
 and ids_for_export_named (t : named) =
   match t with
   | Simple simple -> Ids_for_export.from_simple simple
-  | Prim prim -> Flambda_primitive.ids_for_export prim
+  | Prim prim -> ids_for_export_prim prim
   | Set_of_closures set -> Set_of_closures.ids_for_export set
   | Static_consts consts -> ids_for_export_static_const_group consts
   | Rec_info info -> Rec_info_expr.ids_for_export info
+
+and ids_for_export_prim (t : primitive) =
+  match t with
+  | Nullary (Invalid _ | Optimised_out _ | Probe_is_enabled _ | Begin_region) ->
+    Ids_for_export.empty
+  | Unary (prim, arg) ->
+    Ids_for_export.union
+      (P.ids_for_export_unary_primitive prim)
+      (ids_for_export arg)
+  | Binary (prim, arg1, arg2) ->
+    Ids_for_export.union
+      (Ids_for_export.union
+        (P.ids_for_export_binary_primitive prim)
+        (ids_for_export arg1))
+      (ids_for_export arg2)
+  | Ternary (prim, arg1, arg2, arg3) ->
+    Ids_for_export.union
+      (Ids_for_export.union
+        (Ids_for_export.union
+          (P.ids_for_export_ternary_primitive prim)
+          (ids_for_export arg1))
+        (ids_for_export arg2))
+      (ids_for_export arg3)
+  | Variadic (prim, args) ->
+    Ids_for_export.union
+      (P.ids_for_export_variadic_primitive prim)
+      (List.fold_left (fun acc x -> Ids_for_export.union (ids_for_export x) acc)
+         Ids_for_export.empty args)
 
 and ids_for_export_static_const_group t =
   List.map ids_for_export_static_const_or_code t |> Ids_for_export.union_list
@@ -673,10 +770,22 @@ and named_to_core (e : Flambda.named) : core_exp =
   Named (
     match e with
     | Simple e -> Simple e
-    | Prim (t, _) -> Prim t
+    | Prim (t, _) -> Prim (prim_to_core t)
     | Set_of_closures e -> Set_of_closures e
     | Static_consts e -> Static_consts (static_consts_to_core e)
     | Rec_info t -> Rec_info t)
+
+and prim_to_core (e : P.t) : primitive =
+  match e with
+  | Nullary v -> Nullary v
+  | Unary (prim, arg) ->
+    Unary (prim, Named (Simple arg))
+  | Binary (prim, arg1, arg2) ->
+    Binary (prim, Named (Simple arg1), Named (Simple arg2))
+  | Ternary (prim, arg1, arg2, arg3) ->
+    Ternary (prim, Named (Simple arg1), Named (Simple arg2), Named (Simple arg3))
+  | Variadic (prim, args) ->
+    Variadic (prim, List.map (fun x -> Named (Simple x)) args)
 
 and static_consts_to_core (e : Flambda.static_const_group) : static_const_group =
   Static_const_group.to_list e |> List.map static_const_to_core
@@ -1075,24 +1184,24 @@ and equiv_simple env simple1 simple2 : eq =
         ~const:(fun const2 -> Reg_width_const.equal const1 const2))
 
 and equiv_primitives env prim1 prim2 : eq =
-  match (prim1:Flambda_primitive.t), (prim2:Flambda_primitive.t) with
+  match (prim1:primitive), (prim2:primitive) with
   | Unary (op1, arg1), Unary (op2, arg2) ->
-    Flambda_primitive.equal_unary_primitive op1 op2 &&
-    equiv_simple env arg1 arg2
+    P.equal_unary_primitive op1 op2 &&
+    equiv env arg1 arg2
   | Binary (op1, arg1_1, arg1_2), Binary (op2, arg2_1, arg2_2) ->
-    Flambda_primitive.equal_binary_primitive op1 op2 &&
-    equiv_simple env arg1_1 arg2_1 &&
-    equiv_simple env arg1_2 arg2_2
+    P.equal_binary_primitive op1 op2 &&
+    equiv env arg1_1 arg2_1 &&
+    equiv env arg1_2 arg2_2
   | Ternary (op1, arg1_1, arg1_2, arg1_3),
     Ternary (op2, arg2_1, arg2_2, arg2_3) ->
-    Flambda_primitive.equal_ternary_primitive op1 op2 &&
-    equiv_simple env arg1_1 arg2_1 &&
-    equiv_simple env arg1_2 arg2_2 &&
-    equiv_simple env arg1_3 arg2_3
+    P.equal_ternary_primitive op1 op2 &&
+    equiv env arg1_1 arg2_1 &&
+    equiv env arg1_2 arg2_2 &&
+    equiv env arg1_3 arg2_3
   | Variadic (op1, args1), Variadic (op2, args2) ->
-    Flambda_primitive.equal_variadic_primitive op1 op2 &&
+    P.equal_variadic_primitive op1 op2 &&
     (List.combine args1 args2 |>
-     List.fold_left (fun x (e1, e2) -> x && equiv_simple env e1 e2) true)
+     List.fold_left (fun x (e1, e2) -> x && equiv env e1 e2) true)
   | Nullary (Invalid _), Nullary (Invalid _) -> true
   | Nullary (Optimised_out _), Nullary (Optimised_out _) -> true
   | Nullary (Probe_is_enabled _), Nullary (Probe_is_enabled _) -> true
@@ -1242,7 +1351,7 @@ and subst_pattern_set_of_closures
   e (* FIXME: WRONG *)
 
 and subst_pattern_primitive
-      ~(bound : Bound_var.t) ~(let_body : core_exp) (e : Flambda_primitive.t) : core_exp =
+      ~(bound : Bound_var.t) ~(let_body : core_exp) (e : primitive) : core_exp =
   match e with
   | Nullary _ ->
     failwith "Unimplemented_subst_pattern_primitive_nullary"
@@ -1257,13 +1366,14 @@ and subst_pattern_primitive
 
 and subst_pattern_primitive_binary
       ~(bound : Bound_var.t) ~(let_body : core_exp)
-      ((e, a1, a2) : Flambda_primitive.binary_primitive * Simple.t * Simple.t) : core_exp =
+      ((e, a1, a2) : P.binary_primitive * core_exp * core_exp) : core_exp =
   match e with
   | Block_load (kind, mut) ->
-    let bound : Variable.t = Bound_var.var bound in
-    if Simple.equal a1 (Simple.var bound)
-    then let_body
-    else Named (Prim (Binary (e, a1, a2)))
+    Named
+      (Prim (Binary
+               (e,
+                subst_pattern ~bound:(Bound_pattern.singleton bound) ~let_body a1,
+                subst_pattern ~bound:(Bound_pattern.singleton bound) ~let_body a2)))
   | Array_load _
   | String_or_bigstring_load _
   | Bigarray_load _
@@ -1277,10 +1387,15 @@ and subst_pattern_primitive_binary
 
 and subst_pattern_primitive_variadic
       ~(bound : Bound_var.t) ~(let_body : core_exp)
-      ((e, args) : Flambda_primitive.variadic_primitive * Simple.t list) =
+      ((e, args) : P.variadic_primitive * core_exp list) =
   match e with
-  | Make_block (Values (tag, kinds), mut, _) ->
-    failwith "Unimplemented_subst_pattern_primitive_variadic_make_block"
+  | Make_block (Values _, _, _) ->
+    let args =
+      List.map
+        (subst_pattern ~bound:(Bound_pattern.singleton bound) ~let_body)
+        args
+    in
+    Named (Prim (Variadic (e, args)))
   | Make_block (Naked_floats, mut, _) ->
     failwith "Unimplemented_subst_pattern_primitive_variadic_make_block_floats"
   | Make_array _ ->
@@ -1338,7 +1453,7 @@ and subst_block_like
   | Simple v ->
     if Simple.equal v (Simple.symbol bound) then let_body else Named e
   | Prim (Binary (Block_load ((Values _ | Naked_floats _), _), a1, _)) ->
-    if Simple.equal a1 (Simple.symbol bound) then let_body else Named e
+    subst_pattern_static ~bound:(Bound_static.Pattern.block_like bound) ~let_body a1
   | Prim _ -> Named e (* FIXME: double-check *)
   | Static_consts _ ->
     (* FIXME double-check *) Named e
@@ -1425,27 +1540,10 @@ let rec subst_params
     (match List.assoc_opt s param_args with
     | Some arg_v -> arg_v
     | None -> e)
-  | Named (Prim (Binary (Block_load (l1, l2), a1, a2))) ->
-    (match List.assoc_opt a1 param_args with
-     | Some (Named (Simple arg_v)) ->
-       Named (Prim (Binary (Block_load (l1, l2), arg_v, a2)))
-     | Some (Named (Prim _ | Set_of_closures _ | Static_consts _ | Rec_info _)) ->
-       failwith "Unimplemented_param_prim_block_load"
-     | Some (Let _|Let_cont _|Apply _|Apply_cont _|Switch _|Invalid _) ->
-       failwith "Unimplemented_param_prim_block_load"
-     | None -> e)
-  | Named
-      (Prim (Binary (
-         (Array_load _ |
-          String_or_bigstring_load _ |
-          Bigarray_load _ |
-          Phys_equal _ |
-          Int_arith _ |
-          Int_shift _ |
-          Int_comp _ |
-          Float_arith _ |
-          Float_comp _), _, _)))
-  | Named (Prim (Nullary _ | Unary _ | Ternary _ | Variadic _)) ->
+  | Named (Prim (Binary (e, a1, a2))) ->
+    Named (Prim
+       (Binary (e, subst_params params a1 args, subst_params params a2 args)))
+  | Named (Prim _) ->
     failwith "Unimplemented_param_named_prim"
   | Named (Set_of_closures _) ->
     failwith "Unimplemented_param_named_clo"
@@ -1496,42 +1594,60 @@ let rec subst_cont (cont_e1: core_exp) (k: Bound_continuation.t)
     failwith "Unimplemented_subst_cont"
   | Invalid _ -> cont_e1
 
-(* TODO: Refactor with separate functions for unary/binary/etc.. *)
-let eval_prim (v : Flambda_primitive.t) : named =
+
+let eval_prim_nullary (v : P.nullary_primitive) : named =
+  failwith "eval_prim_nullary"
+
+let eval_prim_unary (v : P.unary_primitive) (arg : core_exp) : named =
+  failwith "eval_prim_unary"
+
+let eval_prim_binary
+      (v : P.binary_primitive) (arg1 : core_exp) (arg2 : core_exp) : named =
+  failwith "eval_prim_binary"
+
+let eval_prim_ternary (v : P.ternary_primitive)
+      (arg1 : core_exp) (arg2 : core_exp) (arg3 : core_exp) : named =
+  failwith "eval_prim_ternary"
+
+let eval_prim_variadic (v : P.variadic_primitive) (args : core_exp list) : named =
   match v with
-  | Variadic
-      (Make_block
-         (Values (tag, [kind]), _mut, _alloc_mode), [n]) ->
-    (match Flambda_kind.With_subkind.kind kind with
-     | Value ->
-       let constant =
-         Simple.pattern_match' n
-           ~var:(fun _ ~coercion:_ -> failwith "No variables allowed")
-           ~symbol:(fun _ ~coercion:_ -> failwith "No symbols allowed")
-           ~const:(fun t -> t) in
-       (match Int_ids.Const.descr constant with
-        | Tagged_immediate i ->
-          let block =
-            (Static_const.block tag Immutable
-              [Tagged_immediate i]) in
-          Static_consts [(Static_const block)]
-        | (Naked_immediate _ | Naked_float _
-          | Naked_int32 _ | Naked_int64 _ | Naked_nativeint _) ->
-          failwith "Unimplemented constant")
-      | (Naked_number _ | Region | Rec_info) ->
-        failwith "Unimplemented_eval_prim: making block for non-value kind")
-  | Variadic (Make_block (Values (_, _), _, _), _) ->
-    (* FIXME : WRONG *)
-    Prim (v)
-  | Variadic
-      (Make_block (Naked_floats, _, _), _) ->
-    failwith "Unimplemented_eval_prim: making block for naked floats"
-  | Variadic (Make_array (_,_,_), _) ->
-    failwith "Unimplemented_eval_prim: variadic make array"
-  | Binary _ ->
-    failwith "Unimplemented_eval_prim_binary"
-  | (Nullary _ | Unary _ | Ternary _) ->
-    failwith "Unimplemented_eval_prim"
+  | Make_block (Values (tag, [kind]), _mut, _alloc_mode) ->
+    (match args with
+    | [Named (Simple n)] ->
+      (* Reduce make block to immutable block *)
+      (match Flambda_kind.With_subkind.kind kind with
+      | Value ->
+          let constant =
+            Simple.pattern_match' n
+              ~var:(fun _ ~coercion:_ -> failwith "No variables allowed")
+              ~symbol:(fun _ ~coercion:_ -> failwith "No symbols allowed")
+              ~const:(fun t -> t)
+          in
+          (match Int_ids.Const.descr constant with
+            | Tagged_immediate i ->
+              let block = (Static_const.block tag Immutable [Tagged_immediate i])
+              in
+              Static_consts [(Static_const block)]
+            | (Naked_immediate _ | Naked_float _
+              | Naked_int32 _ | Naked_int64 _ | Naked_nativeint _) ->
+              failwith "Unimplemented constant")
+        | (Naked_number _ | Region | Rec_info) ->
+          failwith "Unimplemented_eval_prim: making block for non-value kind")
+    | _ -> Prim (Variadic (v, args)))
+  | Make_block _ ->
+    Prim (Variadic (v, args))
+  | Make_block (Naked_floats, _, _) ->
+    failwith "eval_prim_variadic_naked_floats_unspported"
+  | Make_array _ ->
+    failwith "eval_prim_variadic_make_array_unspported"
+
+let eval_prim (v : primitive) : named =
+  match v with
+  | Nullary v -> eval_prim_nullary v
+  | Unary (v, arg) -> eval_prim_unary v arg
+  | Binary (v, arg1, arg2) -> eval_prim_binary v arg1 arg2
+  | Ternary (v, arg1, arg2, arg3) -> eval_prim_ternary v arg1 arg2 arg3
+  | Variadic (v, args) -> eval_prim_variadic v args
 
 (* This is a "normalization" of [named] expression, in quotations because there
   is some simple evaluation that occurs for primitive arithmetic expressions *)
@@ -1549,7 +1665,6 @@ let normalize_named (body : named) : named =
 let rec normalize (e:core_exp) : core_exp =
   match e with
   | Let { let_abst; body } ->
-    _std_print e;
     normalize_let let_abst body
     |> normalize
   | Let_cont e ->
