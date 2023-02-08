@@ -14,12 +14,11 @@
 
 %% \section{Flambda2 Simplifier}
 
-\section{Core language}
-
 \section{Reduction strategy}
 
 %%  Macros for core exps
 \newcommand{\letexp}[3]{\mathsf{let}\; #1 \; = \; #2 \; \mathsf{in} \; #3}
+\newcommand{\letcodeexp}[3]{\mathsf{let}\; (\mathsf{code} \; #1) \; = \; #2 \; \mathsf{in} \; #3}
 \newcommand{\subst}[3]{#1 \; [ #2 \setminus #3 ]}
 \newcommand{\letcont}[4]{#1 \; \mathsf{where} \; #2 \; #3 \; = \; #4}
 \newcommand{\step}{\longrightarrow}
@@ -29,7 +28,7 @@
 \newcommand{\switch}[2]{\mathsf{switch}\; (#1) \; #2}
 \newcommand{\args}[1]{\overrightarrow{#1}}
 
-\begin{mathpar}
+\begin{mathpar}\small
   \inferrule
       [Let-$\beta$]
       {}
@@ -46,9 +45,26 @@
       {\letexp{x}{N}{e_2} \step \letexp{x}{N}{e_2'}}
 
   \inferrule
+      [LetCodeDeleted]
+      {}
+      {\letcodeexp{x}{\mathsf{Deleted}}{e} \step e}
+
+  \inferrule
+      [LetCodeNewer]
+      {}
+      {\letcodeexp{(\mathsf{newer\_of} \; x) \; x'}{e_1}{e_2} \step
+          \letcodeexp{x}{\subst{e_1}{x'}{x}}{\subst{e_2}{x'}{x}}}
+
+  \inferrule
+      [LetCode]
+      {e_2 \step e_2'}
+      {\letcodeexp{x}{N}{e_2} \step \letcodeexp{x}{N}{e_2'}}
+
+  \inferrule
       [LetCont-$\beta$]
       {}
       {\letcont{e_1}{k}{\args{args}}{e_2} \step \subst{e_1}{k}{\abst{\args{args}}{e_2}}}
+
 
   \inferrule
       [ApplyContR]
@@ -111,6 +127,13 @@ expression, and the argument is fully evaluated.
 The expression is beta-reduced, then the resulting value get passed on as an
 argument to either the return or exception continuation, depending on whether
 or not the expression throws an exception.
+
+The let-bindings that bind static code does not get inlined, as shown in [LetCode].
+Here, $N$ denotes any code that is not a $\mathsf{Deleted}$ snippet.
+Any let-bound code with a deleted code block gets erased, as in [LetCodeDeleted], and
+in place, every code binding that is a newer version of a code gets assigned the code id of the
+original code (note that this assumes a unique generation of newer versions of code,
+which is assumed for simplicity for now).
 
 \section{Rewrite Rules}
 
