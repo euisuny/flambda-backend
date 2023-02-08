@@ -1348,7 +1348,7 @@ let rec subst_pattern ~(bound : Bound_pattern.t) ~(let_body : core_exp) (e : cor
 
 and subst_pattern_set_of_closures
       ~(bound : Bound_var.t list) ~(let_body : core_exp) (e : core_exp) : core_exp =
-  e (* FIXME: WRONG *)
+  e (* NEXT *)
 
 and subst_pattern_primitive
       ~(bound : Bound_var.t) ~(let_body : core_exp) (e : primitive) : core_exp =
@@ -1412,19 +1412,17 @@ and subst_pattern_singleton
    | Named (Prim p) ->
      subst_pattern_primitive ~bound ~let_body p
    | Named (Static_consts [Static_const (Block (_tag, _mut, [x]))]) ->
+     (* FIXME *)
      let bound : Variable.t = Bound_var.var bound in
      (* N.B: static constants can refer to variables. *)
       (match x with
-       | Field_of_static_block.Symbol s ->
-         failwith "Unimplemented_static_consts_symbol"
-       | Tagged_immediate _ -> e
+       | Field_of_static_block.Symbol _ | Tagged_immediate _ -> e
        | Dynamically_computed (var, _) ->
          if (Simple.same (Simple.var var) (Simple.var bound))
          then let_body
          else e)
    | Named (Static_consts [Code _ | Deleted_code])
-   | Named (Static_consts _) ->
-     (* FIXME: WRONG *) e
+   | Named (Static_consts _) -> (* NEXT *) e
    | Named (Set_of_closures _) ->
      failwith "Unimplemented_sets_of_closures"
    | Named (Rec_info _) -> e
@@ -1452,22 +1450,45 @@ and subst_block_like
   match e with
   | Simple v ->
     if Simple.equal v (Simple.symbol bound) then let_body else Named e
-  | Prim (Binary (Block_load ((Values _ | Naked_floats _), _), a1, _)) ->
-    subst_pattern_static ~bound:(Bound_static.Pattern.block_like bound) ~let_body a1
-  | Prim _ -> Named e (* FIXME: double-check *)
+  | Prim (Nullary e) -> Named (Prim (Nullary e))
+  | Prim (Unary (e, arg1)) ->
+    let arg1 =
+      subst_pattern_static ~bound:(Bound_static.Pattern.block_like bound) ~let_body arg1
+    in
+    Named (Prim (Unary (e, arg1)))
+  | Prim (Binary (e, arg1, arg2)) ->
+    let arg1 =
+      subst_pattern_static ~bound:(Bound_static.Pattern.block_like bound) ~let_body arg1
+    in
+    let arg2 =
+      subst_pattern_static ~bound:(Bound_static.Pattern.block_like bound) ~let_body arg2
+    in
+    Named (Prim (Binary (e, arg1, arg2)))
+  | Prim (Ternary (e, arg1, arg2, arg3)) ->
+    let arg1 =
+      subst_pattern_static ~bound:(Bound_static.Pattern.block_like bound) ~let_body arg1
+    in
+    let arg2 =
+      subst_pattern_static ~bound:(Bound_static.Pattern.block_like bound) ~let_body arg2
+    in
+    let arg3 =
+      subst_pattern_static ~bound:(Bound_static.Pattern.block_like bound) ~let_body arg3
+    in
+    Named (Prim (Ternary (e, arg1, arg2, arg3)))
+  | Prim (Variadic (e, args)) ->
+    let args =
+      List.map (subst_pattern_static ~bound:(Bound_static.Pattern.block_like bound) ~let_body) args
+    in
+    Named (Prim (Variadic (e, args)))
   | Static_consts _ ->
     (* FIXME double-check *) Named e
   | Set_of_closures set ->
-    let function_decls : Code_id.t Function_slot.Map.t =
-      Set_of_closures.function_decls set |> Function_declarations.funs in
-    let value_slots : (Simple.t * Flambda_kind.With_subkind.t) Value_slot.Map.t =
-      Set_of_closures.value_slots set in
-    Named e (* FIXME: WRONG *)
+    Named e (* NEXT *)
   | Rec_info _ ->
     failwith "Unimplemented_block_like"
 
-and subst_code ~(bound: Code_id.t) ~(let_body : core_exp) (e : named) : core_exp =
-  Named e (* FIXME: WRONG *)
+and subst_set_of_closures (set : Symbol.t Function_slot.Lmap.t) ~let_body (e : named) =
+  Named e (* NEXT *)
 
 and subst_pattern_static
       ~(bound : Bound_static.Pattern.t) ~(let_body : core_exp) (e : core_exp) : core_exp =
@@ -1493,9 +1514,8 @@ and subst_pattern_static
      | Block_like bound ->
        subst_block_like ~bound ~let_body named
      | Set_of_closures set ->
-       e (* FIXME: WRONG *)
-     | Code id ->
-       subst_code id let_body named)
+       subst_set_of_closures set ~let_body named
+     | Code id -> failwith "Code case not handled")
   | Let_cont e ->
     (match e with
      | Non_recursive {handler; body} ->
@@ -1594,16 +1614,66 @@ let rec subst_cont (cont_e1: core_exp) (k: Bound_continuation.t)
     failwith "Unimplemented_subst_cont"
   | Invalid _ -> cont_e1
 
-
 let eval_prim_nullary (v : P.nullary_primitive) : named =
   failwith "eval_prim_nullary"
 
 let eval_prim_unary (v : P.unary_primitive) (arg : core_exp) : named =
   failwith "eval_prim_unary"
 
+let simple_tagged_immediate ~(const : Simple.t) : Targetint_31_63.t option =
+  let constant =
+    Simple.pattern_match' const
+    ~var:(fun _ ~coercion:_ -> failwith "No variables allowed")
+    ~symbol:(fun _ ~coercion:_ -> failwith "No symbols allowed")
+    ~const:(fun t -> t)
+  in
+  match Int_ids.Const.descr constant with
+  | Tagged_immediate i -> Some i
+  | _ -> None
+
 let eval_prim_binary
       (v : P.binary_primitive) (arg1 : core_exp) (arg2 : core_exp) : named =
-  failwith "eval_prim_binary"
+  match v with
+  | Block_load (Values {tag = Known tag; size; field_kind},
+                (Immutable | Immutable_unique)) ->
+    (* [arg1] is the block, and [arg2] is the index *)
+    (match arg1, arg2 with
+     | Named (Static_consts blocks), Named (Simple n) ->
+       (* If we can inspect the index, then we can load from the immutable block *)
+       if Simple.is_const n then
+         (let index = simple_tagged_immediate ~const:n in
+          match index with (* TODO: Match on the tags and size? *)
+          | Some i -> Static_consts [List.nth blocks (Targetint_31_63.to_int i)]
+          | None -> Prim (Binary (v, arg1, arg2)))
+       else
+         Prim (Binary (v, arg1, arg2))
+     | Named (Prim (Variadic (Make_block (kind, Immutable, _), blocks))),
+       Named (Simple n) ->
+       if Simple.is_const n then
+         (let index = simple_tagged_immediate ~const:n in
+          match index with (* TODO: Match on the tags and size? *)
+          | Some i ->
+            (match List.nth blocks (Targetint_31_63.to_int i) with
+             | Named n -> n
+             | _ -> failwith "Non-name load")
+          | None -> Prim (Binary (v, arg1, arg2)))
+       else
+         Prim (Binary (v, arg1, arg2))
+     | _, _ ->
+       failwith "Unimplemented immutable block_load")
+  | Block_load (Naked_floats _, (Immutable | Immutable_unique)) ->
+    failwith "Unimplemented immutable block load: naked_floats"
+  | Block_load (kind, Mutable) ->
+    failwith "Unimplemented mutable block load"
+  | Array_load (_,_)
+  | String_or_bigstring_load (_,_)
+  | Bigarray_load (_,_,_)
+  | Phys_equal _
+  | Int_arith (_,_)
+  | Int_shift (_,_)
+  | Int_comp (_,_)
+  | Float_arith _
+  | Float_comp _ -> failwith "Unimplemented eval_prim_binary"
 
 let eval_prim_ternary (v : P.ternary_primitive)
       (arg1 : core_exp) (arg2 : core_exp) (arg3 : core_exp) : named =
@@ -1615,6 +1685,7 @@ let eval_prim_variadic (v : P.variadic_primitive) (args : core_exp list) : named
     (match args with
     | [Named (Simple n)] ->
       (* Reduce make block to immutable block *)
+      (* LATER : generalize for taking in a list of arguments *)
       (match Flambda_kind.With_subkind.kind kind with
       | Value ->
           let constant =
@@ -1666,7 +1737,6 @@ let rec normalize (e:core_exp) : core_exp =
   match e with
   | Let { let_abst; body } ->
     normalize_let let_abst body
-    |> normalize
   | Let_cont e ->
     normalize_let_cont e
     |> normalize
@@ -1689,9 +1759,20 @@ and normalize_let let_abst body : core_exp =
     Core_let.pattern_match {let_abst; body}
       ~f:(fun ~x ~e1 ~e2 -> (x, normalize e1, e2))
   in
+  (match x with
+  | Static bound ->
+    (let bound = Bound_static.to_list bound in
+     match bound with
+     (* [LetCode]
+                      e2 ⟶ e2'
+        -------------------------------------
+        let code x = e1 in e2 -> let code x = e1 in e2' *)
+      | [Code _] -> Core_let.create ~x ~e1 ~e2:(normalize e2)
+      | _ -> subst_pattern ~bound:x ~let_body:e1 e2 |> normalize)
+
   (* [Let-β]
     let x = v in e2 ⟶ e2 [x\v] *)
-  subst_pattern ~bound:x ~let_body:e1 e2
+  | _ -> subst_pattern ~bound:x ~let_body:e1 e2 |> normalize)
 
 and normalize_let_cont (e:let_cont_expr) : core_exp =
   match e with
