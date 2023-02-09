@@ -1378,9 +1378,6 @@ and subst_pattern_set_of_closures_named
     in
     (match opt_var with
     | Some var ->
-       (* print_bound_pattern Format.std_formatter (Bound_pattern.set_of_closures bound); *)
-       (* _std_print let_body; *)
-       (* _std_print (Named e); *)
        (match let_body with
        | Named (Set_of_closures soc) -> (Set_of_closures soc)
        | _ -> failwith "Expected set of closures")
@@ -1493,8 +1490,7 @@ and subst_pattern_singleton
             else x) list
      in
      Named (Static_consts [Static_const (Static_const.block tag mut list)])
-   | Named (Set_of_closures _) ->
-      failwith "Unimplemented set_of_closures" 
+   | Named (Set_of_closures _) -> e
    | Named (Rec_info _) -> e
    | Let {let_abst; body} ->
      Core_let.pattern_match {let_abst; body}
@@ -1891,6 +1887,7 @@ and normalize_let let_abst body : core_exp =
   | Static bound ->
     (let bound = Bound_static.to_list bound in
      match bound with
+
      (* [LetCode]
                           e2 ⟶ e2'
         ----------------------------------------------
@@ -1916,7 +1913,16 @@ and normalize_let let_abst body : core_exp =
                ~e2:(apply_renaming e2 (Renaming.add_code_id Renaming.empty m n) |> normalize)
            | None -> letcode ())
         | _ -> letcode ())
+
+      (* [Set_of_closures]
+                          e2 ⟶ e2'
+        ----------------------------------------------
+        let closures x = e1 in e2 -> let closures x = e1 in e2' *)
+      | [Set_of_closures _] ->
+          Core_let.create ~x ~e1 ~e2:(normalize e2)
+
       | _ -> subst_pattern ~bound:x ~let_body:e1 e2 |> normalize)
+
 
   (* [Let-β]
     let x = v in e2 ⟶ e2 [x\v] *)
