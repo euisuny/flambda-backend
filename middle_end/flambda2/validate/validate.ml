@@ -1348,7 +1348,59 @@ let rec subst_pattern ~(bound : Bound_pattern.t) ~(let_body : core_exp) (e : cor
 
 and subst_pattern_set_of_closures
       ~(bound : Bound_var.t list) ~(let_body : core_exp) (e : core_exp) : core_exp =
-  e (* NEXT *)
+  match e with
+  | Named e -> Named (subst_pattern_set_of_closures_named ~bound ~let_body e)
+  | Let {let_abst; body} ->
+     Core_let.pattern_match {let_abst; body}
+       ~f:(fun ~x ~e1 ~e2 ->
+          Core_let.create
+            ~x
+            ~e1:(subst_pattern_set_of_closures ~bound ~let_body e1)
+            ~e2:(subst_pattern_set_of_closures ~bound ~let_body e2))
+  | Let_cont e ->
+      failwith "Unimplemented subst_pattern_set_of_closures: Let_cont"
+  | Apply {callee;continuation;exn_continuation;args;call_kind} ->
+      failwith "Unimplemented subst_pattern_set_of_closures: Apply"
+  | Apply_cont {k;args} ->
+     Apply_cont
+       { k = k;
+         args = List.map (subst_pattern_set_of_closures ~bound ~let_body) args }
+  | Switch {scrutinee;arms} ->
+      failwith "Unimplemented subst_pattern_set_of_closures: Switch"
+  | Invalid _ -> e
+
+and subst_pattern_set_of_closures_named
+      ~(bound : Bound_var.t list) ~(let_body : core_exp) (e : named) : named =
+  match e with
+  | Simple v ->
+    let opt_var =
+      List.find_opt (fun x -> Simple.same (Simple.var (Bound_var.var x)) v) bound
+    in
+    (match opt_var with
+    | Some var ->
+       (* print_bound_pattern Format.std_formatter (Bound_pattern.set_of_closures bound); *)
+       (* _std_print let_body; *)
+       (* _std_print (Named e); *)
+       (match let_body with
+       | Named (Set_of_closures soc) -> (Set_of_closures soc)
+       | _ -> failwith "Expected set of closures")
+    | None -> e)
+
+  | Prim (Variadic (e, args)) ->
+    let args =
+      List.map (subst_pattern_set_of_closures ~bound ~let_body) args
+    in
+    (Prim (Variadic (e, args)))
+  | Set_of_closures _ ->
+      failwith "Unimplemented subst_pattern_set_of_closures: Named Soc"
+  | Static_consts [Static_const (Block (tag, mut, list))] ->
+      e (*NEXT*)
+  | Static_consts _ ->
+      failwith "Unimplemented subst_pattern_set_of_closures: Named Sc"
+  | Rec_info _ ->
+      failwith "Unimplemented subst_pattern_set_of_closures: Named Ri"
+  | _ -> e (*NEXT*)
+
 
 and subst_pattern_primitive
       ~(bound : Bound_var.t) ~(let_body : core_exp) (e : primitive) : core_exp =
@@ -1401,6 +1453,17 @@ and subst_pattern_primitive_variadic
   | Make_array _ ->
     failwith "Unimplemented_subst_pattern_primitive_variadic"
 
+(* IY: What do coercions do? *)
+and simple_to_field_of_static_block (x : Simple.t) (dbg : Debuginfo.t)
+      : Field_of_static_block.t =
+  Simple.pattern_match' x
+   ~var:(fun x ~coercion:_ -> Field_of_static_block.Dynamically_computed (x, dbg))
+   ~symbol:(fun x ~coercion:_ -> Field_of_static_block.Symbol x)
+   ~const:(fun x ->
+      match Int_ids.Const.descr x with
+      | Tagged_immediate x -> Field_of_static_block.Tagged_immediate x
+      | _ -> failwith "Non-tagged immediates unsupported")
+
 and subst_pattern_singleton
       ~(bound : Bound_var.t) ~(let_body : core_exp) (e : core_exp) : core_exp =
   (match e with
@@ -1411,20 +1474,27 @@ and subst_pattern_singleton
      if (Simple.equal s bound) then let_body else e
    | Named (Prim p) ->
      subst_pattern_primitive ~bound ~let_body p
-   | Named (Static_consts [Static_const (Block (_tag, _mut, [x]))]) ->
-     (* FIXME *)
-     let bound : Variable.t = Bound_var.var bound in
-     (* N.B: static constants can refer to variables. *)
-      (match x with
-       | Field_of_static_block.Symbol _ | Tagged_immediate _ -> e
-       | Dynamically_computed (var, _) ->
-         if (Simple.same (Simple.var var) (Simple.var bound))
-         then let_body
-         else e)
-   | Named (Static_consts [Code _ | Deleted_code])
-   | Named (Static_consts _) -> (* NEXT *) e
+   | Named (Static_consts [Code _ | Deleted_code]) -> e (* NEXT *)
+   | Named (Static_consts [Static_const (Block (tag, mut, list))]) ->
+      let bound : Variable.t = Bound_var.var bound in
+      (* N.B: static constants can refer to variables. *)
+      let list =
+        List.map
+          (fun x ->
+            match x with
+            | Field_of_static_block.Symbol _ | Tagged_immediate _ -> x
+            | Dynamically_computed (var, dbg) ->
+              if (Simple.same (Simple.var var) (Simple.var bound))
+              then
+                (match let_body with
+                  | Named (Simple let_body) ->
+                      simple_to_field_of_static_block let_body dbg
+                  | _ -> x)
+            else x) list
+     in
+     Named (Static_consts [Static_const (Static_const.block tag mut list)])
    | Named (Set_of_closures _) ->
-     failwith "Unimplemented_sets_of_closures"
+      failwith "Unimplemented set_of_closures" 
    | Named (Rec_info _) -> e
    | Let {let_abst; body} ->
      Core_let.pattern_match {let_abst; body}
@@ -1487,12 +1557,25 @@ and subst_block_like
   | Rec_info _ ->
     failwith "Unimplemented_block_like"
 
+(* Set of closures:
+
+   Given the code for its functions and closure variables, the set of closures
+    keeps track of the mapping between them.
+
+   From what I can tell right now, you get a new let bound set of closures every time
+    you define code along with its closures
+
+   i.e. it is the code generated by
+    [let f = closure f_0 @f]
+   where [f_0] refers to the code
+
+    Apply2.camlApply2__f_1 <-| f/0 =
+        (set_of_closures Heap ({f/0 camlApply2__f_0_1_code}))
+
+*)
 and subst_set_of_closures (bound : Symbol.t Function_slot.Lmap.t) ~let_body (e : named) =
   match e with
-  | Simple v ->
-    print_static_pattern Format.std_formatter (Bound_static.Pattern.set_of_closures bound);
-    _std_print let_body;
-    failwith "subst_set_of_closures"
+  | Simple v -> (Named e)
   | Prim (Nullary e) -> Named (Prim (Nullary e))
   | Prim (Unary (e, arg1)) ->
     let arg1 =
