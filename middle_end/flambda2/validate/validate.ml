@@ -934,6 +934,25 @@ end
 let subst_symbol (env : Env.t) symbol =
   Env.find_symbol env symbol |> Option.value ~default:symbol
 
+let subst_function_slot (env : Env.t) slot =
+  Env.find_function_slot env slot |> Option.value ~default:slot
+
+let subst_value_slot (env : Env.t) var =
+  Env.find_value_slot env var |> Option.value ~default:var
+
+let subst_unary_primitive env (p : Flambda_primitive.unary_primitive) :
+  Flambda_primitive.unary_primitive =
+  match p with
+  | Project_function_slot { move_from; move_to } ->
+    let move_from = subst_function_slot env move_from in
+    let move_to = subst_function_slot env move_to in
+    Project_function_slot { move_from; move_to }
+  | Project_value_slot { project_from; value_slot; kind } ->
+    let project_from = subst_function_slot env project_from in
+    let value_slot = subst_value_slot env value_slot in
+    Project_value_slot { project_from; value_slot; kind }
+  | _ -> p
+
 let subst_name env n =
   Name.pattern_match n
     ~var:(fun _ -> n)
@@ -947,11 +966,32 @@ let subst_simple env s =
 let subst_code_id env code_id =
   Env.find_code_id env code_id |> Option.value ~default:code_id
 
+let subst_primitive env (p : Flambda_primitive.t) : Flambda_primitive.t =
+  match p with
+  | Unary (unary_primitive, arg) ->
+    Unary (subst_unary_primitive env unary_primitive, subst_simple env arg)
+  | _ -> p
+
+let subst_code_id (env : Env.t) code_id =
+  Env.find_code_id env code_id |> Option.value ~default:code_id
+
+let subst_func_decl env code_id = subst_code_id env code_id
+
+let subst_func_decls env decls =
+  Function_declarations.funs_in_order decls
+  |> Function_slot.Lmap.bindings
+  |> List.map (fun (function_slot, func_decl) ->
+    let function_slot = subst_function_slot env function_slot in
+    let func_decl = subst_func_decl env func_decl in
+    function_slot, func_decl)
+  |> Function_slot.Lmap.of_list |> Function_declarations.create
+
 (** Equality between two programs given a context **)
 (* For now, following a naive alpha-equivalence equality from [compare/compare]
     (without the discriminant) *)
 
-let equiv_symbols _env sym1 sym2 : eq =
+let equiv_symbols env sym1 sym2 : eq =
+  let sym1 = subst_symbol env sym1 in
   Symbol.equal sym1 sym2
 
 let equiv_names env name1 name2 : eq =
@@ -1115,11 +1155,18 @@ and equiv_code env
          ~my_depth:_ ->
          equiv env body1 body2)
 
-and equiv_block _env (tag1, mut1, fields1) (tag2, mut2, fields2) =
+and equiv_fields env
+      (field1 : Field_of_static_block.t) (field2 : Field_of_static_block.t) =
+  match field1, field2 with
+  | Symbol symbol1, Symbol symbol2 ->
+    equiv_symbols env symbol1 symbol2
+  | _, _ -> Field_of_static_block.equal field1 field2
+
+and equiv_block env (tag1, mut1, fields1) (tag2, mut2, fields2) =
   Tag.Scannable.equal tag1 tag2 &&
   Mutability.compare mut1 mut2 = 0 &&
   (List.combine fields1 fields2 |>
-   List.fold_left (fun x (e1, e2) -> x && Field_of_static_block.equal e1 e2)
+   List.fold_left (fun x (e1, e2) -> x && equiv_fields env e1 e2)
      true)
 
 and equiv_bound_static env static1 static2 : eq =
@@ -1139,7 +1186,11 @@ and equiv_pattern env
   | Set_of_closures clo1, Set_of_closures clo2 ->
     let closure_bindings env (slot1, symbol1) (slot2, symbol2) : eq =
       Env.add_symbol env symbol1 symbol2;
+      subst_function_slot env slot1;
       equiv_function_slots env slot1 slot2
+    in
+    let subst_closure_binding env (slot, symbol) =
+      subst_function_slot env slot, symbol
     in
     let clo1 = Function_slot.Lmap.bindings clo1 in
     let clo2 = Function_slot.Lmap.bindings clo2 in
@@ -1517,7 +1568,7 @@ and subst_block_like
         (set_of_closures Heap ({f/0 camlApply2__f_0_1_code}))
 
 *)
-and subst_set_of_closures (bound : Symbol.t Function_slot.Lmap.t) ~let_body (e : named) =
+and subst_bound_set_of_closures (bound : Symbol.t Function_slot.Lmap.t) ~let_body (e : named) =
   match e with
   | Simple v -> (Named e)
   | Prim (Nullary e) -> Named (Prim (Nullary e))
@@ -1587,7 +1638,7 @@ and subst_pattern_static
      | Block_like bound ->
        subst_block_like ~bound ~let_body named
      | Set_of_closures set ->
-       subst_set_of_closures set ~let_body named
+       subst_bound_set_of_closures set ~let_body named
      | Code id -> failwith "Code case not handled")
   | Let_cont e ->
     (match e with
@@ -1901,6 +1952,7 @@ and replace_set_of_closures_named (e : named) (vars : Bound_var.t list) (static:
   | Rec_info _ ->
     failwith "Unimplemented_block_like"
 
+(* IY: Problematic when checking alpha-equivalence *)
 and named_static_closures vars (e1 : core_exp) (e2 : core_exp)
   : Bound_pattern.t * core_exp * core_exp =
   match e1 with
@@ -1979,10 +2031,10 @@ and normalize_let let_abst body : core_exp =
 
      Turn a bound_pattern that is a list of variables to a static set of closures that is
      a function slot/symbol map.
+     Then Replace the variables with assigned static closure variables in the body of e2
 
-     let closures x = e1 in e2 -> let static_closures x = static e1 in e2
-
-     [Set_of_closures_subst] let static_closures x = static e1 in [subst e x] *)
+     let closures x = e1 in e2 ->
+     let static_closures x = static e1 in subst e2 [x \ static_closures x] *)
 
   | Set_of_closures set ->
     let (xs, e1, e2) = named_static_closures set e1 e2 in
