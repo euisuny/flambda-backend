@@ -130,7 +130,6 @@ let normalize_term file : unit =
   let src_core = src_core |> normalize in
   let tgt_core = tgt_core |> normalize in
 
-
   let alpha_eq = core_eq src_core tgt_core in
 
   Format.fprintf Format.std_formatter
@@ -152,16 +151,42 @@ let () =
    * alpha_equivalence_test_suite (); *)
   (* simplify_term "foo.fl";
    * normalize_term "foo.fl"; *)
+
+  (* Testing let binding *)
+
   (* simplify_term "let.fl";
    * normalize_term "let.fl"; *)
   (* simplify_term "let2.fl";
    * normalize_term "let2.fl"; *)
+
+  (* Full FL file generated from `let x = 42` *)
+
   (* simplify_term "let3.fl";
    * normalize_term "let3.fl"; *)
+
+  (* Closures *)
+
   (* simplify_term "apply1.fl";
    * normalize_term "apply1.fl"; *)
   simplify_term "apply2.fl";
   normalize_term "apply2.fl";
+
+  (* ---------Future work--------- *)
+
+  (* Dead closures are eliminated *)
+
+  (* simplify_term "apply5.fl";
+   * normalize_term "apply5.fl"; *)
+
+  (* Let bindings can be out of order *)
+
+  (* simplify_term "apply4.fl";
+    * normalize_term "apply4.fl"; *)
+
+  (* Application *)
+
+  (* simplify_term "apply3.fl";
+    * normalize_term "apply3.fl"; *)
   (* simplify_term "apply.fl";
    * normalize_term "apply.fl"; *)
   ()
