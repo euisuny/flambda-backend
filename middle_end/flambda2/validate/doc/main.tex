@@ -28,89 +28,6 @@
 \newcommand{\switch}[2]{\mathsf{switch}\; (#1) \; #2}
 \newcommand{\args}[1]{\overrightarrow{#1}}
 
-\begin{mathpar}\small
-  \inferrule
-      [Let-$\beta$]
-      {}
-      {\letexp{x}{v}{e_2} \step \subst{e_2}{x}{v}}
-
-  \inferrule
-      [LetL]
-      {e_1 \step e_1'}
-      {\letexp{x}{e_1}{e_2} \step \letexp{x}{e_1'}{e_2}}
-
-  \inferrule
-      [LetR]
-      {e_2 \step e_2'}
-      {\letexp{x}{N}{e_2} \step \letexp{x}{N}{e_2'}}
-
-  \inferrule
-      [LetCodeDeleted]
-      {}
-      {\letcodeexp{x}{\mathsf{Deleted}}{e} \step e}
-
-  \inferrule
-      [LetCodeNewer]
-      {}
-      {\letcodeexp{(\mathsf{newer\_of} \; x) \; x'}{e_1}{e_2} \step
-          \letcodeexp{x}{\subst{e_1}{x'}{x}}{\subst{e_2}{x'}{x}}}
-
-  \inferrule
-      [LetCode]
-      {e_2 \step e_2'}
-      {\letcodeexp{x}{N}{e_2} \step \letcodeexp{x}{N}{e_2'}}
-
-  \inferrule
-      [LetCont-$\beta$]
-      {}
-      {\letcont{e_1}{k}{\args{args}}{e_2} \step \subst{e_1}{k}{\abst{\args{args}}{e_2}}}
-
-
-  \inferrule
-      [ApplyContR]
-      {\args{args} \step \args{args}'}
-      {\applycont{v}{\args{args}} \step \applycont{v}{\args{args}'}}
-
-  \inferrule
-      [ApplyContL]
-      {k \step k'}
-      {\applycont{k}{\args{args}} \step \applycont{k'}{\args{args}}}
-
-  \inferrule
-      [ApplyCont-$\beta$]
-      {}
-      {\applycont{(\abst{x}{e})}{v} \step \subst{e}{x}{v}}
-
-  \inferrule
-      [ApplyR]
-      {\args{args} \step \args{args}'}
-      {\apply{e}{res_k}{exn_k}{\args{args}} \step \apply{e}{res_k}{exn_k}{\args{args}'}}
-
-  \inferrule
-      [ApplyL]
-      {e \step e'}
-      {\apply{e}{res_k}{exn_k}{\args{args}} \step \apply{e'}{res_k}{exn_k}{\args{args}}}
-
-  \inferrule
-      [Apply-$\beta$]
-      {}
-      {\apply{(\abst{\args{x}}{e})}{res_k}{exn_k}{\args{v}} \step \subst{e}{x}{\args{v}} \hookrightarrow res_k/exn_k}
-
-  \inferrule
-      [Switch]
-      {e \step e'}
-      {\switch{e}{arms} \step \switch{e'}{arms}}
-
-  \inferrule
-      [Switch-$\beta$]
-      {}
-      {\switch{v}{[x \mapsto e]} \step \subst{e}{x}{v}}
-
-      \overrightarrow{args} \step \overrightarrow{args}' := \forall a, a \in \overrightarrow{args}. \exists a', a \step^\ast a' \land a \in \overrightarrow{args}'
-\end{mathpar}
-
-
-\todo{LetR}
 
 This language has a call-by-value style reduction strategy.
 Notice the unusual [LetR] rule---the expression $N$ refers to an expression in
@@ -134,6 +51,100 @@ Any let-bound code with a deleted code block gets erased, as in [LetCodeDeleted]
 in place, every code binding that is a newer version of a code gets assigned the code id of the
 original code (note that this assumes a unique generation of newer versions of code,
 which is assumed for simplicity for now).
+
+\begin{mathpar}\footnotesize
+  \inferrule
+      [\footnotesize Let-$\beta$]
+      {}
+      {\letexp{x}{v}{e_2} \step \subst{e_2}{x}{v}}
+
+  \inferrule
+      [\footnotesize LetL]
+      {e_1 \step e_1'}
+      {\letexp{x}{e_1}{e_2} \step \letexp{x}{e_1'}{e_2}}
+
+  \inferrule
+      [\footnotesize LetR]
+      {e_2 \step e_2'}
+      {\letexp{x}{N}{e_2} \step \letexp{x}{N}{e_2'}}
+
+  \inferrule
+      [\footnotesize LetCodeDeleted]
+      {}
+      {\letcodeexp{x}{\mathsf{Deleted}}{e} \step e}
+
+  \inferrule
+      [\footnotesize LetCodeNewer]
+      {}
+      {\letcodeexp{(\mathsf{newer\_of} \; x) \; x'}{e_1}{e_2} \step
+          \letcodeexp{x}{\subst{e_1}{x'}{x}}{\subst{e_2}{x'}{x}}}
+
+  \inferrule
+      [\footnotesize LetStaticClo]
+      {e_2 \step e_2'}
+      {\letcodeexp{\mathcal{K}^{\uparrow}}{e_1}{e_2} \step \letcodeexp{\mathcal{K}^{\uparrow}}{e_1}{e_2'}}
+
+  \inferrule
+      [\footnotesize LetClo]
+      {}
+      {\letcodeexp{\mathcal{K}}{e_1}{e_2} \step \letcodeexp{\mathcal{K}^{\uparrow}}{e_1^{\uparrow}}{\subst{e_2}{\mathcal{K}}{\mathcal{K}^{\uparrow}}}}
+
+  \inferrule
+      [\footnotesize LetCode]
+      {e_2 \step e_2'}
+      {\letcodeexp{x}{N}{e_2} \step \letcodeexp{x}{N}{e_2'}}
+
+  \inferrule
+      [\footnotesize LetCont-$\beta$]
+      {}
+      {\letcont{e_1}{k}{\args{args}}{e_2} \step \subst{e_1}{k}{\abst{\args{args}}{e_2}}}
+
+
+  \inferrule
+      [\footnotesize ApplyContR]
+      {\args{args} \step \args{args}'}
+      {\applycont{v}{\args{args}} \step \applycont{v}{\args{args}'}}
+
+  \inferrule
+      [\footnotesize ApplyContL]
+      {k \step k'}
+      {\applycont{k}{\args{args}} \step \applycont{k'}{\args{args}}}
+
+  \inferrule
+      [\footnotesize ApplyCont-$\beta$]
+      {}
+      {\applycont{(\abst{x}{e})}{v} \step \subst{e}{x}{v}}
+
+  \inferrule
+      [\footnotesize ApplyR]
+      {\args{args} \step \args{args}'}
+      {\apply{e}{res_k}{exn_k}{\args{args}} \step \apply{e}{res_k}{exn_k}{\args{args}'}}
+
+  \inferrule
+      [\footnotesize ApplyL]
+      {e \step e'}
+      {\apply{e}{res_k}{exn_k}{\args{args}} \step \apply{e'}{res_k}{exn_k}{\args{args}}}
+
+  \inferrule
+      [\footnotesize Apply-$\beta$]
+      {}
+      {\apply{(\abst{\args{x}}{e})}{res_k}{exn_k}{\args{v}} \step \subst{e}{x}{\args{v}} \hookrightarrow res_k/exn_k}
+
+  \inferrule
+      [\footnotesize Switch]
+      {e \step e'}
+      {\switch{e}{arms} \step \switch{e'}{arms}}
+
+  \inferrule
+      [\footnotesize Switch-$\beta$]
+      {}
+      {\switch{v}{[x \mapsto e]} \step \subst{e}{x}{v}}
+
+      \overrightarrow{args} \step \overrightarrow{args}' := \forall a, a \in \overrightarrow{args}. \exists a', a \step^\ast a' \land a \in \overrightarrow{args}'
+\end{mathpar}
+
+
+\todo{LetR}
 
 \section{Rewrite Rules}
 
