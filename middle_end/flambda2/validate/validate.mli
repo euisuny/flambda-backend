@@ -40,29 +40,18 @@
    Note that the syntactic restrictions are a necessary part of the "Compiling-
    with- continuations" style optimization used in Flambda2; however this
    validator removes this restriction to check for term equality *)
-type core_exp
-
-val print : Format.formatter -> core_exp -> unit
-
-type eq
-
-val eq_string : eq -> string
-
-val core_eq : core_exp -> core_exp -> eq
 
 (** [simple_to_core] is a value-lifting translation:
 
    [Simple.t] corresponds to a register-sized value.
    By using this translation, we can allow for more liberal β - reductions in
    while normalizing [core_exp] terms. **)
-val simple_to_core : Simple.t -> core_exp
+val simple_to_core : Simple.t -> Flambda2_core.core_exp
 
-val flambda_expr_to_core : Flambda.expr -> core_exp
+val flambda_expr_to_core : Flambda.expr -> Flambda2_core.core_exp
 
-val flambda_unit_to_core : Flambda_unit.t -> core_exp
+val flambda_unit_to_core : Flambda_unit.t -> Flambda2_core.core_exp
 
-val normalize : core_exp -> core_exp
-
-val simulation_relation : Flambda_unit.t -> Simplify.simplify_result -> eq
+val normalize : Flambda2_core.core_exp -> Flambda2_core.core_exp
 
 val validate : cmx_loader:Flambda_cmx.loader -> round:int -> Flambda_unit.t -> bool

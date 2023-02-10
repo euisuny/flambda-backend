@@ -10,6 +10,8 @@ let extension = ".fl"
 let test_dir =
   "/middle_end/flambda2/validate/test-validate/tests/"
 
+let print = Flambda2_core.print
+
 (** Parsing **)
 let parse_flambda file : Flambda_unit.t =
   match Parse_flambda.parse file with
@@ -55,11 +57,11 @@ let check_alpha_equivalence file1 file2 : unit =
     "@.------------------------------------------------------------------------------@.";
   print Format.std_formatter core_output_alpha;
 
-  let alpha_eq = core_eq core_output core_output_alpha in
+  let alpha_eq = Equiv.core_eq core_output core_output_alpha in
 
   Format.fprintf Format.std_formatter
     "@..............................[α-equivalent?:%s]............................@.@."
-    (alpha_eq |> Validate.eq_string |> String.uppercase_ascii)
+    (alpha_eq |> Equiv.eq_string |> String.uppercase_ascii)
 
 let alpha_equivalence_test_suite (_ : unit) =
   Format.fprintf Format.std_formatter "⟪α-Equivalence Test Suite⟫@.@.";
@@ -130,7 +132,7 @@ let normalize_term file : unit =
   let src_core = src_core |> normalize in
   let tgt_core = tgt_core |> normalize in
 
-  let alpha_eq = core_eq src_core tgt_core in
+  let alpha_eq = Equiv.core_eq src_core tgt_core in
 
   Format.fprintf Format.std_formatter
   "@.--------------------------------------------------------------------[original]@.";
@@ -140,31 +142,39 @@ let normalize_term file : unit =
   print Format.std_formatter tgt_core;
   Format.fprintf Format.std_formatter
     "@..............................[α-equivalent?:%s]............................."
-    (alpha_eq |> Validate.eq_string |> String.uppercase_ascii);
+    (alpha_eq |> Equiv.eq_string |> String.uppercase_ascii);
   Format.fprintf Format.std_formatter
     "@.==============================================================================@.";
   ()
 
 (** Top-level driver for testing **)
 let () =
+  (* [Alpha-equivalence tester] *)
+
   (* Format.fprintf Format.std_formatter "Running Flambda2 Validator...@.@.";
    * alpha_equivalence_test_suite (); *)
+
+  (* [Sanity check] *)
+
   (* simplify_term "foo.fl";
    * normalize_term "foo.fl"; *)
 
-  (* Testing let binding *)
+  (* [Testing let, let-cont binding] *)
 
   (* simplify_term "let.fl";
    * normalize_term "let.fl"; *)
+
   (* simplify_term "let2.fl";
    * normalize_term "let2.fl"; *)
 
-  (* Full FL file generated from `let x = 42` *)
+  (* ----New since last week----- *)
+
+  (* [Full FL file generated from `let x = 42`] *)
 
   (* simplify_term "let3.fl";
    * normalize_term "let3.fl"; *)
 
-  (* Closures *)
+  (* [Closures] *)
 
   (* simplify_term "apply1.fl";
    * normalize_term "apply1.fl"; *)
@@ -173,17 +183,17 @@ let () =
 
   (* ---------Future work--------- *)
 
-  (* Dead closures are eliminated *)
+  (* [Dead closures are eliminated] *)
 
   (* simplify_term "apply5.fl";
    * normalize_term "apply5.fl"; *)
 
-  (* Let bindings can be out of order *)
+  (* [Let bindings can be out-of-order] *)
 
   (* simplify_term "apply4.fl";
     * normalize_term "apply4.fl"; *)
 
-  (* Application *)
+  (* [Application] *)
 
   (* simplify_term "apply3.fl";
     * normalize_term "apply3.fl"; *)
