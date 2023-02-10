@@ -1874,6 +1874,29 @@ let rec normalize (e:core_exp) : core_exp =
   | Named e -> Named (normalize_named e)
   | Invalid _ -> e
 
+and named_static_closures (e1 : core_exp) : Bound_pattern.t * core_exp =
+  match e1 with
+  | Named (Set_of_closures set) ->
+    let function_decls : Code_id.t Function_slot.Lmap.t =
+      Set_of_closures.function_decls set |> Function_declarations.funs_in_order in
+    let closure_symbols : Symbol.t Function_slot.Lmap.t =
+      Function_slot.Lmap.mapi
+        (fun function_slot _func_decl ->
+           let name =
+             function_slot |> Function_slot.rename |> Function_slot.to_string
+             |> Linkage_name.of_string
+           in
+           Symbol.create (Compilation_unit.get_current_exn ()) name)
+        function_decls in
+    let set : static_const_or_code =
+      Static_const (Static_const.set_of_closures set) in
+    let bound =
+      Bound_static.Pattern.set_of_closures closure_symbols |>
+      Bound_static.singleton
+    in
+    (Bound_pattern.static bound, Named (Static_consts [set]))
+  | _ -> failwith "Expected set of closures"
+
 and normalize_let let_abst body : core_exp =
   (* [LetL]
                   e1 ⟶ e1'
@@ -1914,15 +1937,26 @@ and normalize_let let_abst body : core_exp =
            | None -> letcode ())
         | _ -> letcode ())
 
-      (* [Set_of_closures]
-                          e2 ⟶ e2'
-        ----------------------------------------------
-        let closures x = e1 in e2 -> let closures x = e1 in e2' *)
-      | [Set_of_closures _] ->
-          Core_let.create ~x ~e1 ~e2:(normalize e2)
+      (* [Set_of_closures (static)]
+                                  e2 ⟶ e2'
+        --------------------------------------------------------------------
+        let static_closures x = e1 in e2 -> let static_closures x = e1 in e2' *)
+     | [Set_of_closures _] -> Core_let.create ~x ~e1 ~e2:(normalize e2)
 
-      | _ -> subst_pattern ~bound:x ~let_body:e1 e2 |> normalize)
+     | _ -> subst_pattern ~bound:x ~let_body:e1 e2 |> normalize)
 
+  (* [Set_of_closures]
+
+     Turn a bound_pattern that is a list of variables to a static set of closures that is
+     a function slot/symbol map.
+
+     let closures x = e1 in e2 -> let static_closures x = static e1 in e2 *)
+  | Set_of_closures set ->
+    (* let set = static_set_of_closures_bound set |> Bound_static.Pattern.set_of_closures in *)
+
+    (* let function_decls = Set_of_closures.function_decls set in *)
+    let (x, e1) = named_static_closures e1 in
+    Core_let.create ~x ~e1 ~e2:(normalize e2) |> normalize
 
   (* [Let-β]
     let x = v in e2 ⟶ e2 [x\v] *)
@@ -1941,7 +1975,7 @@ and normalize_let_cont (e:let_cont_expr) : core_exp =
     (* [LetCont-β]
        e1 where k args = e2 ⟶ e1 [k \ λ args. e2] *)
     subst_cont e1 k args e2
-  | Recursive _handlers -> failwith "Unimplemented_recursive "
+  | Recursive _handlers -> failwith "Unimplemented_recursive"
 
 and normalize_apply _callee _continuation _exn_continuation _args _call_kind : core_exp =
   failwith "Unimplemented_apply"
