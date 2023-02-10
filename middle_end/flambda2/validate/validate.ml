@@ -937,22 +937,6 @@ let subst_symbol (env : Env.t) symbol =
 let subst_function_slot (env : Env.t) slot =
   Env.find_function_slot env slot |> Option.value ~default:slot
 
-let subst_value_slot (env : Env.t) var =
-  Env.find_value_slot env var |> Option.value ~default:var
-
-let subst_unary_primitive env (p : Flambda_primitive.unary_primitive) :
-  Flambda_primitive.unary_primitive =
-  match p with
-  | Project_function_slot { move_from; move_to } ->
-    let move_from = subst_function_slot env move_from in
-    let move_to = subst_function_slot env move_to in
-    Project_function_slot { move_from; move_to }
-  | Project_value_slot { project_from; value_slot; kind } ->
-    let project_from = subst_function_slot env project_from in
-    let value_slot = subst_value_slot env value_slot in
-    Project_value_slot { project_from; value_slot; kind }
-  | _ -> p
-
 let subst_name env n =
   Name.pattern_match n
     ~var:(fun _ -> n)
@@ -966,25 +950,10 @@ let subst_simple env s =
 let subst_code_id env code_id =
   Env.find_code_id env code_id |> Option.value ~default:code_id
 
-let subst_primitive env (p : Flambda_primitive.t) : Flambda_primitive.t =
-  match p with
-  | Unary (unary_primitive, arg) ->
-    Unary (subst_unary_primitive env unary_primitive, subst_simple env arg)
-  | _ -> p
-
 let subst_code_id (env : Env.t) code_id =
   Env.find_code_id env code_id |> Option.value ~default:code_id
 
 let subst_func_decl env code_id = subst_code_id env code_id
-
-let subst_func_decls env decls =
-  Function_declarations.funs_in_order decls
-  |> Function_slot.Lmap.bindings
-  |> List.map (fun (function_slot, func_decl) ->
-    let function_slot = subst_function_slot env function_slot in
-    let func_decl = subst_func_decl env func_decl in
-    function_slot, func_decl)
-  |> Function_slot.Lmap.of_list |> Function_declarations.create
 
 (** Equality between two programs given a context **)
 (* For now, following a naive alpha-equivalence equality from [compare/compare]
@@ -2003,7 +1972,13 @@ and normalize_let let_abst body : core_exp =
 
         [LetCodeNew]
         let code (newer_version_of x) x' = e1 in e2 ->
-        let code x = e1 in e2 [x\x'] *)
+        let code x = e1 in e2 [x\x']
+
+        - We can't always choose to not inline code blocks: for instance, if
+          the code block is not used at all, then the block does get inlined.
+          We can do a pass in [e2] first to see if [code x] is mentioned, and
+          then choose to inline it
+     *)
      | [Code m] ->
        let letcode () = Core_let.create ~x ~e1 ~e2:(normalize e2) in
        (match e1 with
@@ -2029,13 +2004,13 @@ and normalize_let let_abst body : core_exp =
 
   (* [Set_of_closures]
 
-     Turn a bound_pattern that is a list of variables to a static set of closures that is
-     a function slot/symbol map.
-     Then Replace the variables with assigned static closure variables in the body of e2
+     Turn a bound_pattern that is a list of variables to a static set of
+     closures that is a function slot/symbol map.
+     Then Replace the variables with assigned static closure variables in the
+     body of e2
 
      let closures x = e1 in e2 ->
      let static_closures x = static e1 in subst e2 [x \ static_closures x] *)
-
   | Set_of_closures set ->
     let (xs, e1, e2) = named_static_closures set e1 e2 in
     Core_let.create ~x:xs ~e1 ~e2:(normalize e2) |> normalize
@@ -2057,7 +2032,7 @@ and normalize_let_cont (e:let_cont_expr) : core_exp =
     (* [LetCont-β]
        e1 where k args = e2 ⟶ e1 [k \ λ args. e2] *)
     subst_cont e1 k args e2
-  | Recursive _handlers -> failwith "Unimplemented_recursive"
+  | Recursive _handlers -> failwith "Unimplemented_recursive "
 
 and normalize_apply _callee _continuation _exn_continuation _args _call_kind : core_exp =
   failwith "Unimplemented_apply"
