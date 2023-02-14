@@ -78,7 +78,8 @@ and subst_pattern_set_of_closures_named
       failwith "Unimplemented subst_pattern_set_of_closures: Named Sc"
   | Rec_info _ ->
       failwith "Unimplemented subst_pattern_set_of_closures: Named Ri"
-  | _ -> e (*NEXT*)
+  | _ ->
+    failwith "Unimplemented_subst_pattern_set_of_closures_named"
 
 and subst_pattern_primitive
       ~(bound : Bound_var.t) ~(let_body : core_exp) (e : primitive) : core_exp =
@@ -131,7 +132,8 @@ and subst_pattern_primitive_variadic
   | Make_array _ ->
     failwith "Unimplemented_subst_pattern_primitive_variadic"
 
-(* IY: What do coercions do? *)
+(* IY: What do coercions do?
+   Has to do with inlining, ignore for now *)
 and _simple_to_field_of_static_block (x : Simple.t) (dbg : Debuginfo.t)
       : Field_of_static_block.t =
   Simple.pattern_match' x
@@ -146,13 +148,10 @@ and subst_pattern_singleton
       ~(bound : Bound_var.t) ~(let_body : core_exp) (e : core_exp) : core_exp =
   (match e with
    | Named (Simple s) ->
-     let bound : Variable.t = Bound_var.var bound in
-     (* TODO: Is it OK to assign a Simple to a Variable? *)
-     let bound = Simple.var bound in
+     let bound = Simple.var (Bound_var.var bound) in
      if (Simple.equal s bound) then let_body else e
    | Named (Prim p) ->
      subst_pattern_primitive ~bound ~let_body p
-   | Named (Static_consts [Code _ | Deleted_code]) -> e (* NEXT *)
    | Named (Static_consts [Static_const (Block (tag, mut, list))]) ->
       let list =
         List.map
@@ -218,9 +217,9 @@ and subst_block_like
     in
     Named (Prim (Variadic (e, args)))
   | Static_consts _ ->
-    (* FIXME double-check *) Named e
+    failwith "Unimplemented_static_consts"
   | Set_of_closures _ ->
-    Named e (* NEXT *)
+    failwith "Unimplemented_set_of_closures"
   | Rec_info _ ->
     failwith "Unimplemented_block_like"
 
@@ -272,9 +271,9 @@ and subst_bound_set_of_closures (bound : Symbol.t Function_slot.Lmap.t) ~let_bod
     in
     Named (Prim (Variadic (e, args)))
   | Static_consts _ ->
-    (* FIXME double-check *) Named e
+    failwith "Unimplemented_static_consts"
   | Set_of_closures _ ->
-    Named e (* NEXT *)
+    failwith "Unimplemented_set_of_closures"
   | Rec_info _ ->
     failwith "Unimplemented_block_like"
 
@@ -323,8 +322,7 @@ and subst_code_id (bound : Code_id.t) ~(let_body : core_exp) (e : named) : core_
         (fun x ->
           match x with
           | Id code_id ->
-            (* IY: Is there not a comparator for code_ids? *)
-            if (Code_id.name code_id) = (Code_id.name bound)
+            if (Code_id.compare code_id bound = 0)
             then Exp let_body
             else Id code_id
           | Exp e ->
@@ -350,8 +348,7 @@ and subst_code_id (bound : Code_id.t) ~(let_body : core_exp) (e : named) : core_
         (fun x ->
             match x with
             | Id code_id ->
-              (* IY: Is there not a comparator for code_ids? *)
-              if (Code_id.name code_id) = (Code_id.name bound)
+              if (Code_id.compare code_id bound = 0)
               then Exp let_body
               else Id code_id
             | Exp e ->

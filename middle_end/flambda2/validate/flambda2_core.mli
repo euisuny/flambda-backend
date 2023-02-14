@@ -122,7 +122,6 @@ and switch_expr =
   { scrutinee : core_exp;
     arms : core_exp Targetint_31_63.Map.t }
 
-
 module T0 : sig
   type t = core_exp
 

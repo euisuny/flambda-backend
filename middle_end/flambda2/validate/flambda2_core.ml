@@ -700,8 +700,25 @@ and ids_for_export_named (t : named) =
   | Static_consts consts -> ids_for_export_static_const_group consts
   | Rec_info info -> Rec_info_expr.ids_for_export info
 
-and ids_for_export_set_of_closures (_t : set_of_closures) =
-  failwith "Unimplemented_ids_for_set_of_closures"
+and ids_for_export_function_decls {funs ; in_order = _} =
+  Function_slot.Map.fold
+    (fun _function_slot fn_expr ids ->
+       match fn_expr with
+       | Id code_id -> Ids_for_export.add_code_id ids code_id
+       | Exp exp -> Ids_for_export.union (ids_for_export exp) ids
+    )
+    funs Ids_for_export.empty
+
+and ids_for_export_set_of_closures
+      ({function_decls; value_slots; alloc_mode} : set_of_closures) =
+  let function_decls_ids = ids_for_export_function_decls function_decls
+  in
+  Ids_for_export.union
+    (Value_slot.Map.fold
+       (fun _value_slot (simple, _kind) ids ->
+          Ids_for_export.add_simple ids simple)
+       value_slots function_decls_ids)
+    (Alloc_mode.For_allocations.ids_for_export alloc_mode)
 
 and ids_for_export_prim (t : primitive) =
   match t with
