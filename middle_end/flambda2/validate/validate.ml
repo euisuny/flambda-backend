@@ -6,6 +6,9 @@ module P = Flambda_primitive
 (** Translation from flambda2 terms to simplified core language **)
 let simple_to_core (v : Simple.t) : core_exp = Named (Simple v)
 
+let tagged_immediate_to_core e =
+  Named (Simple (Simple.const (Int_ids.Const.tagged_immediate e)))
+
 let rec flambda_expr_to_core (e: expr) : core_exp =
   let e = Expr.descr e in
   match e with
@@ -45,9 +48,9 @@ and prim_to_core (e : P.t) : primitive =
 
 and static_consts_to_core (e : Flambda.static_const_group) :
   Flambda2_core.static_const_group =
-  Static_const_group.to_list e |> List.map static_const_to_core
+  Static_const_group.to_list e |> List.map static_const_or_code_to_core
 
-and static_const_to_core (e : Flambda.static_const_or_code) :
+and static_const_or_code_to_core (e : Flambda.static_const_or_code) :
   Flambda2_core.static_const_or_code =
   match e with
   | Code e -> Code (function_params_and_body_to_code0
@@ -55,7 +58,32 @@ and static_const_to_core (e : Flambda.static_const_or_code) :
                       (Code0.params_and_body e)
                       (Code0.free_names_of_params_and_body e))
   | Deleted_code -> Deleted_code
-  | Static_const t -> Static_const t
+  | Static_const t -> Static_const (static_const_to_core t)
+
+and static_const_to_core (e : Static_const.t) : Flambda2_core.static_const =
+  match e with
+  | Set_of_closures soc -> Set_of_closures soc
+  | Block (tag, mut, list) ->
+    let list = List.map field_of_static_block_to_core list in
+    Block (tag, mut, list)
+  | Boxed_float v -> Boxed_float v
+  | Boxed_int32 v -> Boxed_int32 v
+  | Boxed_int64 v -> Boxed_int64 v
+  | Boxed_nativeint v -> Boxed_nativeint v
+  | Immutable_float_block v -> Immutable_float_block v
+  | Immutable_float_array v -> Immutable_float_array v
+  | Immutable_value_array v -> Immutable_value_array v
+  | Empty_array -> Empty_array
+  | Mutable_string {initial_value} -> Mutable_string {initial_value}
+  | Immutable_string s -> Immutable_string s
+
+and field_of_static_block_to_core (e : Field_of_static_block.t) : core_exp =
+  match e with
+  | Symbol e ->
+    Named (Simple (Simple.symbol e))
+  | Tagged_immediate e -> tagged_immediate_to_core e
+  | Dynamically_computed (var, dbg) ->
+    Named (Simple (Simple.var var))
 
 and function_params_and_body_to_code0 metadata (e : Flambda.function_params_and_body) free
   : Flambda2_core.function_params_and_body Code0.t =
@@ -143,10 +171,61 @@ let rec subst_pattern ~(bound : Bound_pattern.t) ~(let_body : core_exp) (e : cor
   | Singleton bound ->
     subst_pattern_singleton ~bound ~let_body e
   | Set_of_closures bound ->
-    failwith "Should not be reached"
-    (* subst_pattern_set_of_closures ~bound ~let_body e *)
+    subst_pattern_set_of_closures ~bound ~let_body e
   | Static bound ->
     subst_pattern_static_list ~bound ~let_body e
+
+and subst_pattern_set_of_closures
+      ~(bound : Bound_var.t list) ~(let_body : core_exp) (e : core_exp) : core_exp =
+  match e with
+  | Named e -> Named (subst_pattern_set_of_closures_named ~bound ~let_body e)
+  | Let {let_abst; body} ->
+     Core_let.pattern_match {let_abst; body}
+       ~f:(fun ~x ~e1 ~e2 ->
+          Core_let.create
+            ~x
+            ~e1:(subst_pattern_set_of_closures ~bound ~let_body e1)
+            ~e2:(subst_pattern_set_of_closures ~bound ~let_body e2))
+  | Let_cont e ->
+      failwith "Unimplemented subst_pattern_set_of_closures: Let_cont"
+  | Apply {callee;continuation;exn_continuation;args;call_kind} ->
+      failwith "Unimplemented subst_pattern_set_of_closures: Apply"
+  | Apply_cont {k;args} ->
+     Apply_cont
+       { k = k;
+         args = List.map (subst_pattern_set_of_closures ~bound ~let_body) args }
+  | Switch {scrutinee;arms} ->
+      failwith "Unimplemented subst_pattern_set_of_closures: Switch"
+  | Invalid _ -> e
+
+and subst_pattern_set_of_closures_named
+      ~(bound : Bound_var.t list) ~(let_body : core_exp) (e : named) : named =
+  match e with
+  | Simple v ->
+    let opt_var =
+      List.find_opt (fun x -> Simple.same (Simple.var (Bound_var.var x)) v) bound
+    in
+    (match opt_var with
+    | Some var ->
+       (match let_body with
+       | Named (Set_of_closures soc) -> (Set_of_closures soc)
+       | _ -> failwith "Expected set of closures")
+    | None -> e)
+
+  | Prim (Variadic (e, args)) ->
+    let args =
+      List.map (subst_pattern_set_of_closures ~bound ~let_body) args
+    in
+    (Prim (Variadic (e, args)))
+  | Set_of_closures _ ->
+      failwith "Unimplemented subst_pattern_set_of_closures: Named Soc"
+  | Static_consts [Static_const (Block (tag, mut, list))] ->
+    _std_print (Named e); failwith "Need block datatype changed"
+  | Static_consts _ ->
+      failwith "Unimplemented subst_pattern_set_of_closures: Named Sc"
+  | Rec_info _ ->
+      failwith "Unimplemented subst_pattern_set_of_closures: Named Ri"
+  | _ -> e (*NEXT*)
 
 and subst_pattern_primitive
       ~(bound : Bound_var.t) ~(let_body : core_exp) (e : primitive) : core_exp =
@@ -222,23 +301,11 @@ and subst_pattern_singleton
      subst_pattern_primitive ~bound ~let_body p
    | Named (Static_consts [Code _ | Deleted_code]) -> e (* NEXT *)
    | Named (Static_consts [Static_const (Block (tag, mut, list))]) ->
-      let bound : Variable.t = Bound_var.var bound in
-      (* N.B: static constants can refer to variables. *)
       let list =
         List.map
-          (fun x ->
-            match x with
-            | Field_of_static_block.Symbol _ | Tagged_immediate _ -> x
-            | Dynamically_computed (var, dbg) ->
-              if (Simple.same (Simple.var var) (Simple.var bound))
-              then
-                (match let_body with
-                  | Named (Simple let_body) ->
-                      simple_to_field_of_static_block let_body dbg
-                  | _ -> x)
-            else x) list
+          (fun x -> subst_pattern_singleton ~bound ~let_body x) list
      in
-     Named (Static_consts [Static_const (Static_const.block tag mut list)])
+     Named (Static_consts [Static_const (Block (tag, mut, list))])
    | Named (Set_of_closures _) -> e
    | Named (Rec_info _) -> e
    | Let {let_abst; body} ->
@@ -355,6 +422,52 @@ and subst_bound_set_of_closures (bound : Symbol.t Function_slot.Lmap.t) ~let_bod
   | Rec_info _ ->
     failwith "Unimplemented_block_like"
 
+and subst_code_id (bound : Code_id.t) ~(let_body : core_exp) (e : named) : core_exp =
+  match e with
+  | Simple v -> (Named e)
+  | Prim (Nullary e) -> Named (Prim (Nullary e))
+  | Prim (Unary (e, arg1)) ->
+    let arg1 =
+      subst_pattern_static
+        ~bound:(Bound_static.Pattern.code bound) ~let_body arg1
+    in
+    Named (Prim (Unary (e, arg1)))
+  | Prim (Binary (e, arg1, arg2)) ->
+    let arg1 =
+      subst_pattern_static
+        ~bound:(Bound_static.Pattern.code bound) ~let_body arg1
+    in
+    let arg2 =
+      subst_pattern_static
+        ~bound:(Bound_static.Pattern.code bound) ~let_body arg2
+    in
+    Named (Prim (Binary (e, arg1, arg2)))
+  | Prim (Ternary (e, arg1, arg2, arg3)) ->
+    let arg1 =
+      subst_pattern_static
+        ~bound:(Bound_static.Pattern.code bound) ~let_body arg1
+    in
+    let arg2 =
+      subst_pattern_static
+        ~bound:(Bound_static.Pattern.code bound) ~let_body arg2
+    in
+    let arg3 =
+      subst_pattern_static ~bound:(Bound_static.Pattern.code bound) ~let_body arg3
+    in
+    Named (Prim (Ternary (e, arg1, arg2, arg3)))
+  | Prim (Variadic (e, args)) ->
+    let args =
+      List.map
+        (subst_pattern_static ~bound:(Bound_static.Pattern.code bound) ~let_body) args
+    in
+    Named (Prim (Variadic (e, args)))
+  | Set_of_closures _ ->
+    (* FIXME double-check *) Named e
+  | Static_consts _ ->
+    (* FIXME double-check *) Named e
+  | Rec_info _ ->
+    failwith "Unimplemented_subst_code_id"
+
 and subst_pattern_static
       ~(bound : Bound_static.Pattern.t) ~(let_body : core_exp) (e : core_exp) : core_exp =
   match e with
@@ -380,7 +493,8 @@ and subst_pattern_static
        subst_block_like ~bound ~let_body named
      | Set_of_closures set ->
        subst_bound_set_of_closures set ~let_body named
-     | Code id -> failwith "Code case not handled")
+     | Code id ->
+       subst_code_id id ~let_body named)
   | Let_cont e ->
     (match e with
      | Non_recursive {handler; body} ->
@@ -560,7 +674,7 @@ let eval_prim_variadic (v : P.variadic_primitive) (args : core_exp list) : named
           in
           (match Int_ids.Const.descr constant with
             | Tagged_immediate i ->
-              let block = (Static_const.block tag Immutable [Tagged_immediate i])
+              let block = (Block (tag, Immutable, [tagged_immediate_to_core i]))
               in
               Static_consts [(Static_const block)]
             | (Naked_immediate _ | Naked_float _
@@ -709,7 +823,7 @@ and named_static_closures vars (e1 : core_exp) (e2 : core_exp)
            Symbol.create (Compilation_unit.get_current_exn ()) name)
         function_decls in
     let set : static_const_or_code =
-      Static_const (Static_const.set_of_closures set) in
+      Static_const (Set_of_closures set) in
     let bound =
       Bound_static.Pattern.set_of_closures closure_symbols |>
       Bound_static.singleton
@@ -728,70 +842,9 @@ and normalize_let let_abst body : core_exp =
     Core_let.pattern_match {let_abst; body}
       ~f:(fun ~x ~e1 ~e2 -> (x, normalize e1, e2))
   in
-  (match x with
-  | Static bound ->
-    (let bound = Bound_static.to_list bound in
-     match bound with
-
-     (* [LetCode]
-                          e2 ⟶ e2'
-        ----------------------------------------------
-        let code x = e1 in e2 -> let code x = e1 in e2'
-
-        [LetCodeDeleted]
-        let code x = Deleted in e2 -> e2
-
-        [LetCodeNew]
-        let code (newer_version_of x) x' = e1 in e2 ->
-        let code x = e1 in e2 [x\x']
-
-        - We can't always choose to not inline code blocks: for instance, if
-          the code block is not used at all, then the block does get inlined.
-          We can do a pass in [e2] first to see if [code x] is mentioned, and
-          then choose to inline it
-
-        TODO: There is an "inlining_decision" and "is_my_closure_used" metadata
-        field
-     *)
-     | [Code m] ->
-       let letcode () = Core_let.create ~x ~e1 ~e2:(normalize e2) in
-       (match e1 with
-        | Named (Static_consts [Deleted_code]) -> normalize e2
-        | Named (Static_consts [Code code]) ->
-          let metadata = Core_code.code_metadata code in
-          (match Code_metadata.newer_version_of metadata with
-           | Some n ->
-             Core_let.create
-               ~x:(Bound_pattern.static (Bound_static.create [Bound_static.Pattern.code n]))
-               ~e1:(apply_renaming e1 (Renaming.add_code_id Renaming.empty m n) |> normalize)
-               ~e2:(apply_renaming e2 (Renaming.add_code_id Renaming.empty m n) |> normalize)
-           | None -> letcode ())
-        | _ -> letcode ())
-
-      (* [Set_of_closures (static)]
-                                  e2 ⟶ e2'
-        --------------------------------------------------------------------
-        let static_closures x = e1 in e2 -> let static_closures x = e1 in e2' *)
-     | [Set_of_closures _] -> Core_let.create ~x ~e1 ~e2:(normalize e2)
-
-     | _ -> subst_pattern ~bound:x ~let_body:e1 e2 |> normalize)
-
-  (* [Set_of_closures]
-
-     Turn a bound_pattern that is a list of variables to a static set of
-     closures that is a function slot/symbol map.
-     Then replace the variables with assigned static closure variables in the
-     body of [e2]
-
-     let closures x = e1 in e2 ->
-     let static_closures x = static e1 in subst e2 [x \ static_closures x] *)
-  | Set_of_closures set ->
-    let (xs, e1, e2) = named_static_closures set e1 e2 in
-    Core_let.create ~x:xs ~e1 ~e2:(normalize e2) |> normalize
-
   (* [Let-β]
     let x = v in e2 ⟶ e2 [x\v] *)
-  | _ -> subst_pattern ~bound:x ~let_body:e1 e2 |> normalize)
+  subst_pattern ~bound:x ~let_body:e1 e2 |> normalize
 
 and normalize_let_cont (e:let_cont_expr) : core_exp =
   match e with

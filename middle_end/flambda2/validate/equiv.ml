@@ -255,18 +255,11 @@ and equiv_code env (code1 : Core_code.t) (code2 : Core_code.t) =
          ~my_depth:_ ->
          equiv env body1 body2)
 
-and equiv_fields env
-      (field1 : Field_of_static_block.t) (field2 : Field_of_static_block.t) =
-  match field1, field2 with
-  | Symbol symbol1, Symbol symbol2 ->
-    equiv_symbols env symbol1 symbol2
-  | _, _ -> Field_of_static_block.equal field1 field2
-
 and equiv_block env (tag1, mut1, fields1) (tag2, mut2, fields2) =
   Tag.Scannable.equal tag1 tag2 &&
   Mutability.compare mut1 mut2 = 0 &&
   (List.combine fields1 fields2 |>
-   List.fold_left (fun x (e1, e2) -> x && equiv_fields env e1 e2)
+   List.fold_left (fun x (e1, e2) -> x && equiv env e1 e2)
      true)
 
 and equiv_bound_static env static1 static2 : eq =
