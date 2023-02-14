@@ -43,7 +43,23 @@ and function_params_and_body =
 and static_const_or_code =
   | Code of function_params_and_body Code0.t
   | Deleted_code
-  | Static_const of Static_const.t
+  | Static_const of static_const
+
+and static_const =
+  | Set_of_closures of Set_of_closures.t
+  | Block of Tag.Scannable.t * Mutability.t * core_exp list
+  | Boxed_float of Numeric_types.Float_by_bit_pattern.t Or_variable.t
+  | Boxed_int32 of Int32.t Or_variable.t
+  | Boxed_int64 of Int64.t Or_variable.t
+  | Boxed_nativeint of Targetint_32_64.t Or_variable.t
+  | Immutable_float_block of
+      Numeric_types.Float_by_bit_pattern.t Or_variable.t list
+  | Immutable_float_array of
+      Numeric_types.Float_by_bit_pattern.t Or_variable.t list
+  | Immutable_value_array of Field_of_static_block.t list
+  | Empty_array
+  | Mutable_string of { initial_value : string }
+  | Immutable_string of string
 
 and static_const_group = static_const_or_code list
 
@@ -164,7 +180,68 @@ and apply_renaming_static_const_or_code t renaming : static_const_or_code =
             ~apply_renaming_function_params_and_body code renaming)
   | Deleted_code -> Deleted_code
   | Static_const const ->
-    Static_const (Static_const.apply_renaming const renaming)
+    Static_const (apply_renaming_static_const const renaming)
+
+and apply_renaming_static_const t renaming =
+  if Renaming.is_empty renaming
+  then t
+  else
+    match t with
+    | Set_of_closures set ->
+      let set' = Set_of_closures.apply_renaming set renaming in
+      if set == set' then t else Set_of_closures set'
+    | Block (tag, mut, fields) ->
+      let fields' =
+        Misc.Stdlib.List.map_sharing
+          (fun field -> apply_renaming field renaming)
+          fields
+      in
+      if fields' == fields then t else Block (tag, mut, fields')
+    | Boxed_float or_var ->
+      let or_var' = Or_variable.apply_renaming or_var renaming in
+      if or_var == or_var' then t else Boxed_float or_var'
+    | Boxed_int32 or_var ->
+      let or_var' = Or_variable.apply_renaming or_var renaming in
+      if or_var == or_var' then t else Boxed_int32 or_var'
+    | Boxed_int64 or_var ->
+      let or_var' = Or_variable.apply_renaming or_var renaming in
+      if or_var == or_var' then t else Boxed_int64 or_var'
+    | Boxed_nativeint or_var ->
+      let or_var' = Or_variable.apply_renaming or_var renaming in
+      if or_var == or_var' then t else Boxed_nativeint or_var'
+    | Mutable_string { initial_value = _ } | Immutable_string _ -> t
+    | Immutable_float_block fields ->
+      let fields' =
+        Misc.Stdlib.List.map_sharing
+          (fun (field : _ Or_variable.t) : _ Or_variable.t ->
+            match field with
+            | Var (v, dbg) ->
+              let v' = Renaming.apply_variable renaming v in
+              if v == v' then field else Var (v', dbg)
+            | Const _ -> field)
+          fields
+      in
+      if fields' == fields then t else Immutable_float_block fields'
+    | Immutable_float_array fields ->
+      let fields' =
+        Misc.Stdlib.List.map_sharing
+          (fun (field : _ Or_variable.t) : _ Or_variable.t ->
+            match field with
+            | Var (v, dbg) ->
+              let v' = Renaming.apply_variable renaming v in
+              if v == v' then field else Var (v', dbg)
+            | Const _ -> field)
+          fields
+      in
+      if fields' == fields then t else Immutable_float_array fields'
+    | Immutable_value_array fields ->
+      let fields' =
+        Misc.Stdlib.List.map_sharing
+          (fun field -> Field_of_static_block.apply_renaming field renaming)
+          fields
+      in
+      if fields' == fields then t else Immutable_value_array fields'
+    | Empty_array -> Empty_array
 
 and apply_renaming_function_params_and_body t renaming =
   Name_abstraction.apply_renaming
@@ -361,7 +438,58 @@ and print_static_const_or_code ppf t =
   match t with
   | Code code -> Code0.print ~print_function_params_and_body ppf code
   | Deleted_code -> fprintf ppf "deleted_code"
-  | Static_const const -> Static_const.print ppf const
+  | Static_const const -> print_static_const ppf const
+
+and print_static_const ppf (t : static_const) : unit =
+  match t with
+  | Set_of_closures set ->
+    fprintf ppf "(Set_of_closures %a)"
+      Set_of_closures.print set
+  | Block (tag, mut, fields) ->
+    fprintf ppf "(%sblock@ (tag %a)@ (%a))"
+      (match mut with
+        | Immutable -> "Immutable_"
+        | Immutable_unique -> "Unique_"
+        | Mutable -> "Mutable_")
+      Tag.Scannable.print tag
+      (Format.pp_print_list ~pp_sep:Format.pp_print_space
+        print) fields
+  | Boxed_float or_var ->
+    fprintf ppf "(Boxed_float@ %a)"
+      (Or_variable.print Numeric_types.Float_by_bit_pattern.print) or_var
+  | Boxed_int32 or_var ->
+    fprintf ppf "(Boxed_int32@ %a)"
+      (Or_variable.print Numeric_types.Int32.print) or_var
+  | Boxed_int64 or_var ->
+    fprintf ppf "(Boxed_int64@ %a)"
+      (Or_variable.print Numeric_types.Int64.print) or_var
+  | Boxed_nativeint or_var ->
+    fprintf ppf "(Boxed_nativeint@ %a)"
+      (Or_variable.print Targetint_32_64.print) or_var
+  | Immutable_float_block fields ->
+    fprintf ppf "(Immutable_float_block@ %a)"
+      (Format.pp_print_list
+        ~pp_sep:(fun ppf () -> Format.pp_print_string ppf "@; ")
+        (Or_variable.print Numeric_types.Float_by_bit_pattern.print))
+      fields
+  | Immutable_float_array fields ->
+    fprintf ppf "(Immutable_float_array@ [| %a |])"
+      (Format.pp_print_list
+        ~pp_sep:(fun ppf () -> Format.pp_print_string ppf "@; ")
+        (Or_variable.print Numeric_types.Float_by_bit_pattern.print))
+      fields
+  | Immutable_value_array fields ->
+    fprintf ppf "(Immutable_value_array@ (%a))"
+      (Format.pp_print_list ~pp_sep:Format.pp_print_space
+        Field_of_static_block.print) fields
+  | Empty_array ->
+    fprintf ppf "Empty_array"
+  | Mutable_string { initial_value = s; } ->
+    fprintf ppf "(Mutable_string@ %S)"
+      s
+  | Immutable_string s ->
+    fprintf ppf "(Immutable_string@ %S)"
+      s
 
 and print_function_params_and_body ppf (t:function_params_and_body) =
   Name_abstraction.pattern_match_for_printing
@@ -514,7 +642,48 @@ and ids_for_export_static_const_or_code t =
   | Code code ->
     Code0.ids_for_export ~ids_for_export_function_params_and_body code
   | Deleted_code -> Ids_for_export.empty
-  | Static_const const -> Static_const.ids_for_export const
+  | Static_const const -> ids_for_export_static_const const
+
+and ids_for_export_fields fields =
+  List.fold_left
+    (fun ids field ->
+       Ids_for_export.union ids (Field_of_static_block.ids_for_export field))
+    Ids_for_export.empty fields
+
+and ids_for_export_static_const t =
+  match t with
+  | Set_of_closures set -> Set_of_closures.ids_for_export set
+  | Block (_tag, _mut, fields) ->
+    List.fold_left (fun acc x -> Ids_for_export.union (ids_for_export x) acc)
+      Ids_for_export.empty fields
+  | Boxed_float (Var (var, _dbg))
+  | Boxed_int32 (Var (var, _dbg))
+  | Boxed_int64 (Var (var, _dbg))
+  | Boxed_nativeint (Var (var, _dbg)) ->
+    Ids_for_export.add_variable Ids_for_export.empty var
+  | Boxed_float (Const _)
+  | Boxed_int32 (Const _)
+  | Boxed_int64 (Const _)
+  | Boxed_nativeint (Const _)
+  | Mutable_string { initial_value = _ }
+  | Immutable_string _ ->
+    Ids_for_export.empty
+  | Immutable_float_block fields ->
+    List.fold_left
+      (fun ids (field : _ Or_variable.t) ->
+        match field with
+        | Var (var, _dbg) -> Ids_for_export.add_variable ids var
+        | Const _ -> ids)
+      Ids_for_export.empty fields
+  | Immutable_float_array fields ->
+    List.fold_left
+      (fun ids (field : _ Or_variable.t) ->
+        match field with
+        | Var (var, _dbg) -> Ids_for_export.add_variable ids var
+        | Const _ -> ids)
+      Ids_for_export.empty fields
+  | Immutable_value_array fields -> ids_for_export_fields fields
+  | Empty_array -> Ids_for_export.empty
 
 and ids_for_export_function_params_and_body abst =
   Name_abstraction.ids_for_export

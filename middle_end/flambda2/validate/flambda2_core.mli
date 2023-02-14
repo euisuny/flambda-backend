@@ -42,9 +42,25 @@ and function_params_and_body =
 and static_const_or_code =
   | Code of function_params_and_body Code0.t
   | Deleted_code
-  | Static_const of Static_const.t
+  | Static_const of static_const
 
 and static_const_group = static_const_or_code list
+
+and static_const =
+  | Set_of_closures of Set_of_closures.t
+  | Block of Tag.Scannable.t * Mutability.t * core_exp list
+  | Boxed_float of Numeric_types.Float_by_bit_pattern.t Or_variable.t
+  | Boxed_int32 of Int32.t Or_variable.t
+  | Boxed_int64 of Int64.t Or_variable.t
+  | Boxed_nativeint of Targetint_32_64.t Or_variable.t
+  | Immutable_float_block of
+      Numeric_types.Float_by_bit_pattern.t Or_variable.t list
+  | Immutable_float_array of
+      Numeric_types.Float_by_bit_pattern.t Or_variable.t list
+  | Immutable_value_array of Field_of_static_block.t list
+  | Empty_array
+  | Mutable_string of { initial_value : string }
+  | Immutable_string of string
 
 and let_cont_expr =
   (* Non-recursive case [e1 where k x = e2]
@@ -194,7 +210,6 @@ module Core_continuation_map : sig
   type t = (Bound_parameters.t, continuation_handler_map) Name_abstraction.t
   val create : Bound_parameters.t -> continuation_handler_map -> t
 end
-
 
 val print : Format.formatter -> core_exp -> unit
 val apply_renaming : core_exp -> Renaming.t -> core_exp
