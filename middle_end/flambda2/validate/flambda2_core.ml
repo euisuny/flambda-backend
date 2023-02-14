@@ -26,9 +26,22 @@ and let_expr =
 and named =
   | Simple of Simple.t
   | Prim of primitive
-  | Set_of_closures of Set_of_closures.t
+  | Set_of_closures of set_of_closures
   | Static_consts of static_const_group
   | Rec_info of Rec_info_expr.t
+
+and set_of_closures =
+  { function_decls : function_declarations;
+    value_slots : (Simple.t * Flambda_kind.With_subkind.t) Value_slot.Map.t;
+    alloc_mode : Alloc_mode.For_allocations.t }
+
+and function_declarations =
+  { funs : function_expr Function_slot.Map.t;
+    in_order : function_expr Function_slot.Lmap.t}
+
+and function_expr =
+  | Id of Code_id.t
+  | Exp of core_exp
 
 and primitive =
   | Nullary of P.nullary_primitive
@@ -46,7 +59,7 @@ and static_const_or_code =
   | Static_const of static_const
 
 and static_const =
-  | Set_of_closures of Set_of_closures.t
+  | Set_of_closures of set_of_closures
   | Block of Tag.Scannable.t * Mutability.t * core_exp list
   | Boxed_float of Numeric_types.Float_by_bit_pattern.t Or_variable.t
   | Boxed_int32 of Int32.t Or_variable.t
@@ -139,11 +152,59 @@ and apply_renaming_named t renaming : named =
   | Prim prim ->
     Prim (apply_renaming_prim prim renaming)
   | Set_of_closures set ->
-    Set_of_closures (Set_of_closures.apply_renaming set renaming)
+    Set_of_closures (apply_renaming_set_of_closures set renaming)
   | Static_consts consts ->
     Static_consts (apply_renaming_static_const_group consts renaming)
   | Rec_info info ->
     Rec_info (Rec_info_expr.apply_renaming info renaming)
+
+and apply_renaming_function_declarations
+      ({ funs; in_order } as t : function_declarations) renaming :
+  function_declarations =
+  let in_order' =
+    Function_slot.Lmap.map_sharing
+      (fun x ->
+         match x with
+         | Id code_id -> Id (Renaming.apply_code_id renaming code_id)
+         | Exp e -> Exp (apply_renaming e renaming))
+      in_order
+  in
+  { funs =
+      Function_slot.Map.of_list (Function_slot.Lmap.bindings in_order);
+    in_order}
+
+and apply_renaming_set_of_closures
+      ({ function_decls; value_slots; alloc_mode } as t : set_of_closures)
+      renaming : set_of_closures =
+  let alloc_mode' =
+    Alloc_mode.For_allocations.apply_renaming alloc_mode renaming
+  in
+  let function_decls' =
+    apply_renaming_function_declarations function_decls renaming
+  in
+  let changed = ref false in
+  let value_slots' =
+    Value_slot.Map.filter_map
+      (fun var (simple, kind) ->
+         if Renaming.value_slot_is_used renaming var
+         then (
+           let simple' = Simple.apply_renaming simple renaming in
+           if not (simple == simple') then changed := true;
+           Some (simple', kind))
+         else (
+           changed := true;
+           None))
+      value_slots
+  in
+  if alloc_mode == alloc_mode'
+  && function_decls == function_decls'
+  && not !changed
+  then t
+  else
+    { function_decls = function_decls';
+      value_slots = value_slots';
+      alloc_mode = alloc_mode'
+    }
 
 and apply_renaming_prim t renaming : primitive =
   match t with
@@ -188,7 +249,7 @@ and apply_renaming_static_const t renaming =
   else
     match t with
     | Set_of_closures set ->
-      let set' = Set_of_closures.apply_renaming set renaming in
+      let set' = apply_renaming_set_of_closures set renaming in
       if set == set' then t else Set_of_closures set'
     | Block (tag, mut, fields) ->
       let fields' =
@@ -388,13 +449,43 @@ and print_named ppf (t : named) =
     print_prim prim;
   | Set_of_closures clo ->
     fprintf ppf "set_of_closures@ %a"
-    Set_of_closures.print clo
+    print_set_of_closures clo
   | Static_consts consts ->
     fprintf ppf "static_consts@ %a"
     print_static_const_group consts
   | Rec_info info ->
     fprintf ppf "rec_info@ %a"
     Rec_info_expr.print info
+
+and print_set_of_closures ppf
+      { function_decls;
+        value_slots;
+        alloc_mode; } =
+  if Value_slot.Map.is_empty value_slots then
+    Format.fprintf ppf "(%a@ \
+                         %a\)"
+      Alloc_mode.For_allocations.print alloc_mode
+      print_function_declaration function_decls
+  else
+    Format.fprintf ppf "(%a@ \
+                        %a\
+                        (env@ %a))"
+      Alloc_mode.For_allocations.print alloc_mode
+      print_function_declaration function_decls
+      (Value_slot.Map.print print_value_slot) value_slots
+
+and print_value_slot ppf (simple, kind) =
+  Format.fprintf ppf "@[(%a @<1>\u{2237} %a)@]" Simple.print simple
+    Flambda_kind.With_subkind.print kind
+
+and print_function_declaration ppf { funs ; in_order } =
+  Format.fprintf ppf "(%a)"
+    (Function_slot.Lmap.print
+    (fun ppf x ->
+       match x with
+       | Id x -> Code_id.print ppf x
+       | Exp x -> print ppf x))
+    in_order
 
 and print_prim ppf (t : primitive) =
   match t with
@@ -444,7 +535,7 @@ and print_static_const ppf (t : static_const) : unit =
   match t with
   | Set_of_closures set ->
     fprintf ppf "(Set_of_closures %a)"
-      Set_of_closures.print set
+      print_set_of_closures set
   | Block (tag, mut, fields) ->
     fprintf ppf "(%sblock@ (tag %a)@ (%a))"
       (match mut with
@@ -602,9 +693,12 @@ and ids_for_export_named (t : named) =
   match t with
   | Simple simple -> Ids_for_export.from_simple simple
   | Prim prim -> ids_for_export_prim prim
-  | Set_of_closures set -> Set_of_closures.ids_for_export set
+  | Set_of_closures set -> ids_for_export_set_of_closures set
   | Static_consts consts -> ids_for_export_static_const_group consts
   | Rec_info info -> Rec_info_expr.ids_for_export info
+
+and ids_for_export_set_of_closures (t : set_of_closures) =
+  failwith "Unimplemented_ids_for_set_of_closures"
 
 and ids_for_export_prim (t : primitive) =
   match t with
@@ -652,7 +746,7 @@ and ids_for_export_fields fields =
 
 and ids_for_export_static_const t =
   match t with
-  | Set_of_closures set -> Set_of_closures.ids_for_export set
+  | Set_of_closures set -> ids_for_export_set_of_closures set
   | Block (_tag, _mut, fields) ->
     List.fold_left (fun acc x -> Ids_for_export.union (ids_for_export x) acc)
       Ids_for_export.empty fields

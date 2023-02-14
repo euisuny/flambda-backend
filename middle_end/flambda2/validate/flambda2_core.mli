@@ -25,9 +25,22 @@ and let_expr =
 and named =
   | Simple of Simple.t
   | Prim of primitive
-  | Set_of_closures of Set_of_closures.t
+  | Set_of_closures of set_of_closures
   | Static_consts of static_const_group
   | Rec_info of Rec_info_expr.t
+
+and set_of_closures =
+  { function_decls : function_declarations;
+    value_slots : (Simple.t * Flambda_kind.With_subkind.t) Value_slot.Map.t;
+    alloc_mode : Alloc_mode.For_allocations.t }
+
+and function_declarations =
+  { funs : function_expr Function_slot.Map.t;
+    in_order : function_expr Function_slot.Lmap.t}
+
+and function_expr =
+  | Id of Code_id.t
+  | Exp of core_exp
 
 and primitive =
   | Nullary of P.nullary_primitive
@@ -47,7 +60,7 @@ and static_const_or_code =
 and static_const_group = static_const_or_code list
 
 and static_const =
-  | Set_of_closures of Set_of_closures.t
+  | Set_of_closures of set_of_closures
   | Block of Tag.Scannable.t * Mutability.t * core_exp list
   | Boxed_float of Numeric_types.Float_by_bit_pattern.t Or_variable.t
   | Boxed_int32 of Int32.t Or_variable.t
@@ -212,4 +225,5 @@ module Core_continuation_map : sig
 end
 
 val print : Format.formatter -> core_exp -> unit
+val print_static_pattern : Format.formatter -> Bound_static.Pattern.t -> unit
 val apply_renaming : core_exp -> Renaming.t -> core_exp

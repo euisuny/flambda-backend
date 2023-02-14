@@ -78,6 +78,11 @@ let subst_simple env s =
 let subst_code_id env code_id =
   Env.find_code_id env code_id |> Option.value ~default:code_id
 
+let subst_function_expr env (fn_expr : function_expr) =
+  match fn_expr with
+  | Id id -> Id (subst_code_id env id)
+  | Exp _ -> fn_expr
+
 let subst_code_id (env : Env.t) code_id =
   Env.find_code_id env code_id |> Option.value ~default:code_id
 
@@ -136,47 +141,6 @@ let equiv_code_ids env id1 id2 =
   let id1 = subst_code_id env id1 in
   Code_id.equal id1 id2
 
-let equiv_function_decl = equiv_code_ids
-
-let equiv_set_of_closures env
-  (set1 : Set_of_closures.t) (set2 : Set_of_closures.t) : eq =
-  (* Unify value and function slots *)
-  (* Comparing value slots *)
-  let value_slots_by_value set =
-    Value_slot.Map.bindings (Set_of_closures.value_slots set)
-    |> List.map (fun (var, (value, kind)) -> kind, subst_simple env value, var)
-  in
-  let compare (kind1, value1, _var1) (kind2, value2, _var2) =
-    let c = Flambda_kind.With_subkind.compare kind1 kind2 in
-    if c = 0 then Simple.compare value1 value2 else c
-  in
-  let value_slots_eq =
-    zip_sort_fold (value_slots_by_value set1) (value_slots_by_value set2)
-      ~compare
-      ~f:(fun x ((_, _, var1), (_, _, var2)) ->
-            x && equiv_value_slots env var1 var2)
-      ~acc:true
-  in
-  (* Comparing function slots *)
-  let function_slots_and_fun_decls_by_code_id (set : Set_of_closures.t)
-      : (Code_id.t * (Function_slot.t * Code_id.t)) list =
-    let map = Function_declarations.funs (Set_of_closures.function_decls set) in
-    Function_slot.Map.bindings map
-    |> List.map (fun (function_slot, code_id) ->
-      subst_code_id env code_id, (function_slot, code_id))
-  in
-  let function_slots_eq =
-    zip_fold
-      (function_slots_and_fun_decls_by_code_id set1)
-      (function_slots_and_fun_decls_by_code_id set2)
-      ~f:(fun acc ((_, (slot1, decl1)), (_, (slot2, decl2))) ->
-        acc &&
-        equiv_function_slot env slot1 slot2 &&
-        equiv_function_decl env decl1 decl2)
-      ~acc: true
-  in
-  value_slots_eq && function_slots_eq
-
 let equiv_rec_info _env info1 info2 : eq =
   Rec_info_expr.equal info1 info2
 
@@ -216,7 +180,8 @@ and equiv_let_symbol_exprs env
   equiv env body1 body2
 
 and equiv_static_consts env
-  (const1 : static_const_or_code) (const2 : static_const_or_code) : eq =
+      (const1 : Flambda2_core.static_const_or_code)
+      (const2 : Flambda2_core.static_const_or_code) : eq =
   match const1, const2 with
   | Code code1, Code code2 -> equiv_code env code1 code2
   | Static_const (Block (tag1, mut1, fields1)),
@@ -299,6 +264,51 @@ and equiv_function_slots env slot1 slot2 =
     match Env.find_function_slot_rev env slot2 with
     | Some _ -> false
     | None -> Env.add_function_slot env slot1 slot2; true
+
+and equiv_function_decl env exp1 exp2 =
+  match exp1, exp2 with
+  | Id id1, Id id2 -> equiv_code_ids env id1 id2
+  | Exp exp1, Exp exp2 -> equiv env exp1 exp2
+  | _, _ -> false
+
+and equiv_set_of_closures env
+  (set1 : set_of_closures) (set2 : set_of_closures) : eq =
+  (* Unify value and function slots *)
+  (* Comparing value slots *)
+  let value_slots_by_value set =
+    Value_slot.Map.bindings (set.value_slots)
+    |> List.map (fun (var, (value, kind)) -> kind, subst_simple env value, var)
+  in
+  let compare (kind1, value1, _var1) (kind2, value2, _var2) =
+    let c = Flambda_kind.With_subkind.compare kind1 kind2 in
+    if c = 0 then Simple.compare value1 value2 else c
+  in
+  let value_slots_eq =
+    zip_sort_fold (value_slots_by_value set1) (value_slots_by_value set2)
+      ~compare
+      ~f:(fun x ((_, _, var1), (_, _, var2)) ->
+            x && equiv_value_slots env var1 var2)
+      ~acc:true
+  in
+  (* Comparing function slots *)
+  let function_slots_and_fun_decls_by_code_id (set : set_of_closures)
+      : (function_expr * (Function_slot.t * function_expr)) list =
+    let map = (set.function_decls).funs in
+    Function_slot.Map.bindings map
+    |> List.map (fun (function_slot, code_id) ->
+      subst_function_expr env code_id, (function_slot, code_id))
+  in
+  let function_slots_eq =
+    zip_fold
+      (function_slots_and_fun_decls_by_code_id set1)
+      (function_slots_and_fun_decls_by_code_id set2)
+      ~f:(fun acc ((_, (slot1, decl1)), (_, (slot2, decl2))) ->
+        acc &&
+        equiv_function_slot env slot1 slot2 &&
+        equiv_function_decl env decl1 decl2)
+      ~acc: true
+  in
+  value_slots_eq && function_slots_eq
 
 and equiv_named env named1 named2 : eq =
   match named1, named2 with
