@@ -20,7 +20,7 @@ type core_exp =
    [e1] = body **)
 and let_expr =
   { let_abst : (Bound_pattern.t, core_exp) Name_abstraction.t;
-    body : core_exp; }
+    let_body : core_exp; }
 
 and named =
   | Simple of Simple.t
@@ -60,7 +60,7 @@ and static_const_or_code =
 and static_const_group = static_const_or_code list
 
 and static_const =
-  | Set_of_closures of set_of_closures
+  | Static_set_of_closures of set_of_closures
   | Block of Tag.Scannable.t * Mutability.t * core_exp list
   | Boxed_float of Numeric_types.Float_by_bit_pattern.t Or_variable.t
   | Boxed_int32 of Int32.t Or_variable.t
@@ -111,7 +111,7 @@ and apply_expr =
   { callee: core_exp;
     continuation: Apply_expr.Result_continuation.t;
     exn_continuation: Continuation.t;
-    args: core_exp list;
+    apply_args: core_exp list;
     call_kind: Call_kind.t; }
 
 and apply_cont_expr =

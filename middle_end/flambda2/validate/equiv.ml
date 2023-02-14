@@ -8,9 +8,9 @@ module Env = struct
     { mutable symbols : Symbol.t Symbol.Map.t;
       mutable code_ids : Code_id.t Code_id.Map.t;
       mutable function_slots : Function_slot.t Function_slot.Map.t;
-      mutable function_slots_rev : Function_slot.t Function_slot.Map.t;
+      function_slots_rev : Function_slot.t Function_slot.Map.t;
       mutable value_slots : Value_slot.t Value_slot.Map.t;
-      mutable value_slots_rev : Value_slot.t Value_slot.Map.t
+      value_slots_rev : Value_slot.t Value_slot.Map.t
     }
 
   let create () =
@@ -86,7 +86,6 @@ let subst_function_expr env (fn_expr : function_expr) =
 let subst_code_id (env : Env.t) code_id =
   Env.find_code_id env code_id |> Option.value ~default:code_id
 
-let subst_func_decl env code_id = subst_code_id env code_id
 (** Equality between two programs given a context **)
 (* For now, following a naive alpha-equivalence equality from [compare/compare]
     (without the discriminant) *)
@@ -166,11 +165,11 @@ let rec equiv (env:Env.t) e1 e2 : eq =
 and equiv_let env e1 e2 : eq =
   Core_let.pattern_match_pair e1 e2
     (fun _bound let_bound1 let_bound2 ->
-       equiv env let_bound1 let_bound2 && equiv env e1.body e2.body)
+       equiv env let_bound1 let_bound2 && equiv env e1.let_body e2.let_body)
     (fun bound1 bound2 let_bound1 let_bound2 ->
          equiv_let_symbol_exprs env
-           (bound1, e1.body, let_bound1)
-           (bound2, e2.body, let_bound2))
+           (bound1, e1.let_body, let_bound1)
+           (bound2, e2.let_body, let_bound2))
   |> function | Ok comp -> comp | Error _ -> false
 
 and equiv_let_symbol_exprs env
@@ -187,11 +186,12 @@ and equiv_static_consts env
   | Static_const (Block (tag1, mut1, fields1)),
     Static_const (Block (tag2, mut2, fields2)) ->
     equiv_block env (tag1, mut1, fields1) (tag2, mut2, fields2)
-  | Static_const (Set_of_closures set1), Static_const (Set_of_closures set2) ->
+  | Static_const (Static_set_of_closures set1),
+    Static_const (Static_set_of_closures set2) ->
     equiv_set_of_closures env set1 set2
   | Deleted_code, Deleted_code -> true
   (* IY: Is it fine to treat all the other static constants uniformly? *)
-  | (Static_const (Set_of_closures _) |
+  | (Static_const (Static_set_of_closures _) |
      Static_const (Block _) |
      Static_const (Boxed_float _) |
      Static_const (Boxed_int32 _) |
@@ -244,11 +244,8 @@ and equiv_pattern env
   | Set_of_closures clo1, Set_of_closures clo2 ->
     let closure_bindings env (slot1, symbol1) (slot2, symbol2) : eq =
       Env.add_symbol env symbol1 symbol2;
-      subst_function_slot env slot1;
+      let _ = subst_function_slot env slot1 in
       equiv_function_slots env slot1 slot2
-    in
-    let subst_closure_binding env (slot, symbol) =
-      subst_function_slot env slot, symbol
     in
     let clo1 = Function_slot.Lmap.bindings clo1 in
     let clo2 = Function_slot.Lmap.bindings clo2 in
@@ -396,7 +393,7 @@ and equiv_apply env (e1 : apply_expr) (e2 : apply_expr) : eq =
     Continuation.equal (e1.exn_continuation) (e2.exn_continuation) in
   let callee = equiv env (e1.callee) (e2.callee) in
   let args =
-    zip_fold (e1.args) (e2.args)
+    zip_fold (e1.apply_args) (e2.apply_args)
       ~f:(fun x (e1, e2) -> x && equiv env e1 e2) ~acc:true in
   let call_kind = equiv_call_kind env (e1.call_kind) (e2.call_kind) in
   equiv_conts && callee && args && call_kind

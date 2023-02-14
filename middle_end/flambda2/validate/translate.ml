@@ -80,7 +80,8 @@ and static_const_or_code_to_core (e : Flambda.static_const_or_code) :
 
 and static_const_to_core (e : Static_const.t) : Flambda2_core.static_const =
   match e with
-  | Set_of_closures soc -> Set_of_closures (set_of_closures_to_core soc)
+  | Set_of_closures soc ->
+    Static_set_of_closures (set_of_closures_to_core soc)
   | Block (tag, mut, list) ->
     let list = List.map field_of_static_block_to_core list in
     Block (tag, mut, list)
@@ -100,7 +101,7 @@ and field_of_static_block_to_core (e : Field_of_static_block.t) : core_exp =
   | Symbol e ->
     Named (Simple (Simple.symbol e))
   | Tagged_immediate e -> tagged_immediate_to_core e
-  | Dynamically_computed (var, dbg) ->
+  | Dynamically_computed (var, _) ->
     Named (Simple (Simple.var var))
 
 and function_params_and_body_to_code0 metadata (e : Flambda.function_params_and_body) free
@@ -155,7 +156,7 @@ and apply_to_core (e : Apply.t) : core_exp =
     continuation = Apply_expr.continuation e;
     exn_continuation = Apply_expr.exn_continuation e |>
                         Exn_continuation.exn_handler;
-    args = Apply_expr.args e |> List.map simple_to_core;
+    apply_args = Apply_expr.args e |> List.map simple_to_core;
     call_kind = Apply_expr.call_kind e;}
 
 and apply_cont_to_core (e : Apply_cont.t) : core_exp =

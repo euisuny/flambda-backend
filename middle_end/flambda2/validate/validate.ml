@@ -30,22 +30,22 @@ and subst_pattern_set_of_closures
       ~(bound : Bound_var.t list) ~(let_body : core_exp) (e : core_exp) : core_exp =
   match e with
   | Named e -> Named (subst_pattern_set_of_closures_named ~bound ~let_body e)
-  | Let {let_abst; body} ->
-     Core_let.pattern_match {let_abst; body}
+  | Let {let_abst; let_body} ->
+     Core_let.pattern_match {let_abst; let_body}
        ~f:(fun ~x ~e1 ~e2 ->
           Core_let.create
             ~x
             ~e1:(subst_pattern_set_of_closures ~bound ~let_body e1)
             ~e2:(subst_pattern_set_of_closures ~bound ~let_body e2))
-  | Let_cont e ->
+  | Let_cont _ ->
       failwith "Unimplemented subst_pattern_set_of_closures: Let_cont"
-  | Apply {callee;continuation;exn_continuation;args;call_kind} ->
+  | Apply _ ->
       failwith "Unimplemented subst_pattern_set_of_closures: Apply"
   | Apply_cont {k;args} ->
      Apply_cont
        { k = k;
          args = List.map (subst_pattern_set_of_closures ~bound ~let_body) args }
-  | Switch {scrutinee;arms} ->
+  | Switch _ ->
       failwith "Unimplemented subst_pattern_set_of_closures: Switch"
   | Invalid _ -> e
 
@@ -57,7 +57,7 @@ and subst_pattern_set_of_closures_named
       List.find_opt (fun x -> Simple.same (Simple.var (Bound_var.var x)) v) bound
     in
     (match opt_var with
-    | Some var ->
+    | Some _ ->
        (match let_body with
         | Named (Set_of_closures soc) -> (Set_of_closures soc)
        | _ -> failwith "Expected set of closures")
@@ -98,7 +98,7 @@ and subst_pattern_primitive_binary
       ~(bound : Bound_var.t) ~(let_body : core_exp)
       ((e, a1, a2) : P.binary_primitive * core_exp * core_exp) : core_exp =
   match e with
-  | Block_load (kind, mut) ->
+  | Block_load _ ->
     Named
       (Prim (Binary
                (e,
@@ -126,13 +126,13 @@ and subst_pattern_primitive_variadic
         args
     in
     Named (Prim (Variadic (e, args)))
-  | Make_block (Naked_floats, mut, _) ->
+  | Make_block (Naked_floats, _, _) ->
     failwith "Unimplemented_subst_pattern_primitive_variadic_make_block_floats"
   | Make_array _ ->
     failwith "Unimplemented_subst_pattern_primitive_variadic"
 
 (* IY: What do coercions do? *)
-and simple_to_field_of_static_block (x : Simple.t) (dbg : Debuginfo.t)
+and _simple_to_field_of_static_block (x : Simple.t) (dbg : Debuginfo.t)
       : Field_of_static_block.t =
   Simple.pattern_match' x
    ~var:(fun x ~coercion:_ -> Field_of_static_block.Dynamically_computed (x, dbg))
@@ -159,10 +159,12 @@ and subst_pattern_singleton
           (fun x -> subst_pattern_singleton ~bound ~let_body x) list
      in
      Named (Static_consts [Static_const (Block (tag, mut, list))])
+   | Named (Static_consts _) ->
+     failwith "Unimplemented_subst_static_consts"
    | Named (Set_of_closures _) -> e
    | Named (Rec_info _) -> e
-   | Let {let_abst; body} ->
-     Core_let.pattern_match {let_abst; body}
+   | Let {let_abst; let_body} ->
+     Core_let.pattern_match {let_abst; let_body}
        ~f:(fun ~x ~e1 ~e2 ->
           Core_let.create
             ~x
@@ -217,12 +219,12 @@ and subst_block_like
     Named (Prim (Variadic (e, args)))
   | Static_consts _ ->
     (* FIXME double-check *) Named e
-  | Set_of_closures set ->
+  | Set_of_closures _ ->
     Named e (* NEXT *)
   | Rec_info _ ->
     failwith "Unimplemented_block_like"
 
-(* Set of closures:
+(* [Set of closures]
 
    Given the code for its functions and closure variables, the set of closures
     keeps track of the mapping between them.
@@ -232,7 +234,7 @@ and subst_block_like
 and subst_bound_set_of_closures (bound : Symbol.t Function_slot.Lmap.t) ~let_body
       (e : named) =
   match e with
-  | Simple v -> Named e
+  | Simple _ -> Named e
   | Prim (Nullary e) -> Named (Prim (Nullary e))
   | Prim (Unary (e, arg1)) ->
     let arg1 =
@@ -271,14 +273,14 @@ and subst_bound_set_of_closures (bound : Symbol.t Function_slot.Lmap.t) ~let_bod
     Named (Prim (Variadic (e, args)))
   | Static_consts _ ->
     (* FIXME double-check *) Named e
-  | Set_of_closures set ->
+  | Set_of_closures _ ->
     Named e (* NEXT *)
   | Rec_info _ ->
     failwith "Unimplemented_block_like"
 
 and subst_code_id (bound : Code_id.t) ~(let_body : core_exp) (e : named) : core_exp =
   match e with
-  | Simple v -> (Named e)
+  | Simple _ -> Named e
   | Prim (Nullary e) -> Named (Prim (Nullary e))
   | Prim (Unary (e, arg1)) ->
     let arg1 =
@@ -342,7 +344,7 @@ and subst_code_id (bound : Code_id.t) ~(let_body : core_exp) (e : named) : core_
     Named (Static_consts [Static_const (Block (tag, immutable, exps))])
   | Static_consts
       [Static_const
-         (Set_of_closures ({function_decls; value_slots; alloc_mode}))] ->
+         (Static_set_of_closures ({function_decls; value_slots; alloc_mode}))] ->
     let in_order : function_expr Function_slot.Lmap.t = function_decls.in_order |>
       Function_slot.Lmap.map
         (fun x ->
@@ -361,7 +363,7 @@ and subst_code_id (bound : Code_id.t) ~(let_body : core_exp) (e : named) : core_
         in_order}
     in
     Named (Static_consts [Static_const
-      (Set_of_closures {function_decls; value_slots; alloc_mode})])
+      (Static_set_of_closures {function_decls; value_slots; alloc_mode})])
   | Static_consts _ -> Named e
   | Rec_info _ ->
     failwith "Unimplemented_subst_code_id"
@@ -373,16 +375,16 @@ and subst_pattern_static
     Apply_cont
       {k = k;
        args = List.map (subst_pattern_static ~bound ~let_body) args}
-  | Let {let_abst; body} ->
-    Core_let.pattern_match {let_abst; body}
+  | Let {let_abst; let_body} ->
+    Core_let.pattern_match {let_abst; let_body}
       ~f:(fun ~x ~e1 ~e2 ->
         Core_let.create
           ~x
-          ~e1:(subst_pattern_static bound let_body e1)
-          ~e2:(subst_pattern_static bound let_body e2))
+          ~e1:(subst_pattern_static ~bound ~let_body e1)
+          ~e2:(subst_pattern_static ~bound ~let_body e2))
   | Switch {scrutinee; arms} ->
     Switch
-      {scrutinee = subst_pattern_static bound let_body scrutinee;
+      {scrutinee = subst_pattern_static ~bound ~let_body scrutinee;
         arms = Targetint_31_63.Map.map
                  (subst_pattern_static ~bound ~let_body) arms}
   | Named named ->
@@ -402,12 +404,12 @@ and subst_pattern_static
                 Core_continuation_handler.pattern_match handler
                   (fun param exp ->
                       Core_continuation_handler.create
-                        param (subst_pattern_static bound let_body exp));
+                        param (subst_pattern_static ~bound ~let_body exp));
               body =
                 Core_letcont_body.pattern_match body
                   (fun cont exp ->
                      Core_letcont_body.create
-                       cont (subst_pattern_static bound let_body exp))})
+                       cont (subst_pattern_static ~bound ~let_body exp))})
      | Recursive _ ->
        failwith "Unimplemented_static_clo_recursive"
     )
@@ -421,7 +423,7 @@ and subst_pattern_static_list ~(bound : Bound_static.t) ~let_body e : core_exp =
      | [] -> e
      | hd :: tl ->
        subst_pattern_static_list_ tl
-         (subst_pattern_static hd let_body e)) in
+         (subst_pattern_static ~bound:hd ~let_body e)) in
   subst_pattern_static_list_ (Bound_static.to_list bound) e
 
 (* ∀ p i, p ∈ params -> params[i] = p -> e [p \ args[i]] *)
@@ -469,9 +471,9 @@ let rec subst_cont (cont_e1: core_exp) (k: Bound_continuation.t)
     (args: Bound_parameters.t) (cont_e2: core_exp) : core_exp =
   match cont_e1 with
   | Named _ -> cont_e1
-  | Let { let_abst; body } ->
+  | Let { let_abst; let_body } ->
     let bound, e, body =
-      Core_let.pattern_match {let_abst; body}
+      Core_let.pattern_match {let_abst; let_body}
         ~f:(fun ~x ~e1 ~e2 ->
           (x, subst_cont e1 k args cont_e2,
               subst_cont e2 k args cont_e2))
@@ -490,10 +492,10 @@ let rec subst_cont (cont_e1: core_exp) (k: Bound_continuation.t)
     failwith "Unimplemented_subst_cont"
   | Invalid _ -> cont_e1
 
-let eval_prim_nullary (v : P.nullary_primitive) : named =
+let eval_prim_nullary (_v : P.nullary_primitive) : named =
   failwith "eval_prim_nullary"
 
-let eval_prim_unary (v : P.unary_primitive) (arg : core_exp) : named =
+let eval_prim_unary (_v : P.unary_primitive) (_arg : core_exp) : named =
   failwith "eval_prim_unary"
 
 let simple_tagged_immediate ~(const : Simple.t) : Targetint_31_63.t option =
@@ -510,7 +512,7 @@ let simple_tagged_immediate ~(const : Simple.t) : Targetint_31_63.t option =
 let eval_prim_binary
       (v : P.binary_primitive) (arg1 : core_exp) (arg2 : core_exp) : named =
   match v with
-  | Block_load (Values {tag = Known tag; size; field_kind},
+  | Block_load (Values {tag = Known _; size = _; field_kind = _},
                 (Immutable | Immutable_unique)) ->
     (* [arg1] is the block, and [arg2] is the index *)
     (match arg1, arg2 with
@@ -523,7 +525,7 @@ let eval_prim_binary
           | None -> Prim (Binary (v, arg1, arg2)))
        else
          Prim (Binary (v, arg1, arg2))
-     | Named (Prim (Variadic (Make_block (kind, Immutable, _), blocks))),
+     | Named (Prim (Variadic (Make_block (_, Immutable, _), blocks))),
        Named (Simple n) ->
        if Simple.is_const n then
          (let index = simple_tagged_immediate ~const:n in
@@ -539,7 +541,7 @@ let eval_prim_binary
        failwith "Unimplemented immutable block_load")
   | Block_load (Naked_floats _, (Immutable | Immutable_unique)) ->
     failwith "Unimplemented immutable block load: naked_floats"
-  | Block_load (kind, Mutable) ->
+  | Block_load (_kind, _Mutable) ->
     failwith "Unimplemented mutable block load"
   | Array_load (_,_)
   | String_or_bigstring_load (_,_)
@@ -551,8 +553,8 @@ let eval_prim_binary
   | Float_arith _
   | Float_comp _ -> failwith "Unimplemented eval_prim_binary"
 
-let eval_prim_ternary (v : P.ternary_primitive)
-      (arg1 : core_exp) (arg2 : core_exp) (arg3 : core_exp) : named =
+let eval_prim_ternary (_v : P.ternary_primitive)
+      (_arg1 : core_exp) (_arg2 : core_exp) (_arg3 : core_exp) : named =
   failwith "eval_prim_ternary"
 
 let eval_prim_variadic (v : P.variadic_primitive) (args : core_exp list) : named =
@@ -583,8 +585,6 @@ let eval_prim_variadic (v : P.variadic_primitive) (args : core_exp list) : named
     | _ -> Prim (Variadic (v, args)))
   | Make_block _ ->
     Prim (Variadic (v, args))
-  | Make_block (Naked_floats, _, _) ->
-    failwith "eval_prim_variadic_naked_floats_unspported"
   | Make_array _ ->
     failwith "eval_prim_variadic_make_array_unspported"
 
@@ -611,13 +611,13 @@ let normalize_named (body : named) : named =
 
 let rec normalize (e:core_exp) : core_exp =
   match e with
-  | Let { let_abst; body } ->
-    normalize_let let_abst body
+  | Let { let_abst; let_body } ->
+    normalize_let let_abst let_body
   | Let_cont e ->
     normalize_let_cont e
     |> normalize
-  | Apply {callee; continuation; exn_continuation; args; call_kind} ->
-    normalize_apply callee continuation exn_continuation args call_kind
+  | Apply {callee; continuation; exn_continuation; apply_args; call_kind} ->
+    normalize_apply callee continuation exn_continuation apply_args call_kind
     |> normalize
   | Apply_cont {k ; args} ->
     (* The recursive call for [apply_cont] is done for the arguments *)
@@ -626,118 +626,13 @@ let rec normalize (e:core_exp) : core_exp =
   | Named e -> Named (normalize_named e)
   | Invalid _ -> e
 
-and replace_set_of_closures (e : core_exp) (bound : Bound_var.t list) (static : Symbol.t list) =
-  match e with
-  | Apply_cont {k ; args} ->
-    Apply_cont
-      {k = k;
-       args = List.map (fun x -> replace_set_of_closures x bound static) args}
-  | Let {let_abst; body} ->
-    Core_let.pattern_match {let_abst; body}
-      ~f:(fun ~x ~e1 ~e2 ->
-        Core_let.create
-          ~x
-          ~e1:(replace_set_of_closures e1 bound static)
-          ~e2:(replace_set_of_closures e2 bound static))
-  | Switch {scrutinee; arms} ->
-    Switch
-      {scrutinee =
-         replace_set_of_closures scrutinee bound static;
-       arms = Targetint_31_63.Map.map
-                (fun x -> replace_set_of_closures x bound static) arms}
-  | Named named ->
-    replace_set_of_closures_named named bound static
-  | Let_cont e ->
-    (match e with
-     | Non_recursive {handler; body} ->
-       Let_cont
-         (Non_recursive
-            { handler =
-                Core_continuation_handler.pattern_match handler
-                  (fun param exp ->
-                      Core_continuation_handler.create
-                        param (replace_set_of_closures exp bound static));
-              body =
-                Core_letcont_body.pattern_match body
-                  (fun cont exp ->
-                     Core_letcont_body.create
-                       cont (replace_set_of_closures exp bound static))})
-     | Recursive _ ->
-       failwith "Unimplemented_static_clo_recursive"
-    )
-  | Apply _ -> failwith "Unimplemented_subst_pattern_static"
-  | Invalid _ -> e
-
-and replace_set_of_closures_named (e : named) (vars : Bound_var.t list) (static: Symbol.t list) =
-  match e with
-  | Simple v ->
-    let rec find_static vs ss =
-      (match vs, ss with
-      | [], [] -> Named e
-      | v' :: vtl,s :: stl ->
-        if (Simple.same v (Simple.var v')) then (Named (Simple (Simple.symbol s))) else Named e)
-    in
-    find_static (List.map Bound_var.var vars) static
-
-  | Prim (Nullary e) -> Named (Prim (Nullary e))
-  | Prim (Unary (e, arg1)) ->
-    let arg1 = replace_set_of_closures arg1 vars static in
-    Named (Prim (Unary (e, arg1)))
-  | Prim (Binary (e, arg1, arg2)) ->
-    let arg1 = replace_set_of_closures arg1 vars static in
-    let arg2 = replace_set_of_closures arg2 vars static in
-    Named (Prim (Binary (e, arg1, arg2)))
-  | Prim (Ternary (e, arg1, arg2, arg3)) ->
-    let arg1 = replace_set_of_closures arg1 vars static in
-    let arg2 = replace_set_of_closures arg2 vars static in
-    let arg3 = replace_set_of_closures arg3 vars static in
-    Named (Prim (Ternary (e, arg1, arg2, arg3)))
-  | Prim (Variadic (e, args)) ->
-    let args =
-      List.map
-        (fun x -> replace_set_of_closures x vars static) args
-    in
-    Named (Prim (Variadic (e, args)))
-  | Static_consts _ ->
-    (* FIXME double-check *) Named e
-  | Set_of_closures set ->
-    (* NEXT *) Named e
-  | Rec_info _ ->
-    failwith "Unimplemented_block_like"
-
-and named_static_closures vars (e1 : core_exp) (e2 : core_exp)
-  : Bound_pattern.t * core_exp * core_exp =
-  match e1 with
-  | Named (Set_of_closures set) ->
-    let function_decls : function_expr Function_slot.Lmap.t =
-      set.function_decls.in_order in
-    let closure_symbols : Symbol.t Function_slot.Lmap.t =
-      Function_slot.Lmap.mapi
-        (fun function_slot _func_decl ->
-           let name =
-             function_slot |> Function_slot.rename |> Function_slot.to_string
-             |> Linkage_name.of_string
-           in
-           Symbol.create (Compilation_unit.get_current_exn ()) name)
-        function_decls in
-    let set : static_const_or_code =
-      Static_const (Set_of_closures set) in
-    let bound =
-      Bound_static.Pattern.set_of_closures closure_symbols |>
-      Bound_static.singleton
-    in
-    let closure_list = closure_symbols |> Function_slot.Lmap.data in
-    let e2 = replace_set_of_closures e2 vars closure_list in
-    (Bound_pattern.static bound, Named (Static_consts [set]), e2)
-  | _ -> failwith "Expected set of closures"
-
 and normalize_let let_abst body : core_exp =
   (* [LetL]
                   e1 ⟶ e1'
      -------------------------------------
      let x = e1 in e2 ⟶ let x = e1' in e2 *)
   let x, e1, e2 =
-    Core_let.pattern_match {let_abst; body}
+    Core_let.pattern_match {let_abst; let_body = body}
       ~f:(fun ~x ~e1 ~e2 -> (x, normalize e1, e2))
   in
   (* [Let-β]

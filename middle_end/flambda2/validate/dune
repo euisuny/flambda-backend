@@ -6,6 +6,9 @@
  (instrumentation (backend bisect_ppx))
  (flags
   (:standard
+    -w
+    +a-4-9-40-41-42-44-45-48-66
+    -warn-error A
     -principal
     -open
     Flambda2_algorithms

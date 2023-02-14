@@ -21,7 +21,7 @@ type core_exp =
    [e1] = body **)
 and let_expr =
   { let_abst : (Bound_pattern.t, core_exp) Name_abstraction.t;
-    body : core_exp; }
+    let_body : core_exp; }
 
 and named =
   | Simple of Simple.t
@@ -59,7 +59,7 @@ and static_const_or_code =
   | Static_const of static_const
 
 and static_const =
-  | Set_of_closures of set_of_closures
+  | Static_set_of_closures of set_of_closures
   | Block of Tag.Scannable.t * Mutability.t * core_exp list
   | Boxed_float of Numeric_types.Float_by_bit_pattern.t Or_variable.t
   | Boxed_int32 of Int32.t Or_variable.t
@@ -112,7 +112,7 @@ and apply_expr =
   { callee: core_exp;
     continuation: Apply_expr.Result_continuation.t;
     exn_continuation: Continuation.t;
-    args: core_exp list;
+    apply_args: core_exp list;
     call_kind: Call_kind.t; }
 
 and apply_cont_expr =
@@ -135,15 +135,15 @@ let rec apply_renaming t renaming : core_exp =
   | Invalid t -> Invalid t
 
 (* renaming for [Let] *)
-and apply_renaming_let { let_abst; body } renaming : let_expr =
+and apply_renaming_let { let_abst; let_body } renaming : let_expr =
   let let_abst' =
     Name_abstraction.apply_renaming
       (module Bound_pattern)
       let_abst renaming
       ~apply_renaming_to_term:apply_renaming
   in
-  let defining_expr' = apply_renaming body renaming in
-  { let_abst = let_abst'; body = defining_expr' }
+  let defining_expr' = apply_renaming let_body renaming in
+  { let_abst = let_abst'; let_body = defining_expr' }
 
 and apply_renaming_named t renaming : named =
   match t with
@@ -159,9 +159,9 @@ and apply_renaming_named t renaming : named =
     Rec_info (Rec_info_expr.apply_renaming info renaming)
 
 and apply_renaming_function_declarations
-      ({ funs; in_order } as t : function_declarations) renaming :
+      ({ funs = _ ; in_order } : function_declarations) renaming :
   function_declarations =
-  let in_order' =
+  let in_order =
     Function_slot.Lmap.map_sharing
       (fun x ->
          match x with
@@ -248,9 +248,9 @@ and apply_renaming_static_const t renaming =
   then t
   else
     match t with
-    | Set_of_closures set ->
+    | Static_set_of_closures set ->
       let set' = apply_renaming_set_of_closures set renaming in
-      if set == set' then t else Set_of_closures set'
+      if set == set' then t else Static_set_of_closures set'
     | Block (tag, mut, fields) ->
       let fields' =
         Misc.Stdlib.List.map_sharing
@@ -350,17 +350,20 @@ and apply_renaming_cont_map t renaming : continuation_handler_map =
 
 (* renaming for [Apply] *)
 and apply_renaming_apply
-      { callee; continuation; exn_continuation; args; call_kind} renaming:
+      { callee; continuation; exn_continuation; apply_args; call_kind}
+      renaming:
   apply_expr =
   let continuation =
     Apply_expr.Result_continuation.apply_renaming continuation renaming in
   let exn_continuation =
     Renaming.apply_continuation renaming exn_continuation in
   let callee = apply_renaming callee renaming in
-  let args = List.map (fun x -> apply_renaming x renaming) args in
+  let apply_args =
+    List.map (fun x -> apply_renaming x renaming) apply_args in
   let call_kind = Call_kind.apply_renaming call_kind renaming in
   { callee = callee; continuation = continuation;
-    exn_continuation = exn_continuation; args = args; call_kind = call_kind }
+    exn_continuation = exn_continuation;
+    apply_args = apply_args; call_kind = call_kind }
 
 (* renaming for [Apply_cont] *)
 and apply_renaming_apply_cont {k; args} renaming : apply_cont_expr =
@@ -401,15 +404,15 @@ let rec print ppf e =
      fprintf ppf "invalid %s" message);
   fprintf ppf "@])";
 
-and print_let ppf ({let_abst; body} : let_expr) =
+and print_let ppf ({let_abst; let_body} : let_expr) =
   Name_abstraction.pattern_match_for_printing
     (module Bound_pattern)
     let_abst ~apply_renaming_to_term:apply_renaming
-    ~f:(fun bound let_body ->
+    ~f:(fun bound body ->
         fprintf ppf "(bound@ (%a),@ body@ (%a))@ in=%a"
         print_bound_pattern bound
-        print body
-        print let_body)
+        print let_body
+        print body)
 
 and print_bound_pattern ppf (t : Bound_pattern.t) =
   match t with
@@ -478,7 +481,7 @@ and print_value_slot ppf (simple, kind) =
   Format.fprintf ppf "@[(%a @<1>\u{2237} %a)@]" Simple.print simple
     Flambda_kind.With_subkind.print kind
 
-and print_function_declaration ppf { funs ; in_order } =
+and print_function_declaration ppf { funs = _ ; in_order } =
   Format.fprintf ppf "(%a)"
     (Function_slot.Lmap.print
     (fun ppf x ->
@@ -533,7 +536,7 @@ and print_static_const_or_code ppf t =
 
 and print_static_const ppf (t : static_const) : unit =
   match t with
-  | Set_of_closures set ->
+  | Static_set_of_closures set ->
     fprintf ppf "(Set_of_closures %a)"
       print_set_of_closures set
   | Block (tag, mut, fields) ->
@@ -648,12 +651,12 @@ and print_continuation_handler ppf key (t : continuation_handler) =
         Bound_parameters.print k print body)
 
 and print_apply ppf
-      ({callee; continuation; exn_continuation; args; _} : apply_expr) =
+      ({callee; continuation; exn_continuation; apply_args; _} : apply_expr) =
   fprintf ppf "%a %a %a "
     print callee
     Apply_expr.Result_continuation.print continuation
     Continuation.print exn_continuation;
-  Format.pp_print_list ~pp_sep:Format.pp_print_space print ppf args
+  Format.pp_print_list ~pp_sep:Format.pp_print_space print ppf apply_args
 
 and print_apply_cont ppf ({k ; args} : apply_cont_expr) =
   fprintf ppf "%a@ " print_cont k;
@@ -680,8 +683,8 @@ let rec ids_for_export (t : core_exp) =
   | Invalid _ -> Ids_for_export.empty
 
 (* ids for [Let_expr] *)
-and ids_for_export_let { let_abst; body } =
-  let body_ids = ids_for_export body in
+and ids_for_export_let { let_abst; let_body } =
+  let body_ids = ids_for_export let_body in
   let let_abst_ids =
     Name_abstraction.ids_for_export
       (module Bound_pattern)
@@ -697,7 +700,7 @@ and ids_for_export_named (t : named) =
   | Static_consts consts -> ids_for_export_static_const_group consts
   | Rec_info info -> Rec_info_expr.ids_for_export info
 
-and ids_for_export_set_of_closures (t : set_of_closures) =
+and ids_for_export_set_of_closures (_t : set_of_closures) =
   failwith "Unimplemented_ids_for_set_of_closures"
 
 and ids_for_export_prim (t : primitive) =
@@ -746,7 +749,7 @@ and ids_for_export_fields fields =
 
 and ids_for_export_static_const t =
   match t with
-  | Set_of_closures set -> ids_for_export_set_of_closures set
+  | Static_set_of_closures set -> ids_for_export_set_of_closures set
   | Block (_tag, _mut, fields) ->
     List.fold_left (fun acc x -> Ids_for_export.union (ids_for_export x) acc)
       Ids_for_export.empty fields
@@ -822,12 +825,12 @@ and ids_for_export_cont_map (t : continuation_handler_map) =
 
 (* ids for [Apply] *)
 and ids_for_export_apply
-      { callee; continuation; exn_continuation; args; call_kind } =
+      { callee; continuation; exn_continuation; apply_args; call_kind } =
   let callee_ids = ids_for_export callee in
   let callee_and_args_ids =
     List.fold_left
       (fun ids arg -> Ids_for_export.union ids (ids_for_export arg))
-       callee_ids args in
+       callee_ids apply_args in
   let result_continuation_ids =
     Apply_expr.Result_continuation.ids_for_export continuation in
   let exn_continuation_ids =
@@ -874,7 +877,7 @@ module Core_let = struct
   module A = Name_abstraction.Make (Bound_pattern) (T0)
   type t = let_expr
   let create ~(x : Bound_pattern.t) ~(e1 : core_exp) ~(e2 : core_exp)  =
-    Let { let_abst = A.create x e2; body = e1 }
+    Let { let_abst = A.create x e2; let_body = e1 }
 
   module Pattern_match_pair_error = struct
     type t = Mismatched_let_bindings
@@ -883,12 +886,13 @@ module Core_let = struct
   let pattern_match t ~(f : x:Bound_pattern.t -> e1:core_exp -> e2:core_exp -> 'a) : 'a =
     let open A in
     let<> x, e2 = t.let_abst in
-    f ~x ~e1:t.body ~e2
+    f ~x ~e1:t.let_body ~e2
 
   (* Treat "dynamic binding" (statically scoped binding under lambda abstraction)
      and "static binding" (globally scoped mapping of statics) differently *)
   let pattern_match_pair
-        ({let_abst = let_abst1; body = _}) ({let_abst = let_abst2; body = _})
+        ({let_abst = let_abst1; let_body = _})
+        ({let_abst = let_abst2; let_body = _})
         (dynamic : Bound_pattern.t -> core_exp -> core_exp -> 'a)
         (static : Bound_static.t -> Bound_static.t -> core_exp -> core_exp -> 'a):
     ('a, Pattern_match_pair_error.t) Result.t =
