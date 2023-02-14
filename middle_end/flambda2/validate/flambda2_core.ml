@@ -463,7 +463,7 @@ and print_set_of_closures ppf
         alloc_mode; } =
   if Value_slot.Map.is_empty value_slots then
     Format.fprintf ppf "(%a@ \
-                         %a\)"
+                         %a)"
       Alloc_mode.For_allocations.print alloc_mode
       print_function_declaration function_decls
   else

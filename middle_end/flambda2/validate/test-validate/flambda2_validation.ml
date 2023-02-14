@@ -1,3 +1,4 @@
+open! Translate
 open! Validate
 
 let get_module_info = Flambda2.get_module_info
@@ -167,19 +168,17 @@ let () =
   (* simplify_term "let2.fl";
    * normalize_term "let2.fl"; *)
 
-  (* ----New since last week----- *)
-
   (* [Full FL file generated from `let x = 42`] *)
 
-  (* simplify_term "let3.fl";
-   * normalize_term "let3.fl"; *)
+  simplify_term "let3.fl";
+  normalize_term "let3.fl";
 
   (* [Closures] *)
 
   (* simplify_term "apply1.fl";
    * normalize_term "apply1.fl"; *)
-  simplify_term "apply2.fl";
-  normalize_term "apply2.fl";
+  (* simplify_term "apply2.fl";
+   * normalize_term "apply2.fl"; *)
 
   (* ---------Future work--------- *)
 

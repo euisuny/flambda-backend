@@ -1,157 +1,8 @@
 open! Flambda
 open! Flambda2_core
+open! Translate
 
 module P = Flambda_primitive
-
-(** Translation from flambda2 terms to simplified core language **)
-let simple_to_core (v : Simple.t) : core_exp = Named (Simple v)
-
-let tagged_immediate_to_core e =
-  Named (Simple (Simple.const (Int_ids.Const.tagged_immediate e)))
-
-let rec flambda_expr_to_core (e: expr) : core_exp =
-  let e = Expr.descr e in
-  match e with
-  | Flambda.Let t -> let_to_core t
-  | Flambda.Let_cont t -> let_cont_to_core t
-  | Flambda.Apply t -> apply_to_core t
-  | Flambda.Apply_cont t -> apply_cont_to_core t
-  | Flambda.Switch t -> switch_to_core t
-  | Flambda.Invalid { message = t } -> Invalid { message = t }
-
-and let_to_core (e : Let_expr.t) : core_exp =
-  let (var, body) = Let_expr.pattern_match e ~f:(fun var ~body -> (var, body)) in
-  Core_let.create ~x:var
-    ~e1:(Let_expr.defining_expr e |> named_to_core)
-    ~e2:(flambda_expr_to_core body)
-
-and named_to_core (e : Flambda.named) : core_exp =
-  Named (
-    match e with
-    | Simple e -> Simple e
-    | Prim (t, _) -> Prim (prim_to_core t)
-    | Set_of_closures e -> Set_of_closures e
-    | Static_consts e -> Static_consts (static_consts_to_core e)
-    | Rec_info t -> Rec_info t)
-
-and prim_to_core (e : P.t) : primitive =
-  match e with
-  | Nullary v -> Nullary v
-  | Unary (prim, arg) ->
-    Unary (prim, Named (Simple arg))
-  | Binary (prim, arg1, arg2) ->
-    Binary (prim, Named (Simple arg1), Named (Simple arg2))
-  | Ternary (prim, arg1, arg2, arg3) ->
-    Ternary (prim, Named (Simple arg1), Named (Simple arg2), Named (Simple arg3))
-  | Variadic (prim, args) ->
-    Variadic (prim, List.map (fun x -> Named (Simple x)) args)
-
-and static_consts_to_core (e : Flambda.static_const_group) :
-  Flambda2_core.static_const_group =
-  Static_const_group.to_list e |> List.map static_const_or_code_to_core
-
-and static_const_or_code_to_core (e : Flambda.static_const_or_code) :
-  Flambda2_core.static_const_or_code =
-  match e with
-  | Code e -> Code (function_params_and_body_to_code0
-                      (Code0.code_metadata e)
-                      (Code0.params_and_body e)
-                      (Code0.free_names_of_params_and_body e))
-  | Deleted_code -> Deleted_code
-  | Static_const t -> Static_const (static_const_to_core t)
-
-and static_const_to_core (e : Static_const.t) : Flambda2_core.static_const =
-  match e with
-  | Set_of_closures soc -> Set_of_closures soc
-  | Block (tag, mut, list) ->
-    let list = List.map field_of_static_block_to_core list in
-    Block (tag, mut, list)
-  | Boxed_float v -> Boxed_float v
-  | Boxed_int32 v -> Boxed_int32 v
-  | Boxed_int64 v -> Boxed_int64 v
-  | Boxed_nativeint v -> Boxed_nativeint v
-  | Immutable_float_block v -> Immutable_float_block v
-  | Immutable_float_array v -> Immutable_float_array v
-  | Immutable_value_array v -> Immutable_value_array v
-  | Empty_array -> Empty_array
-  | Mutable_string {initial_value} -> Mutable_string {initial_value}
-  | Immutable_string s -> Immutable_string s
-
-and field_of_static_block_to_core (e : Field_of_static_block.t) : core_exp =
-  match e with
-  | Symbol e ->
-    Named (Simple (Simple.symbol e))
-  | Tagged_immediate e -> tagged_immediate_to_core e
-  | Dynamically_computed (var, dbg) ->
-    Named (Simple (Simple.var var))
-
-and function_params_and_body_to_code0 metadata (e : Flambda.function_params_and_body) free
-  : Flambda2_core.function_params_and_body Code0.t =
-  Core_code.create_with_metadata
-    ~params_and_body:(function_params_and_body_to_core e)
-    ~free_names_of_params_and_body:free
-    ~code_metadata:metadata
-
-and function_params_and_body_to_core (t : Flambda.function_params_and_body) :
-  Flambda2_core.function_params_and_body =
-  Function_params_and_body.pattern_match' t
-    ~f:(fun (bound: Bound_for_function.t) ~body ->
-      Core_function_params_and_body.create bound (flambda_expr_to_core body))
-
-and let_cont_to_core (e : Let_cont_expr.t) : core_exp =
-  match e with
-  | Non_recursive
-      {handler = h; num_free_occurrences = _; is_applied_with_traps = _} ->
-    let (contvar, scoped_body) =
-      Non_recursive_let_cont_handler.pattern_match
-        h ~f:(fun contvar ~body -> (contvar, body)) in
-    Let_cont (Non_recursive {
-      handler =
-        Non_recursive_let_cont_handler.handler h |> cont_handler_to_core;
-      body = flambda_expr_to_core scoped_body |>
-        Core_letcont_body.create contvar;})
-
-  | Recursive r ->
-    let (bound, params, body, handler) = Recursive_let_cont_handlers.pattern_match_bound
-      r ~f:(fun bound ~invariant_params ~body t -> (bound, invariant_params, body, t)) in
-    Let_cont
-      (Recursive (Core_recursive.create bound
-        {continuation_map =
-            Core_continuation_map.create params (cont_handlers_to_core handler);
-         body = flambda_expr_to_core body;}))
-
-and cont_handler_to_core (e : Continuation_handler.t) : continuation_handler =
-  let (var, handler) =
-    Continuation_handler.pattern_match e ~f:(fun var ~handler -> (var, handler)) in
-  Core_continuation_handler.create var (flambda_expr_to_core handler)
-
-and cont_handlers_to_core (e : Continuation_handlers.t) :
-  continuation_handler Continuation.Map.t =
-  let e : Continuation_handler.t Continuation.Map.t =
-    Continuation_handlers.to_map e in
-  Continuation.Map.map cont_handler_to_core e
-
-and apply_to_core (e : Apply.t) : core_exp =
-  Apply {
-    callee = Apply_expr.callee e |> simple_to_core;
-    continuation = Apply_expr.continuation e;
-    exn_continuation = Apply_expr.exn_continuation e |>
-                        Exn_continuation.exn_handler;
-    args = Apply_expr.args e |> List.map simple_to_core;
-    call_kind = Apply_expr.call_kind e;}
-
-and apply_cont_to_core (e : Apply_cont.t) : core_exp =
-  Apply_cont {
-    k = Apply_cont_expr.continuation e;
-    args = Apply_cont_expr.args e |> List.map simple_to_core;}
-
-and switch_to_core (e : Switch.t) : core_exp =
-  Switch {
-    scrutinee = Switch_expr.scrutinee e |> simple_to_core;
-    arms = Switch_expr.arms e |> Targetint_31_63.Map.map apply_cont_to_core;}
-
-let flambda_unit_to_core e : core_exp =
-  Flambda_unit.body e |> flambda_expr_to_core
 
 let _std_print =
   Format.fprintf Format.std_formatter "@. TERM:%a@." print
@@ -208,7 +59,7 @@ and subst_pattern_set_of_closures_named
     (match opt_var with
     | Some var ->
        (match let_body with
-       | Named (Set_of_closures soc) -> (Set_of_closures soc)
+        | Named (Set_of_closures soc) -> (Set_of_closures soc)
        | _ -> failwith "Expected set of closures")
     | None -> e)
 
@@ -220,7 +71,9 @@ and subst_pattern_set_of_closures_named
   | Set_of_closures _ ->
       failwith "Unimplemented subst_pattern_set_of_closures: Named Soc"
   | Static_consts [Static_const (Block (tag, mut, list))] ->
-    _std_print (Named e); failwith "Need block datatype changed"
+    let list =
+      List.map (subst_pattern_set_of_closures ~bound ~let_body) list in
+    Static_consts [Static_const (Block (tag, mut, list))]
   | Static_consts _ ->
       failwith "Unimplemented subst_pattern_set_of_closures: Named Sc"
   | Rec_info _ ->
@@ -376,9 +229,10 @@ and subst_block_like
 
    i.e. it is the code generated by
     [let f = closure f_0 @f] where [f_0] refers to the code *)
-and subst_bound_set_of_closures (bound : Symbol.t Function_slot.Lmap.t) ~let_body (e : named) =
+and subst_bound_set_of_closures (bound : Symbol.t Function_slot.Lmap.t) ~let_body
+      (e : named) =
   match e with
-  | Simple v -> (Named e)
+  | Simple v -> Named e
   | Prim (Nullary e) -> Named (Prim (Nullary e))
   | Prim (Unary (e, arg1)) ->
     let arg1 =
@@ -461,10 +315,54 @@ and subst_code_id (bound : Code_id.t) ~(let_body : core_exp) (e : named) : core_
         (subst_pattern_static ~bound:(Bound_static.Pattern.code bound) ~let_body) args
     in
     Named (Prim (Variadic (e, args)))
-  | Set_of_closures _ ->
-    (* FIXME double-check *) Named e
-  | Static_consts _ ->
-    (* FIXME double-check *) Named e
+  | Set_of_closures {function_decls; value_slots; alloc_mode} ->
+    let in_order : function_expr Function_slot.Lmap.t = function_decls.in_order |>
+      Function_slot.Lmap.map
+        (fun x ->
+          match x with
+          | Id code_id ->
+            (* IY: Is there not a comparator for code_ids? *)
+            if (Code_id.name code_id) = (Code_id.name bound)
+            then Exp let_body
+            else Id code_id
+          | Exp e ->
+            Exp (subst_pattern_static ~bound:(Bound_static.Pattern.code bound)
+                   ~let_body e))
+    in
+    let function_decls =
+      { funs = Function_slot.Map.of_list (Function_slot.Lmap.bindings in_order);
+        in_order}
+    in
+    Named (Set_of_closures {function_decls; value_slots; alloc_mode})
+  | Static_consts [Static_const (Block (tag, immutable, exps))] ->
+    let exps =
+      List.map
+        (subst_pattern_static ~bound:(Bound_static.Pattern.code bound) ~let_body) exps
+    in
+    Named (Static_consts [Static_const (Block (tag, immutable, exps))])
+  | Static_consts
+      [Static_const
+         (Set_of_closures ({function_decls; value_slots; alloc_mode}))] ->
+    let in_order : function_expr Function_slot.Lmap.t = function_decls.in_order |>
+      Function_slot.Lmap.map
+        (fun x ->
+            match x with
+            | Id code_id ->
+              (* IY: Is there not a comparator for code_ids? *)
+              if (Code_id.name code_id) = (Code_id.name bound)
+              then Exp let_body
+              else Id code_id
+            | Exp e ->
+              Exp (subst_pattern_static ~bound:(Bound_static.Pattern.code bound)
+                    ~let_body e))
+    in
+    let function_decls =
+      { funs = Function_slot.Map.of_list (Function_slot.Lmap.bindings in_order);
+        in_order}
+    in
+    Named (Static_consts [Static_const
+      (Set_of_closures {function_decls; value_slots; alloc_mode})])
+  | Static_consts _ -> Named e
   | Rec_info _ ->
     failwith "Unimplemented_subst_code_id"
 
@@ -803,7 +701,7 @@ and replace_set_of_closures_named (e : named) (vars : Bound_var.t list) (static:
   | Static_consts _ ->
     (* FIXME double-check *) Named e
   | Set_of_closures set ->
-    Named e (* NEXT *)
+    (* NEXT *) Named e
   | Rec_info _ ->
     failwith "Unimplemented_block_like"
 
@@ -811,8 +709,8 @@ and named_static_closures vars (e1 : core_exp) (e2 : core_exp)
   : Bound_pattern.t * core_exp * core_exp =
   match e1 with
   | Named (Set_of_closures set) ->
-    let function_decls : Code_id.t Function_slot.Lmap.t =
-      Set_of_closures.function_decls set |> Function_declarations.funs_in_order in
+    let function_decls : function_expr Function_slot.Lmap.t =
+      set.function_decls.in_order in
     let closure_symbols : Symbol.t Function_slot.Lmap.t =
       Function_slot.Lmap.mapi
         (fun function_slot _func_decl ->
@@ -859,6 +757,7 @@ and normalize_let_cont (e:let_cont_expr) : core_exp =
     (* [LetCont-β]
        e1 where k args = e2 ⟶ e1 [k \ λ args. e2] *)
     subst_cont e1 k args e2
+
   | Recursive _handlers -> failwith "Unimplemented_recursive"
 
 and normalize_apply _callee _continuation _exn_continuation _args _call_kind : core_exp =
