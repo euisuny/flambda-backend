@@ -45,13 +45,6 @@ The expression is beta-reduced, then the resulting value get passed on as an
 argument to either the return or exception continuation, depending on whether
 or not the expression throws an exception.
 
-The let-bindings that bind static code does not get inlined, as shown in [LetCode].
-Here, $N$ denotes any code that is not a $\mathsf{Deleted}$ snippet.
-Any let-bound code with a deleted code block gets erased, as in [LetCodeDeleted], and
-in place, every code binding that is a newer version of a code gets assigned the code id of the
-original code (note that this assumes a unique generation of newer versions of code,
-which is assumed for simplicity for now).
-
 \begin{mathpar}\footnotesize
   \inferrule
       [\footnotesize Let-$\beta$]
@@ -68,31 +61,33 @@ which is assumed for simplicity for now).
       {e_2 \step e_2'}
       {\letexp{x}{N}{e_2} \step \letexp{x}{N}{e_2'}}
 
-  \inferrule
-      [\footnotesize LetCodeDeleted]
-      {}
-      {\letcodeexp{x}{\mathsf{Deleted}}{e} \step e}
+  %% \inferrule
+  %%     [\footnotesize LetCodeDeleted]
+  %%     {}
+  %%     {\letcodeexp{x}{\mathsf{Deleted}}{e} \step e}
 
-  \inferrule
-      [\footnotesize LetCodeNewer]
-      {}
-      {\letcodeexp{(\mathsf{newer\_of} \; x) \; x'}{e_1}{e_2} \step
-          \letcodeexp{x}{\subst{e_1}{x'}{x}}{\subst{e_2}{x'}{x}}}
+  %% \inferrule
+  %%     [\footnotesize LetCodeNewer]
+  %%     {}
+  %%     {\letcodeexp{(\mathsf{newer\_of} \; x) \; x'}{e_1}{e_2} \step
+  %%         \letcodeexp{x}{\subst{e_1}{x'}{x}}{\subst{e_2}{x'}{x}}}
 
-  \inferrule
-      [\footnotesize LetStaticClo]
-      {e_2 \step e_2'}
-      {\letcodeexp{\mathcal{K}^{\uparrow}}{e_1}{e_2} \step \letcodeexp{\mathcal{K}^{\uparrow}}{e_1}{e_2'}}
+  %% IY: This rule is not great because the lifting of statics is not uniform:
+  %% we don't want to implement this, the reasoning is too finnicky
+  %% \inferrule
+  %%     [\footnotesize LetStaticClo]
+  %%     {e_2 \step e_2'}
+  %%     {\letcodeexp{\mathcal{K}^{\uparrow}}{e_1}{e_2} \step \letcodeexp{\mathcal{K}^{\uparrow}}{e_1}{e_2'}}
 
-  \inferrule
-      [\footnotesize LetClo]
-      {}
-      {\letcodeexp{\mathcal{K}}{e_1}{e_2} \step \letcodeexp{\mathcal{K}^{\uparrow}}{e_1^{\uparrow}}{\subst{e_2}{\mathcal{K}}{\mathcal{K}^{\uparrow}}}}
+  %% \inferrule
+  %%     [\footnotesize LetClo]
+  %%     {}
+  %%     {\letcodeexp{\mathcal{K}}{e_1}{e_2} \step \letcodeexp{\mathcal{K}^{\uparrow}}{e_1^{\uparrow}}{\subst{e_2}{\mathcal{K}}{\mathcal{K}^{\uparrow}}}}
 
-  \inferrule
-      [\footnotesize LetCode]
-      {e_2 \step e_2'}
-      {\letcodeexp{x}{N}{e_2} \step \letcodeexp{x}{N}{e_2'}}
+  %% \inferrule
+  %%     [\footnotesize LetCode]
+  %%     {e_2 \step e_2'}
+  %%     {\letcodeexp{x}{N}{e_2} \step \letcodeexp{x}{N}{e_2'}}
 
   \inferrule
       [\footnotesize LetCont-$\beta$]
@@ -142,9 +137,6 @@ which is assumed for simplicity for now).
 
       \overrightarrow{args} \step \overrightarrow{args}' := \forall a, a \in \overrightarrow{args}. \exists a', a \step^\ast a' \land a \in \overrightarrow{args}'
 \end{mathpar}
-
-
-\todo{LetR}
 
 \section{Rewrite Rules}
 
