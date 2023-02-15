@@ -64,7 +64,7 @@ or not the expression throws an exception.
   \inferrule
       [\footnotesize LetClo-$\beta$]
       {}
-      {\letexp{(\mathsf{clo} \; x)}{K}{e} \step \subst{e}{x}{(x, K)}}
+      {\forall x \in X, \, \letexp{(\mathsf{clo} \; X)}{K}{e} \step \subst{e}{x}{(x, K)}}
 
   \inferrule
       [\footnotesize LetCode-$\beta$]
