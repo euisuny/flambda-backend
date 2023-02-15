@@ -1004,6 +1004,12 @@ module Core_function_params_and_body = struct
   type t = (Bound_for_function.t, T0.t) Name_abstraction.t
   let create = A.create
 
+  let function_param t = A.pattern_match t ~f:(fun param _ -> param)
+
+  let function_body t = A.pattern_match t ~f:(fun _ body -> body)
+
+  let pattern_match = A.pattern_match
+
   let pattern_match_pair t1 t2 ~f =
     A.pattern_match_pair t1 t2
       ~f:(fun

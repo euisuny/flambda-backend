@@ -196,6 +196,13 @@ module Core_function_params_and_body : sig
 
   val create : Bound_for_function.t -> T0.t -> t
 
+  val function_param : t -> Bound_for_function.t
+
+  val function_body : t -> T0.t
+
+  val pattern_match :
+    t -> f:(Bound_for_function.t -> T0.t -> 'a) -> 'a
+
   val pattern_match_pair :
     t -> t -> f:(
       return_continuation:Continuation.t ->

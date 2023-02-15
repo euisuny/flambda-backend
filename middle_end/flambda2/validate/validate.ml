@@ -7,6 +7,17 @@ module P = Flambda_primitive
 let _std_print =
   Format.fprintf Format.std_formatter "@. TERM:%a@." print
 
+module Env = struct
+
+  type t =
+    { mutable _values : (Simple.t * Flambda_kind.With_subkind.t) Value_slot.Map.t;
+      mutable _functions : function_expr Function_slot.Map.t }
+
+  let create () =
+    { _values = Value_slot.Map.empty;
+      _functions = Function_slot.Map.empty }
+end
+
 (** Normalization
 
     - CBV-style reduction for [let] and [letcont] expressions
@@ -82,7 +93,7 @@ and subst_pattern_set_of_closures_named
     in
     (Prim (Variadic (e, args)))
   | Set_of_closures _ ->
-      failwith "Unimplemented subst_pattern_set_of_closures: Named Soc"
+    (* NEXT *) e
   | Static_consts [Static_const (Block (tag, mut, list))] ->
     let list =
       List.map (subst_pattern_set_of_closures ~bound ~let_body) list in
@@ -92,7 +103,7 @@ and subst_pattern_set_of_closures_named
   | Rec_info _ ->
       failwith "Unimplemented subst_pattern_set_of_closures: Named Ri"
   | _ ->
-    failwith "Unimplemented_subst_pattern_set_of_closures_named"
+    (* NEXT *) e
 
 and subst_pattern_primitive
       ~(bound : Bound_var.t) ~(let_body : core_exp) (e : primitive) : core_exp =
@@ -233,9 +244,9 @@ and subst_block_like
   | Static_consts l ->
     subst_block_like_static_const_group ~bound ~let_body l
   | Closure_expr _ ->
-    failwith "Unimplemented_set_of_closures_expr"
+    Named e (* NEXT *)
   | Set_of_closures _ ->
-    failwith "Unimplemented_set_of_closures"
+    Named e (* NEXT *)
   | Rec_info _ ->
     failwith "Unimplemented_block_like"
 
@@ -260,7 +271,7 @@ and subst_block_like_static_const
         args
     in
     Block (tag, mut, args)
-  | _ -> failwith "subst_block_like_static_const expected bloc"
+  | _ -> e (* NEXT *)
 
 (* [Set of closures]
 
@@ -328,7 +339,7 @@ and subst_bound_set_of_closures (bound : Symbol.t Function_slot.Lmap.t) ~let_bod
   | Static_consts e ->
     subst_bound_set_of_closures_static_const_group ~bound ~let_body e
   | Closure_expr _ ->
-    failwith "Unimplemented_set_of_closures_expr"
+    Named e (* NEXT *)
   | Set_of_closures _ ->
     failwith "Unimplemented_set_of_closures"
   | Rec_info _ ->
@@ -356,7 +367,7 @@ and subst_bound_set_of_closures_static_const
         args
     in
     Block (tag, mut, args)
-  | _ -> failwith "subst_block_like_static_const expected bloc"
+  | _ -> e (* NEXT *)
 
 and subst_code_id_set_of_closures (bound : Code_id.t) ~(let_body : core_exp)
       {function_decls; value_slots; alloc_mode}
@@ -585,8 +596,19 @@ let rec subst_cont (cont_e1: core_exp) (k: Bound_continuation.t)
 let eval_prim_nullary (_v : P.nullary_primitive) : named =
   failwith "eval_prim_nullary"
 
-let eval_prim_unary (_v : P.unary_primitive) (_arg : core_exp) : named =
-  failwith "eval_prim_unary"
+let eval_prim_unary (v : P.unary_primitive) (_arg : core_exp) : named =
+  match v with
+  | Project_value_slot _ ->
+    failwith "Unimplemented_eval_prim_unary_project_value_slot"
+  | (Get_tag | Array_length | Int_as_pointer | Boolean_not
+    | Reinterpret_int64_as_float | Untag_immediate | Tag_immediate
+    | Is_boxed_float | Is_flat_float_array | Begin_try_region
+    | End_region | Obj_dup | Duplicate_block _ | Duplicate_array _
+    | Is_int _ | Bigarray_length _ | String_length _
+    | Opaque_identity _ | Int_arith (_,_) | Float_arith _
+    | Num_conv _ | Unbox_number _ | Box_number (_, _)
+    | Project_function_slot _ ) ->
+    failwith "Unimplemented_eval_prim_unary"
 
 let simple_tagged_immediate ~(const : Simple.t) : Targetint_31_63.t option =
   let constant =
@@ -691,52 +713,38 @@ let eval_prim (v : primitive) : core_exp =
   | Ternary (v, arg1, arg2, arg3) -> Named (eval_prim_ternary v arg1 arg2 arg3)
   | Variadic (v, args) -> Named (eval_prim_variadic v args)
 
-(* This is a "normalization" of [named] expression, in quotations because there
-  is some simple evaluation that occurs for primitive arithmetic expressions *)
-let normalize_named (body : named) : core_exp =
-  match body with
-  | Simple _ (* A [Simple] is a register-sized value *)
-  | Closure_expr _
-  | Set_of_closures _ (* Map of [Code_id]s and [Simple]s corresponding to
-                         function and value slots*)
-  | Rec_info _ (* Information about inlining recursive calls, an integer variable *)
-  | Static_consts _ -> (* [Static_consts] are statically-allocated values *)
-    Named (body) (* TODO (LATER): For [Static_consts], we might want to implement η-rules for
-                 [Blocks]? *)
-  | Prim v -> eval_prim v
-
-let rec normalize (e:core_exp) : core_exp =
+let rec normalize (env : Env.t) (e:core_exp) : core_exp =
   match e with
   | Let { let_abst; expr_body } ->
-    normalize_let let_abst expr_body
+    normalize_let env let_abst expr_body
+    |> normalize env
   | Let_cont e ->
-    normalize_let_cont e
-    |> normalize
+    normalize_let_cont env e
+    |> normalize env
   | Apply {callee; continuation; exn_continuation; apply_args; call_kind} ->
-    normalize_apply callee continuation exn_continuation apply_args call_kind
-    |> normalize
+    normalize_apply env callee continuation exn_continuation apply_args call_kind
+    |> normalize env
   | Apply_cont {k ; args} ->
     (* The recursive call for [apply_cont] is done for the arguments *)
-    normalize_apply_cont k args
+    normalize_apply_cont env k args
   | Switch _ -> failwith "Unimplemented_normalize_switch"
-  | Named e -> normalize_named e
+  | Named e -> normalize_named env e
   | Invalid _ -> e
 
-and normalize_let let_abst body : core_exp =
+and normalize_let env let_abst body : core_exp =
   (* [LetL]
                   e1 ⟶ e1'
      -------------------------------------
      let x = e1 in e2 ⟶ let x = e1' in e2 *)
   let x, e1, e2 =
     Core_let.pattern_match {let_abst; expr_body = body}
-      ~f:(fun ~x ~e1 ~e2 -> (x, normalize e1, e2))
+      ~f:(fun ~x ~e1 ~e2 -> (x, normalize env e1, e2))
   in
   (* [Let-β]
     let x = v in e2 ⟶ e2 [x\v] *)
   subst_pattern ~bound:x ~let_body:e1 e2
-  |> normalize
 
-and normalize_let_cont (e:let_cont_expr) : core_exp =
+and normalize_let_cont _env (e:let_cont_expr) : core_exp =
   match e with
   | Non_recursive {handler; body} ->
     let args, e2 =
@@ -752,15 +760,81 @@ and normalize_let_cont (e:let_cont_expr) : core_exp =
 
   | Recursive _handlers -> failwith "Unimplemented_recursive"
 
-and normalize_apply _callee _continuation _exn_continuation _args _call_kind : core_exp =
+and normalize_apply _env _callee _continuation _exn_continuation _args _call_kind : core_exp =
   failwith "Unimplemented_apply"
 
-and normalize_apply_cont k args : core_exp =
+and normalize_apply_cont env k args : core_exp =
   (* [ApplyCont]
             args ⟶ args'
       --------------------------
         k args ⟶ k args'       *)
-  Apply_cont {k = k; args = List.map normalize args}
+  Apply_cont {k = k; args = List.map (normalize env) args}
+
+and normalize_static_const env (const : static_const) : static_const =
+  match const with
+  | Static_set_of_closures set ->
+    Static_set_of_closures (normalize_set_of_closures env set)
+  | Block (tag, mut, list) ->
+    Block (tag, mut, List.map (normalize env) list)
+  | (Boxed_float _ | Boxed_int32 _ | Boxed_int64 _ | Boxed_nativeint _
+    | Immutable_float_block _ | Immutable_float_array _ | Immutable_value_array _
+    | Empty_array | Mutable_string _ | Immutable_string _) -> const (* CHECK *)
+
+and normalize_static_const_or_code env (const_or_code : static_const_or_code)
+  : static_const_or_code =
+  match const_or_code with
+  | Code code ->
+    let (param, body) =
+      Core_function_params_and_body.pattern_match
+        (Code0.params_and_body code) ~f:(fun x y -> x, y)
+    in
+    let params_and_body =
+      Core_function_params_and_body.create param (normalize env body)
+    in
+    let free_names_of_params_and_body = Code0.free_names_of_params_and_body code
+    in
+    let code_metadata = Core_code.code_metadata code
+    in
+    Code
+      (Core_code.create_with_metadata
+         ~params_and_body
+         ~free_names_of_params_and_body
+         ~code_metadata)
+  | Static_const const -> Static_const (normalize_static_const env const)
+  | Deleted_code -> Deleted_code
+
+and normalize_static_const_group env (consts : static_const_group) : core_exp =
+  Named (Static_consts (List.map (normalize_static_const_or_code env) consts))
+
+and normalize_set_of_closures env {function_decls; value_slots ; alloc_mode }
+  : set_of_closures =
+  { function_decls =
+      { funs = Function_slot.Map.map (normalize_function_expr env) function_decls.funs;
+        in_order = Function_slot.Lmap.map (normalize_function_expr env) function_decls.in_order}
+  ; value_slots = value_slots
+  ; alloc_mode = alloc_mode }
+
+and normalize_function_expr env (fun_expr : function_expr) : function_expr =
+  match fun_expr with
+  | Id _ -> fun_expr
+  | Exp exp -> Exp (normalize env exp)
+
+(* This is a "normalization" of [named] expression, in quotations because there
+  is some simple evaluation that occurs for primitive arithmetic expressions *)
+and normalize_named env (body : named) : core_exp =
+  match body with
+  | Simple _ (* A [Simple] is a register-sized value *)
+  | Rec_info _ (* Information about inlining recursive calls, an integer variable *) ->
+    Named (body) (* TODO (LATER): For [Static_consts], we might want to implement η-rules for
+                    [Blocks]? *)
+  | Closure_expr (slot, set) ->
+    Named (Closure_expr (slot, normalize_set_of_closures env set))
+  | Set_of_closures set -> (* Map of [Code_id]s and [Simple]s corresponding to
+                         function and value slots*)
+    Named (Set_of_closures (normalize_set_of_closures env set))
+  | Static_consts consts -> (* [Static_consts] are statically-allocated values *)
+    normalize_static_const_group env consts
+  | Prim v -> eval_prim v
 
 let simulation_relation src tgt =
   let {Simplify.unit = tgt; _} = tgt in

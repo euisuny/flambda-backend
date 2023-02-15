@@ -476,4 +476,6 @@ and equiv_switch env
   equiv env scrutinee1 scrutinee2 &&
   Targetint_31_63.Map.equal (equiv env) arms1 arms2
 
-let core_eq = Env.create () |> equiv
+let core_eq e1 e2 =
+  try (equiv (Env.create ()) e1 e2) with
+  Invalid_argument _ -> false
