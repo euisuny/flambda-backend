@@ -21,7 +21,7 @@ type core_exp =
    [e1] = body **)
 and let_expr =
   { let_abst : (Bound_pattern.t, core_exp) Name_abstraction.t;
-    let_body : core_exp; }
+    expr_body : core_exp; }
 
 and named =
   | Simple of Simple.t
@@ -135,15 +135,15 @@ let rec apply_renaming t renaming : core_exp =
   | Invalid t -> Invalid t
 
 (* renaming for [Let] *)
-and apply_renaming_let { let_abst; let_body } renaming : let_expr =
+and apply_renaming_let { let_abst; expr_body } renaming : let_expr =
   let let_abst' =
     Name_abstraction.apply_renaming
       (module Bound_pattern)
       let_abst renaming
       ~apply_renaming_to_term:apply_renaming
   in
-  let defining_expr' = apply_renaming let_body renaming in
-  { let_abst = let_abst'; let_body = defining_expr' }
+  let defining_expr' = apply_renaming expr_body renaming in
+  { let_abst = let_abst'; expr_body = defining_expr' }
 
 and apply_renaming_named t renaming : named =
   match t with
@@ -404,14 +404,14 @@ let rec print ppf e =
      fprintf ppf "invalid %s" message);
   fprintf ppf "@])";
 
-and print_let ppf ({let_abst; let_body} : let_expr) =
+and print_let ppf ({let_abst; expr_body} : let_expr) =
   Name_abstraction.pattern_match_for_printing
     (module Bound_pattern)
     let_abst ~apply_renaming_to_term:apply_renaming
     ~f:(fun bound body ->
         fprintf ppf "(bound@ (%a),@ body@ (%a))@ in=%a"
         print_bound_pattern bound
-        print let_body
+        print expr_body
         print body)
 
 and print_bound_pattern ppf (t : Bound_pattern.t) =
@@ -605,11 +605,11 @@ and print_let_cont ppf (t : let_cont_expr) =
         Name_abstraction.pattern_match_for_printing
           (module Bound_parameters) handler
           ~apply_renaming_to_term:apply_renaming
-          ~f:(fun k let_body ->
+          ~f:(fun k expr_body ->
             fprintf ppf "(cont@ %a,@ param@ %a,@ body@ %a)@ in=%a"
             print_cont cont
             print_params k
-            print let_body
+            print expr_body
             print body))
   | Recursive t ->
     fprintf ppf "rec@ ";
@@ -683,8 +683,8 @@ let rec ids_for_export (t : core_exp) =
   | Invalid _ -> Ids_for_export.empty
 
 (* ids for [Let_expr] *)
-and ids_for_export_let { let_abst; let_body } =
-  let body_ids = ids_for_export let_body in
+and ids_for_export_let { let_abst; expr_body } =
+  let body_ids = ids_for_export expr_body in
   let let_abst_ids =
     Name_abstraction.ids_for_export
       (module Bound_pattern)
@@ -894,7 +894,7 @@ module Core_let = struct
   module A = Name_abstraction.Make (Bound_pattern) (T0)
   type t = let_expr
   let create ~(x : Bound_pattern.t) ~(e1 : core_exp) ~(e2 : core_exp)  =
-    Let { let_abst = A.create x e2; let_body = e1 }
+    Let { let_abst = A.create x e2; expr_body = e1 }
 
   module Pattern_match_pair_error = struct
     type t = Mismatched_let_bindings
@@ -903,18 +903,18 @@ module Core_let = struct
   let pattern_match t ~(f : x:Bound_pattern.t -> e1:core_exp -> e2:core_exp -> 'a) : 'a =
     let open A in
     let<> x, e2 = t.let_abst in
-    f ~x ~e1:t.let_body ~e2
+    f ~x ~e1:t.expr_body ~e2
 
   (* Treat "dynamic binding" (statically scoped binding under lambda abstraction)
      and "static binding" (globally scoped mapping of statics) differently *)
   let pattern_match_pair
-        ({let_abst = let_abst1; let_body = _})
-        ({let_abst = let_abst2; let_body = _})
+        ({let_abst = let_abst1; expr_body = _})
+        ({let_abst = let_abst2; expr_body = _})
         (dynamic : Bound_pattern.t -> core_exp -> core_exp -> 'a)
         (static : Bound_static.t -> Bound_static.t -> core_exp -> core_exp -> 'a):
     ('a, Pattern_match_pair_error.t) Result.t =
-    A.pattern_match let_abst1 ~f:(fun let_bound1 let_body1 ->
-      A.pattern_match let_abst2 ~f:(fun let_bound2 let_body2 ->
+    A.pattern_match let_abst1 ~f:(fun let_bound1 expr_body1 ->
+      A.pattern_match let_abst2 ~f:(fun let_bound2 expr_body2 ->
         let dynamic_case () =
           let ans = A.pattern_match_pair let_abst1 let_abst2 ~f:dynamic
           in Ok ans
@@ -930,7 +930,7 @@ module Core_let = struct
           let patterns2 = bound_static2 |> Bound_static.to_list in
           if List.compare_lengths patterns1 patterns2 = 0
           then
-            let ans = static bound_static1 bound_static2 let_body1 let_body2 in
+            let ans = static bound_static1 bound_static2 expr_body1 expr_body2 in
             Ok ans
           else Error Pattern_match_pair_error.Mismatched_let_bindings
         | (Singleton _ | Set_of_closures _ | Static _), _ ->

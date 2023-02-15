@@ -165,11 +165,11 @@ let rec equiv (env:Env.t) e1 e2 : eq =
 and equiv_let env e1 e2 : eq =
   Core_let.pattern_match_pair e1 e2
     (fun _bound let_bound1 let_bound2 ->
-       equiv env let_bound1 let_bound2 && equiv env e1.let_body e2.let_body)
+       equiv env let_bound1 let_bound2 && equiv env e1.expr_body e2.expr_body)
     (fun bound1 bound2 let_bound1 let_bound2 ->
          equiv_let_symbol_exprs env
-           (bound1, e1.let_body, let_bound1)
-           (bound2, e2.let_body, let_bound2))
+           (bound1, e1.expr_body, let_bound1)
+           (bound2, e2.expr_body, let_bound2))
   |> function | Ok comp -> comp | Error _ -> false
 
 and equiv_let_symbol_exprs env
