@@ -27,6 +27,7 @@
 \newcommand{\abst}[2]{\lambda \; #1.\, #2}
 \newcommand{\switch}[2]{\mathsf{switch}\; (#1) \; #2}
 \newcommand{\args}[1]{\overrightarrow{#1}}
+\newcommand{\substchain}[2]{\; [ #1 \setminus #2 ]}
 
 
 This language has a call-by-value style reduction strategy.
@@ -64,13 +65,19 @@ or not the expression throws an exception.
   \inferrule
       [\footnotesize LetClo-$\beta$]
       {}
-      {\forall x \in X, \, \letexp{(\mathsf{clo} \; X)}{K}{e} \step \subst{e}{x}{(x, K)}}
+      {\forall x \; i, x = X[i], \,
+        \letexp{(\mathsf{clo} \; X)}{K}{e} \step \subst{e}{x}{(\pi_1 \; K[i], K)}}
+
+  \inferrule
+      [\footnotesize LetStaticClo-$\beta$]
+      {}
+      {\forall x, x \in X^{\uparrow}, \,
+        \letexp{(\mathsf{clo} \; X^{\uparrow})}{K}{e} \step \subst{e}{x}{(x, K)}}
 
   \inferrule
       [\footnotesize LetCode-$\beta$]
       {}
-      {\letcodeexp{x}{v}{e} \step \subst{e}{x}{v}}
-
+      {\letcodeexp{f\; (x, \, \rho,\, res_k, \, exn_k)}{e_1}{e_2} \step \subst{e_2}{f}{\lambda (x, \, \rho,\, res_k,\, exn_k)}. e_1}
 
   %% \inferrule
   %%     [\footnotesize LetCodeDeleted]
@@ -116,6 +123,7 @@ or not the expression throws an exception.
       {k \step k'}
       {\applycont{k}{\args{args}} \step \applycont{k'}{\args{args}}}
 
+
   \inferrule
       [\footnotesize ApplyCont-$\beta$]
       {}
@@ -124,17 +132,18 @@ or not the expression throws an exception.
   \inferrule
       [\footnotesize ApplyR]
       {\args{args} \step \args{args}'}
-      {\apply{e}{res_k}{exn_k}{\args{args}} \step \apply{e}{res_k}{exn_k}{\args{args}'}}
+      {\apply{e\; \rho}{res_k}{exn_k}{\args{args}} \step \apply{e\; \rho}{res_k}{exn_k}{\args{args}'}}
 
   \inferrule
       [\footnotesize ApplyL]
       {e \step e'}
-      {\apply{e}{res_k}{exn_k}{\args{args}} \step \apply{e'}{res_k}{exn_k}{\args{args}}}
+      {\apply{e\; \rho}{res_k}{exn_k}{\args{args}} \step \apply{e'\; \rho}{res_k}{exn_k}{\args{args}}}
 
   \inferrule
       [\footnotesize Apply-$\beta$]
       {}
-      {\apply{(\abst{\args{x}}{e})}{res_k}{exn_k}{\args{v}} \step \subst{e}{x}{\args{v}} \hookrightarrow res_k/exn_k}
+      {\apply{\mathsf{direct\_call}(\abst{(x, \, \rho, \, res_k, \, exn_k)}{e}) \; K}{\args{v}}{k_r}{k_e}
+        \step \subst{e}{\rho}{K}\substchain{x}{\args{v}}\substchain{res_k}{k_r}\substchain{exn_k}{k_e} }
 
   \inferrule
       [\footnotesize Switch]
