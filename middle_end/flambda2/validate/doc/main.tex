@@ -49,7 +49,7 @@ or not the expression throws an exception.
   \inferrule
       [\footnotesize Let-$\beta$]
       {}
-      {\letexp{x}{v}{e_2} \step \subst{e_2}{x}{v}}
+      {\letexp{x}{v}{e} \step \subst{e}{x}{v}}
 
   \inferrule
       [\footnotesize LetL]
@@ -60,6 +60,17 @@ or not the expression throws an exception.
       [\footnotesize LetR]
       {e_2 \step e_2'}
       {\letexp{x}{N}{e_2} \step \letexp{x}{N}{e_2'}}
+
+  \inferrule
+      [\footnotesize LetClo-$\beta$]
+      {}
+      {\letexp{(\mathsf{clo} \; x)}{K}{e} \step \subst{e}{x}{(x, K)}}
+
+  \inferrule
+      [\footnotesize LetCode-$\beta$]
+      {}
+      {\letcodeexp{x}{v}{e} \step \subst{e}{x}{v}}
+
 
   %% \inferrule
   %%     [\footnotesize LetCodeDeleted]
