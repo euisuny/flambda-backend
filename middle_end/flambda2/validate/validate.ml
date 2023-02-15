@@ -62,6 +62,12 @@ and subst_pattern_set_of_closures_named
         | Named (Set_of_closures soc) -> (Set_of_closures soc)
        | _ -> failwith "Expected set of closures")
     | None -> e)
+  | Prim (Binary (e, arg1, arg2)) ->
+    let arg1 = subst_pattern_set_of_closures ~bound ~let_body arg1
+    in
+    let arg2 = subst_pattern_set_of_closures ~bound ~let_body arg2
+    in
+    (Prim (Binary (e, arg1, arg2)))
   | Prim (Variadic (e, args)) ->
     let args =
       List.map (subst_pattern_set_of_closures ~bound ~let_body) args
@@ -215,11 +221,35 @@ and subst_block_like
       List.map (subst_pattern_static ~bound:(Bound_static.Pattern.block_like bound) ~let_body) args
     in
     Named (Prim (Variadic (e, args)))
-  | Static_consts _ -> (* FIXME *) Named e
+  | Static_consts l ->
+    subst_block_like_static_const_group ~bound ~let_body l
   | Set_of_closures _ ->
     failwith "Unimplemented_set_of_closures"
   | Rec_info _ ->
     failwith "Unimplemented_block_like"
+
+and subst_block_like_static_const_group
+      ~(bound: Symbol.t) ~(let_body : core_exp) (e : static_const_group) : core_exp =
+  Named (Static_consts
+        (List.map (subst_block_like_static_const_or_code ~bound ~let_body) e))
+
+and subst_block_like_static_const_or_code
+      ~(bound: Symbol.t) ~(let_body : core_exp) (e : static_const_or_code) : static_const_or_code =
+  match e with
+  | Static_const const -> Static_const (subst_block_like_static_const ~bound ~let_body const)
+  | (Code _ | Deleted_code) -> e
+
+and subst_block_like_static_const
+      ~(bound: Symbol.t) ~(let_body : core_exp) (e : static_const) : static_const =
+  match e with
+  | Block (tag, mut, args) ->
+    let args =
+      List.map
+        (subst_pattern_static ~bound:(Bound_static.Pattern.block_like bound) ~let_body)
+        args
+    in
+    Block (tag, mut, args)
+  | _ -> failwith "subst_block_like_static_const expected bloc"
 
 (* [Set of closures]
 
@@ -231,7 +261,31 @@ and subst_block_like
 and subst_bound_set_of_closures (bound : Symbol.t Function_slot.Lmap.t) ~let_body
       (e : named) =
   match e with
-  | Simple _ -> Named e
+  | Simple v ->
+    (match let_body with
+     | Named (Static_consts
+         (Static_const
+            (Static_set_of_closures ({function_decls = _; value_slots = _ ; alloc_mode = _ })) :: _ ))
+       ->
+       let bound = Function_slot.Lmap.bindings bound
+       in
+       (* let in_order : function_expr Function_slot.Lmap.t =
+        *   function_decls.in_order
+        * in *)
+       let bound_closure =
+         List.find_opt (fun (_, x) -> Simple.equal v (Simple.symbol x)) bound
+       in
+       (match bound_closure with
+       | None -> Named e
+       | Some _ -> let_body (* FIXME: Add entry point *)
+         (* let bound_function_expr = Function_slot.Lmap.find slot in_order
+          * in
+          * match bound_function_expr with
+          * | Id _ -> Named e (* CHECK: Don't substitute in code_ids? *)
+          * | Exp e -> e *)
+       )
+     | _ -> failwith "Expected static constants"
+    )
   | Prim (Nullary e) -> Named (Prim (Nullary e))
   | Prim (Unary (e, arg1)) ->
     let arg1 =
@@ -268,11 +322,36 @@ and subst_bound_set_of_closures (bound : Symbol.t Function_slot.Lmap.t) ~let_bod
         (subst_pattern_static ~bound:(Bound_static.Pattern.set_of_closures bound) ~let_body) args
     in
     Named (Prim (Variadic (e, args)))
-  | Static_consts _ -> (* FIXME *) Named e
+  | Static_consts e ->
+    subst_bound_set_of_closures_static_const_group ~bound ~let_body e
   | Set_of_closures _ ->
     failwith "Unimplemented_set_of_closures"
   | Rec_info _ ->
     failwith "Unimplemented_block_like"
+
+and subst_bound_set_of_closures_static_const_group
+      ~bound ~(let_body : core_exp) (e : static_const_group) : core_exp =
+  Named (Static_consts
+           (List.map (subst_bound_set_of_closures_static_const_or_code ~bound ~let_body) e))
+
+and subst_bound_set_of_closures_static_const_or_code
+      ~bound ~(let_body : core_exp) (e : static_const_or_code) : static_const_or_code =
+  match e with
+  | Static_const const ->
+    Static_const (subst_bound_set_of_closures_static_const ~bound ~let_body const)
+  | (Code _ | Deleted_code) -> e
+
+and subst_bound_set_of_closures_static_const
+      ~bound ~(let_body : core_exp) (e : static_const) : static_const =
+  match e with
+  | Block (tag, mut, args) ->
+    let args =
+      List.map
+        (subst_pattern_static ~bound:(Bound_static.Pattern.set_of_closures bound) ~let_body)
+        args
+    in
+    Block (tag, mut, args)
+  | _ -> failwith "subst_block_like_static_const expected bloc"
 
 and subst_code_id (bound : Code_id.t) ~(let_body : core_exp) (e : named) : core_exp =
   match e with
@@ -516,7 +595,7 @@ let eval_prim_binary
          (let index = simple_tagged_immediate ~const:n in
           match index with (* TODO: Match on the tags and size? *)
           | Some i -> (* IY: Doublecheck loading scheme from blocks *)
-            (match List.nth blocks (Targetint_31_63.to_int i) with
+            (match List.nth blocks 0 with
              | Static_const (Block (_, _, l)) ->
                List.nth l (Targetint_31_63.to_int i)
              | _ -> failwith "Unimplemented_block_load")

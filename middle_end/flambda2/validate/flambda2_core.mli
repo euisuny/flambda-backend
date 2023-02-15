@@ -20,7 +20,7 @@ type core_exp =
    [e1] = body **)
 and let_expr =
   { let_abst : (Bound_pattern.t, core_exp) Name_abstraction.t;
-    let_body : core_exp; }
+    expr_body : core_exp; }
 
 and named =
   | Simple of Simple.t
@@ -225,4 +225,6 @@ end
 
 val print : Format.formatter -> core_exp -> unit
 val print_static_pattern : Format.formatter -> Bound_static.Pattern.t -> unit
+val print_bound_pattern : Format.formatter -> Bound_pattern.t -> unit
+
 val apply_renaming : core_exp -> Renaming.t -> core_exp
