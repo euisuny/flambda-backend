@@ -170,15 +170,15 @@ let () =
 
   (* [Full FL file generated from `let x = 42`] *)
 
-  simplify_term "let3.fl";
-  normalize_term "let3.fl";
+  (* simplify_term "let3.fl";
+   * normalize_term "let3.fl"; *)
 
   (* [Closures] *)
 
   (* simplify_term "apply1.fl";
    * normalize_term "apply1.fl"; *)
-  (* simplify_term "apply2.fl";
-   * normalize_term "apply2.fl"; *)
+  simplify_term "apply2.fl";
+  normalize_term "apply2.fl";
 
   (* ---------Future work--------- *)
 

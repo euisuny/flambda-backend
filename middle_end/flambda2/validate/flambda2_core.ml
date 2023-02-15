@@ -26,6 +26,7 @@ and let_expr =
 and named =
   | Simple of Simple.t
   | Prim of primitive
+  | Closure_expr of (Function_slot.t * set_of_closures)
   | Set_of_closures of set_of_closures
   | Static_consts of static_const_group
   | Rec_info of Rec_info_expr.t
@@ -151,6 +152,8 @@ and apply_renaming_named t renaming : named =
     Simple (Simple.apply_renaming simple renaming)
   | Prim prim ->
     Prim (apply_renaming_prim prim renaming)
+  | Closure_expr (slot, set) ->
+    Closure_expr (slot, apply_renaming_set_of_closures set renaming)
   | Set_of_closures set ->
     Set_of_closures (apply_renaming_set_of_closures set renaming)
   | Static_consts consts ->
@@ -449,7 +452,12 @@ and print_named ppf (t : named) =
     Simple.print simple;
   | Prim prim ->
     fprintf ppf "prim@ %a"
-    print_prim prim;
+      print_prim prim;
+  | Closure_expr (slot, clo) ->
+    fprintf ppf "(%s, %a)"
+      (Function_slot.name slot)
+      (fun ppf clo ->
+         print_named ppf (Set_of_closures clo)) clo
   | Set_of_closures clo ->
     fprintf ppf "set_of_closures@ %a"
     print_set_of_closures clo
@@ -695,6 +703,7 @@ and ids_for_export_let { let_abst; expr_body } =
 and ids_for_export_named (t : named) =
   match t with
   | Simple simple -> Ids_for_export.from_simple simple
+  | Closure_expr (_, set) -> ids_for_export_set_of_closures set
   | Prim prim -> ids_for_export_prim prim
   | Set_of_closures set -> ids_for_export_set_of_closures set
   | Static_consts consts -> ids_for_export_static_const_group consts

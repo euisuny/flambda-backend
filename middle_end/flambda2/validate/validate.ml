@@ -54,14 +54,22 @@ and subst_pattern_set_of_closures_named
   match e with
   | Simple v ->
     let opt_var =
-      List.find_opt (fun x -> Simple.same (Simple.var (Bound_var.var x)) v) bound
+      List.mapi (fun i x ->
+        if Simple.same (Simple.var (Bound_var.var x)) v then Some i else None) bound
+      |> List.filter Option.is_some
     in
     (match opt_var with
-    | Some _ ->
+    | Some i :: _ ->
        (match let_body with
-        | Named (Set_of_closures soc) -> (Set_of_closures soc)
+        | Named (Set_of_closures soc) ->
+          let decls =
+            soc.function_decls.in_order |> Function_slot.Lmap.bindings
+          in
+          let (slot, _) = List.nth decls i
+          in
+          Closure_expr (slot, soc)
        | _ -> failwith "Expected set of closures")
-    | None -> e)
+    | _ -> e)
   | Prim (Binary (e, arg1, arg2)) ->
     let arg1 = subst_pattern_set_of_closures ~bound ~let_body arg1
     in
@@ -165,6 +173,7 @@ and subst_pattern_singleton
      Named (Static_consts [Static_const (Block (tag, mut, list))])
    | Named (Static_consts _) ->
      failwith "Unimplemented_subst_static_consts"
+   | Named (Closure_expr _) -> e
    | Named (Set_of_closures _) -> e
    | Named (Rec_info _) -> e
    | Let {let_abst; expr_body} ->
@@ -223,6 +232,8 @@ and subst_block_like
     Named (Prim (Variadic (e, args)))
   | Static_consts l ->
     subst_block_like_static_const_group ~bound ~let_body l
+  | Closure_expr _ ->
+    failwith "Unimplemented_set_of_closures_expr"
   | Set_of_closures _ ->
     failwith "Unimplemented_set_of_closures"
   | Rec_info _ ->
@@ -265,24 +276,16 @@ and subst_bound_set_of_closures (bound : Symbol.t Function_slot.Lmap.t) ~let_bod
     (match let_body with
      | Named (Static_consts
          (Static_const
-            (Static_set_of_closures ({function_decls = _; value_slots = _ ; alloc_mode = _ })) :: _ ))
+            (Static_set_of_closures set) :: _ ))
        ->
        let bound = Function_slot.Lmap.bindings bound
        in
-       (* let in_order : function_expr Function_slot.Lmap.t =
-        *   function_decls.in_order
-        * in *)
        let bound_closure =
          List.find_opt (fun (_, x) -> Simple.equal v (Simple.symbol x)) bound
        in
        (match bound_closure with
        | None -> Named e
-       | Some _ -> let_body (* FIXME: Add entry point *)
-         (* let bound_function_expr = Function_slot.Lmap.find slot in_order
-          * in
-          * match bound_function_expr with
-          * | Id _ -> Named e (* CHECK: Don't substitute in code_ids? *)
-          * | Exp e -> e *)
+       | Some (k, _) -> Named (Closure_expr (k, set))
        )
      | _ -> failwith "Expected static constants"
     )
@@ -324,6 +327,8 @@ and subst_bound_set_of_closures (bound : Symbol.t Function_slot.Lmap.t) ~let_bod
     Named (Prim (Variadic (e, args)))
   | Static_consts e ->
     subst_bound_set_of_closures_static_const_group ~bound ~let_body e
+  | Closure_expr _ ->
+    failwith "Unimplemented_set_of_closures_expr"
   | Set_of_closures _ ->
     failwith "Unimplemented_set_of_closures"
   | Rec_info _ ->
@@ -352,6 +357,28 @@ and subst_bound_set_of_closures_static_const
     in
     Block (tag, mut, args)
   | _ -> failwith "subst_block_like_static_const expected bloc"
+
+and subst_code_id_set_of_closures (bound : Code_id.t) ~(let_body : core_exp)
+      {function_decls; value_slots; alloc_mode}
+  : set_of_closures =
+  let in_order : function_expr Function_slot.Lmap.t =
+    function_decls.in_order |>
+      Function_slot.Lmap.map
+        (fun x ->
+            match x with
+            | Id code_id ->
+              if (Code_id.compare code_id bound = 0)
+              then Exp let_body
+              else Id code_id
+            | Exp e ->
+              Exp (subst_pattern_static ~bound:(Bound_static.Pattern.code bound)
+                    ~let_body e))
+  in
+  let function_decls =
+    { funs = Function_slot.Map.of_list (Function_slot.Lmap.bindings in_order);
+      in_order}
+  in
+  {function_decls; value_slots; alloc_mode}
 
 and subst_code_id (bound : Code_id.t) ~(let_body : core_exp) (e : named) : core_exp =
   match e with
@@ -392,24 +419,12 @@ and subst_code_id (bound : Code_id.t) ~(let_body : core_exp) (e : named) : core_
         (subst_pattern_static ~bound:(Bound_static.Pattern.code bound) ~let_body) args
     in
     Named (Prim (Variadic (e, args)))
-  | Set_of_closures {function_decls; value_slots; alloc_mode} ->
-    let in_order : function_expr Function_slot.Lmap.t = function_decls.in_order |>
-      Function_slot.Lmap.map
-        (fun x ->
-          match x with
-          | Id code_id ->
-            if (Code_id.compare code_id bound = 0)
-            then Exp let_body
-            else Id code_id
-          | Exp e ->
-            Exp (subst_pattern_static ~bound:(Bound_static.Pattern.code bound)
-                   ~let_body e))
+  | Closure_expr (slot, set) ->
+    Named (Closure_expr (slot, subst_code_id_set_of_closures bound ~let_body set))
+  | Set_of_closures set ->
+    let set = subst_code_id_set_of_closures bound ~let_body set
     in
-    let function_decls =
-      { funs = Function_slot.Map.of_list (Function_slot.Lmap.bindings in_order);
-        in_order}
-    in
-    Named (Set_of_closures {function_decls; value_slots; alloc_mode})
+    Named (Set_of_closures set)
   | Static_consts [Static_const (Block (tag, immutable, exps))] ->
     let exps =
       List.map
@@ -517,6 +532,8 @@ let rec subst_params
        (Binary (e, subst_params params a1 args, subst_params params a2 args)))
   | Named (Prim _) ->
     failwith "Unimplemented_param_named_prim"
+  | Named (Closure_expr _) ->
+    failwith "Unimplemented_param_named_clo_expr"
   | Named (Set_of_closures _) ->
     failwith "Unimplemented_param_named_clo"
   | Named (Static_consts _ | Rec_info _) -> e
@@ -679,6 +696,7 @@ let eval_prim (v : primitive) : core_exp =
 let normalize_named (body : named) : core_exp =
   match body with
   | Simple _ (* A [Simple] is a register-sized value *)
+  | Closure_expr _
   | Set_of_closures _ (* Map of [Code_id]s and [Simple]s corresponding to
                          function and value slots*)
   | Rec_info _ (* Information about inlining recursive calls, an integer variable *)

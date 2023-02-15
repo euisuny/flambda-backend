@@ -313,6 +313,9 @@ and equiv_named env named1 named2 : eq =
     equiv_simple env simple1 simple2
   | Prim prim1, Prim prim2 ->
     equiv_primitives env prim1 prim2
+  | Closure_expr (slot1, set1), Closure_expr (slot2, set2) ->
+    equiv_function_slot env slot1 slot2 &&
+    equiv_set_of_closures env set1 set2
   | Set_of_closures set1, Set_of_closures set2 ->
     equiv_set_of_closures env set1 set2
   | Rec_info rec_info_expr1, Rec_info rec_info_expr2 ->
@@ -320,7 +323,7 @@ and equiv_named env named1 named2 : eq =
   | Static_consts const1, Static_consts const2 ->
     (List.combine const1 const2 |>
      List.fold_left (fun x (e1, e2) -> x && equiv_static_consts env e1 e2) true)
-  | (Simple _ | Prim _ | Set_of_closures _ | Rec_info _ | Static_consts _ ), _ ->
+  | (Simple _ | Prim _ | Set_of_closures _ | Rec_info _ | Static_consts _ | Closure_expr _), _ ->
     false
 
 and equiv_simple env simple1 simple2 : eq =

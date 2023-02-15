@@ -25,6 +25,7 @@ and let_expr =
 and named =
   | Simple of Simple.t
   | Prim of primitive
+  | Closure_expr of (Function_slot.t * set_of_closures)
   | Set_of_closures of set_of_closures
   | Static_consts of static_const_group
   | Rec_info of Rec_info_expr.t
