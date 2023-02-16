@@ -8,7 +8,7 @@
 
 \begin{document}
 
-\title{Validator for Flambda2 Simplifier}
+\title{Flambda2 Validator}
 \date{}
 \maketitle{}
 
@@ -59,7 +59,11 @@
 \newcommand{\load}[3]{\mathsf{load}(#1,\,#2,\,#3)}
 \newcommand{\makeblock}[3]{\mathsf{make\_block}(#1,\,#2,\,#3)}
 
+\newcommand{\eval}[2]{\langle #1, \, #2\rangle}
+\newcommand{\rebind}[3]{#1 \; [ #2 \mapsto #3 ]}
+
 \begin{figure}[ht]
+  \footnotesize
   \begin{align*}
     %
     \simple ::=~& \var \sep \symb \sep \const \\
@@ -99,14 +103,7 @@ We plan to support the block-related primitives (\textsf{load} from a block and 
 
 \begin{figure}[h!]
 \footnotesize
-\begin{flalign*}
-  \mathbf{Environments}\\
-  r ::=~& () \sep (r_1, \, r_2, \,\cdots) \sep \pi_i \; r \sep \langle \rho ,\, \lambda k \, x.K\rangle \\
-  c ::=~& \langle \rho, \, \lambda x.K \rangle \\
-  \rho ::=~& \bullet \sep \rho, \, x \mapsto r \sep \rho, \, k \mapsto c
-\end{flalign*}
-
-\begin{mathpar}\footnotesize
+\begin{mathpar}
   \inferrule
       [\footnotesize Let-$\beta$]
       {}
@@ -221,6 +218,102 @@ We plan to support the block-related primitives (\textsf{load} from a block and 
 \label{fig:reduction}
 \end{figure}
 
+\begin{figure}[h!]
+\footnotesize
+\begin{flalign*}
+  \mathbf{Environments}\\
+  r ::=~& () \sep (r_1, \, r_2, \,\cdots) \sep \pi_i \; r \sep \langle \rho ,\, \lambda \rho \, k_r \, k_e \, x.e\rangle \\
+  c ::=~& \langle \rho, \, \lambda x.e \rangle \\
+  \rho ::=~& \bullet \sep \rho, \, x \mapsto r \sep \rho, \, k \mapsto c \sep \rho, \, X \mapsto K \sep \rho, \, X^{\uparrow} \mapsto K
+\end{flalign*}
+
+\begin{mathpar}\footnotesize
+  \inferrule
+      [\footnotesize Let-$\beta$]
+      {}
+      {\eval{\letexp{x}{v}{e}}{\rho} \step \eval{e}{\rebind{\rho}{x}{v}}}
+
+  \inferrule
+      [\footnotesize LetL]
+      {\eval{e_1}{\rho} \step \eval{e_1'}{\rho'}}
+      {\eval{\letexp{x}{e_1}{e_2}}{\rho} \step \eval{\letexp{x}{e_1'}{e_2}}{\rho'}}
+
+  \inferrule
+      [\footnotesize LetClo-$\beta$]
+      {}
+      {\eval{\letcloexp{X}{K}{e}}{\rho}
+          \step \eval{e}{\rebind{\rho}{X}{K}}}
+
+  \inferrule
+      [\footnotesize LetStaticClo-$\beta$]
+      {}
+      {\eval{\letstaticcloexp{X^{\uparrow}}{K}{e}}{\rho}
+        \step \eval{e}{\rebind{\rho}{X^{\uparrow}}{K}}}
+
+  \inferrule
+      [\footnotesize LetCode-$\beta$]
+      {}
+      {\eval{\letcodeexp{\codeid}{\lambda \rho \; k_r \; k_e \; x. e_1}{e_2}}{\rho}
+        \step \eval{e}{\rebind{\rho}{\codeid}{\langle \rho, \lambda \rho \; k_r \; k_e \; x.e_1 \rangle}}}
+
+  \inferrule
+      [\footnotesize LetCont-$\beta$]
+      {}
+      {\eval{\letcont{e_1}{k}{\args{args}}{e_2}}{\rho} \step
+        \eval{e_1}{\rebind{\rho}{k}{\langle \rho, \, \abst{\args{args}}{e_2} \rangle }}}
+
+
+  \inferrule
+      [\footnotesize ApplyContR]
+      {\eval{\args{args}}{\rho} \step \eval{\args{args}'}{\rho'}}
+      {\eval{\applycont{v}{\args{args}}}{\rho} \step \eval{\applycont{v}{\args{args}'}}{\rho'}}
+
+  \inferrule
+      [\footnotesize ApplyContL]
+      {\eval{k}{\rho} \step \eval{k'}{\rho'}}
+      {\eval{\applycont{k}{\args{args}}}{\rho} \step
+        \eval{\applycont{k'}{\args{args}}}{\rho'}}
+
+  \inferrule
+      [\footnotesize ApplyCont-$\beta$]
+      {\rho(k) = \langle\rho', \, \abst{x}{e}\rangle}
+      {\eval{\applycont{k}{v}}{\rho} \step \eval{\subst{e}{x}{v}}{\rho'}}
+
+  \inferrule
+      [\footnotesize ApplyR]
+      {\eval{\args{args}}{\rho} \step \eval{\args{args}'}{\rho'}}
+      {\eval{\apply{\callid}{\expr_\rho}{res_k}{exn_k}{\args{args}}}{\rho} \step
+        \eval{\apply{\callid}{\expr_\rho}{res_k}{exn_k}{\args{args}'}}{\rho'}}
+
+  \inferrule
+      [\footnotesize ApplyL]
+      {\eval{\expr_\rho}{\rho} \step \eval{\expr_\rho'}{\rho'}}
+      {\eval{\apply{\callid}{\expr_\rho}{res_k}{exn_k}{\args{args}}}{\rho} \step
+        \eval{\apply{\callid}{\expr_\rho'}{res_k}{exn_k}{\args{args}}}{\rho'}}
+
+  \inferrule
+      [\footnotesize Apply-$\beta$]
+      {\rho(\codeid) = \langle \rho'', \, \lambda P \; k_r \; k_e \; x.e\rangle}
+      {\eval{\apply{\direct \; \codeid}{\rho'}{res_k}{exn_k}{\args{\expr}}}{\rho}
+        \step
+        \langle \subst{e}{P}{\rho'}\substchain{k_r}{res_k}\substchain{k_e}{exn_k}\substchain{x}{\args{\expr}},\,
+        \rho''\rangle}
+
+  \inferrule
+      [\footnotesize Switch]
+      {\eval{e}{\rho} \step \eval{e'}{\rho'}}
+      {\eval{\switch{e}{arms}}{\rho} \step \eval{\switch{e'}{arms}}{\rho'}}
+
+  \inferrule
+      [\footnotesize Switch-$\beta$]
+      {}
+      {\eval{\switch{v}{\{x \mapsto e\}}}{\rho} \step \eval{\subst{e}{x}{v}}{\rho}}
+
+      \overrightarrow{args} \step \overrightarrow{args}' := \forall a, a \in \overrightarrow{args}. \exists a', a \step^\ast a' \land a \in \overrightarrow{args}'
+\end{mathpar}
+\caption{Evaluation Rules for Flambda2 Core (with environments)}
+\end{figure}
+
 This language has a call-by-value style reduction strategy, as shown in Figure \ref{fig:reduction}.
 Notice the unusual [LetR] rule---the expression $N$ refers to an expression in
 the normal form, which may refer to a normalized effectful expression.
@@ -236,6 +329,7 @@ expression, and the argument is fully evaluated.
 The expression is beta-reduced, then the resulting value get passed on as an
 argument to either the return or exception continuation, depending on whether
 or not the expression throws an exception.
+
 
 \section{Rewrite Rules}
 \begin{mathpar}
