@@ -48,7 +48,7 @@
 \newcommand{\letblockexp}[3]{\mathsf{let}\; (\mathsf{block}^{\uparrow} \; #1) \; = \; #2 \; \mathsf{in} \; #3}
 \newcommand{\subst}[3]{#1 \; [ #2 \setminus #3 ]}
 \newcommand{\letcont}[4]{#1 \; \mathsf{where} \; #2 \; #3 \; = \; #4}
-\newcommand{\step}{\longrightarrow_e}
+\newcommand{\step}{\longrightarrow}
 \newcommand{\applycont}[2]{#1 \; #2}
 \newcommand{\apply}[5]{\mathsf{call}(#1) \; \mathsf{with} \; (#2, \, #3, \, #4, \, #5)}
 \newcommand{\abst}[2]{\lambda \; #1.\, #2}
@@ -121,15 +121,13 @@ We plan to support the block-related primitives (\textsf{load} from a block and 
 
   \inferrule
       [\footnotesize LetClo-$\beta$]
-      {}
-      {\forall x \; i, x = X[i], \,
-        \letexp{(\mathsf{clo} \; X)}{K}{e} \step \subst{e}{x}{(\pi_1 \; K[i], K)}}
+      {x = X[i]}
+      {\letexp{(\mathsf{clo} \; X)}{K}{e} \step \subst{e}{x}{(\pi_1 \; K[i], K)}}
 
   \inferrule
       [\footnotesize LetStaticClo-$\beta$]
-      {}
-      {\forall x, x \in X^{\uparrow}, \,
-        \letexp{(\mathsf{clo} \; X^{\uparrow})}{K}{e} \step \subst{e}{x}{(x, K)}}
+      {x \in X^{\uparrow}}
+      {\letexp{(\mathsf{clo} \; X^{\uparrow})}{K}{e} \step \subst{e}{x}{(x, K)}}
 
   \inferrule
       [\footnotesize LetCode-$\beta$]
@@ -199,8 +197,10 @@ We plan to support the block-related primitives (\textsf{load} from a block and 
   \inferrule
       [\footnotesize Apply-$\beta$]
       {}
-      {\apply{\mathsf{direct}(\abst{(x, \, \rho, \, res_k, \, exn_k)}{e})}{K}{\args{v}}{k_r}{k_e}
-        \step \subst{e}{\rho}{K}\substchain{x}{\args{v}}\substchain{res_k}{k_r}\substchain{exn_k}{k_e} }
+      {\apply{\direct \; (\lambda P \; k_r \; k_e \; x.e)}{P'}{res_k}{exn_k}{\args{v}}
+       \step
+       \subst{e}{P}{P'}\substchain{k_r}{res_k}\substchain{k_e}{exn_k}\substchain{x}{\args{v}}
+      }
 
   \inferrule
       [\footnotesize Switch]
@@ -222,7 +222,7 @@ We plan to support the block-related primitives (\textsf{load} from a block and 
 \footnotesize
 \begin{flalign*}
   \mathbf{Environments}\\
-  r ::=~& () \sep (r_1, \, r_2, \,\cdots) \sep \pi_i \; r \sep \langle \rho ,\, \lambda \rho \, k_r \, k_e \, x.e\rangle \\
+  r ::=~& () \sep (r_1, \, r_2, \,\cdots) \sep \pi_i \; r \sep \langle \rho ,\, \lambda P \, k_r \, k_e \, x.e\rangle \\
   c ::=~& \langle \rho, \, \lambda x.e \rangle \\
   \rho ::=~& \bullet \sep \rho, \, x \mapsto r \sep \rho, \, k \mapsto c \sep \rho, \, X \mapsto K \sep \rho, \, X^{\uparrow} \mapsto K\\
 \end{flalign*}
@@ -255,8 +255,8 @@ We plan to support the block-related primitives (\textsf{load} from a block and 
   \inferrule
       [\footnotesize LetCode-$\beta$]
       {}
-      {\eval{\letcodeexp{\codeid}{\lambda \rho \; k_r \; k_e \; x. e_1}{e_2}}{\rho}
-        \step \eval{e}{\rebind{\rho}{\codeid}{\langle \rho, \lambda \rho \; k_r \; k_e \; x.e_1 \rangle}}}
+      {\eval{\letcodeexp{\codeid}{\lambda P \; k_r \; k_e \; x. e_1}{e_2}}{\rho}
+        \step \eval{e}{\rebind{\rho}{\codeid}{\langle \rho, \lambda P \; k_r \; k_e \; x.e_1 \rangle}}}
 
   \inferrule
       [\footnotesize LetCont-$\beta$]
@@ -296,9 +296,9 @@ We plan to support the block-related primitives (\textsf{load} from a block and 
   \inferrule
       [\footnotesize Apply-$\beta$]
       {\rho(\codeid) = \langle \rho'', \, \lambda P \; k_r \; k_e \; x.e\rangle}
-      {\eval{\apply{\direct \; \codeid}{\rho'}{res_k}{exn_k}{\args{\expr}}}{\rho}
+      {\eval{\apply{\direct \; \codeid}{P'}{res_k}{exn_k}{\args{v}}}{\rho}
         \step
-        \langle \subst{e}{P}{\rho'}\substchain{k_r}{res_k}\substchain{k_e}{exn_k}\substchain{x}{\args{\expr}},\,
+        \langle \subst{e}{P}{P'}\substchain{k_r}{res_k}\substchain{k_e}{exn_k}\substchain{x}{\args{v}},\,
         \rho''\rangle}
 
   \inferrule
