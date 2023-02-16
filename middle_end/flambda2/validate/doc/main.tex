@@ -48,7 +48,7 @@
 \newcommand{\letblockexp}[3]{\mathsf{let}\; (\mathsf{block}^{\uparrow} \; #1) \; = \; #2 \; \mathsf{in} \; #3}
 \newcommand{\subst}[3]{#1 \; [ #2 \setminus #3 ]}
 \newcommand{\letcont}[4]{#1 \; \mathsf{where} \; #2 \; #3 \; = \; #4}
-\newcommand{\step}{\longrightarrow}
+\newcommand{\step}{\longrightarrow_e}
 \newcommand{\applycont}[2]{#1 \; #2}
 \newcommand{\apply}[5]{\mathsf{call}(#1) \; \mathsf{with} \; (#2, \, #3, \, #4, \, #5)}
 \newcommand{\abst}[2]{\lambda \; #1.\, #2}
@@ -224,9 +224,11 @@ We plan to support the block-related primitives (\textsf{load} from a block and 
   \mathbf{Environments}\\
   r ::=~& () \sep (r_1, \, r_2, \,\cdots) \sep \pi_i \; r \sep \langle \rho ,\, \lambda \rho \, k_r \, k_e \, x.e\rangle \\
   c ::=~& \langle \rho, \, \lambda x.e \rangle \\
-  \rho ::=~& \bullet \sep \rho, \, x \mapsto r \sep \rho, \, k \mapsto c \sep \rho, \, X \mapsto K \sep \rho, \, X^{\uparrow} \mapsto K
+  \rho ::=~& \bullet \sep \rho, \, x \mapsto r \sep \rho, \, k \mapsto c \sep \rho, \, X \mapsto K \sep \rho, \, X^{\uparrow} \mapsto K\\
 \end{flalign*}
-
+\begin{flalign*}
+  \mathbf{Evaluation \; Rules}\\
+\end{flalign*}\vspace{-2em}
 \begin{mathpar}\footnotesize
   \inferrule
       [\footnotesize Let-$\beta$]
