@@ -1,10 +1,10 @@
 \documentclass[11pt,fleqn]{amsart}
 \usepackage{amssymb}
+\usepackage{amsmath}
+\usepackage{hyperref}
 \usepackage{proofs}
 \usepackage{mathpartir}
 \usepackage[color=yellow]{todonotes}
-
-
 
 \begin{document}
 
@@ -88,27 +88,23 @@
   \label{fig:syntax}
 \end{figure}
 
-
+\subsection{Block-based primitives}
+Blocks correspond to OCaml blocks, which are the word-aligned chunks of memory allocated for representing values\footnote{For more, see \url{https://dev.realworldocaml.org/runtime-memory-layout.html}. }.
+Each block has a tag, corresponding to the constructors/field index of a value (e.g. \textsf{tag0} is the first constructor of an ADT).
+The mutability field corresponds to whether the block represents a reference cell.
+The block-related primitives allows the representation of structs, tuples, lists, and arrays.
+We plan to support the block-related primitives (\textsf{load} from a block and \textsf{make\_block}) except those related to floating-point valued arrays.
 
 \section{Reduction strategy}
 
-
-
-This language has a call-by-value style reduction strategy.
-Notice the unusual [LetR] rule---the expression $N$ refers to an expression in
-the normal form, which may refer to a normalized effectful expression.
-This rule is \textit{not} analogous to the [ApplyContR] rule, since the
-lambda abstraction is always implicit in let expressions, ensuring that the
-``lefthand-side'' of the application is always a value. This is necessary
-because for the case of several effectful expressions (such as a print
-statement), inlining the occurence of the expression multiple times will be
-behaviorally different from the original expression.
-
-The [Apply-$\beta$] rule describes the case when the callee is a lambda
-expression, and the argument is fully evaluated.
-The expression is beta-reduced, then the resulting value get passed on as an
-argument to either the return or exception continuation, depending on whether
-or not the expression throws an exception.
+\begin{figure}[h!]
+\footnotesize
+\begin{flalign*}
+  \mathbf{Environments}\\
+  r ::=~& () \sep (r_1, \, r_2, \,\cdots) \sep \pi_i \; r \sep \langle \rho ,\, \lambda k \, x.K\rangle \\
+  c ::=~& \langle \rho, \, \lambda x.K \rangle \\
+  \rho ::=~& \bullet \sep \rho, \, x \mapsto r \sep \rho, \, k \mapsto c
+\end{flalign*}
 
 \begin{mathpar}\footnotesize
   \inferrule
@@ -221,16 +217,34 @@ or not the expression throws an exception.
 
       \overrightarrow{args} \step \overrightarrow{args}' := \forall a, a \in \overrightarrow{args}. \exists a', a \step^\ast a' \land a \in \overrightarrow{args}'
 \end{mathpar}
+\caption{Evaluation Rules for Flambda2 Core}
+\label{fig:reduction}
+\end{figure}
+
+This language has a call-by-value style reduction strategy, as shown in Figure \ref{fig:reduction}.
+Notice the unusual [LetR] rule---the expression $N$ refers to an expression in
+the normal form, which may refer to a normalized effectful expression.
+This rule is \textit{not} analogous to the [ApplyContR] rule, since the
+lambda abstraction is always implicit in let expressions, ensuring that the
+``lefthand-side'' of the application is always a value. This is necessary
+because for the case of several effectful expressions (such as a print
+statement), inlining the occurence of the expression multiple times will be
+behaviorally different from the original expression.
+
+The [Apply-$\beta$] rule describes the case when the callee is a lambda
+expression, and the argument is fully evaluated.
+The expression is beta-reduced, then the resulting value get passed on as an
+argument to either the return or exception continuation, depending on whether
+or not the expression throws an exception.
 
 \section{Rewrite Rules}
-
 \begin{mathpar}
+  \footnotesize
   \inferrule
       [FlattenMatch]
       {}
       {\switch{\switch{e_1}{[A \mapsto e_2 : B | .. ]}}{[B \mapsto e_2' | .. ]} \step \switch{e_1}{[A \mapsto \subst{e_2'}{B}{e_2} | .. ]}}
 \end{mathpar}
-
 
 \section{Features}
 
@@ -257,23 +271,7 @@ A wishlist of desirable inlining/semantic features to support for the validator.
 \begin{itemize}
 \item arithmetic evaluation: commutative and associative laws for arithmetic?
   It is likely that the commutative/associative laws are not necessary for the simplifier
-\item block-based primitives (makeblock, loading from block)
-  The blocks have a tag, corresponding to the constructors (i.e. tag0 is the first constructor)
-  values either are immediate tags or blocks
-  Mutability corresponds to reference cells
-
-  Being able to treat the block-related primitives will resolve supporting the structures below
-  (except for arrays, which have a tricky case involving storing floating-point values.
-  See floating-point valued array optimization)
 \end{itemize}
 TODO: Refactor [simplify\_primitive].
-
-\subsection{Supported structures}
-\begin{itemize}
-\item structs
-\item tuples
-\item lists
-\item arrays
-\end{itemize}
 
 \end{document}
