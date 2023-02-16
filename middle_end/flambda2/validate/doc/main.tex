@@ -14,20 +14,84 @@
 
 %% \section{Flambda2 Simplifier}
 
-\section{Reduction strategy}
+\section{Flambda2 Core}
 
 %%  Macros for core exps
+\newcommand{\expr}{\mathit{exp}}
+\newcommand{\var}{\mathit{var}}
+\newcommand{\named}{\mathit{named}}
+\newcommand{\arms}{\mathit{arms}}
+\newcommand{\codeid}{\mathit{id}}
+\newcommand{\code}{\mathit{code}}
+\newcommand{\setofclo}{P}
+\newcommand{\block}{\mathit{block}}
+\newcommand{\blockpat}{\mathit{b}}
+\newcommand{\simple}{\mathit{simple}}
+\newcommand{\prim}{\mathit{prim}}
+\newcommand{\staticconsts}{\chi}
+\newcommand{\recinfo}{\mathsf{rec\_info}}
+\newcommand{\idexpr}{\mathit{id\_exp}}
+\newcommand{\symb}{\mathit{symbol}}
+\newcommand{\const}{\mathit{const}}
+\newcommand{\callid}{\kappa}
+\newcommand{\direct}{\mathsf{direct}}
+\newcommand{\indirect}{\mathsf{indirect}}
+\newcommand{\method}{\mathsf{method}}
+\newcommand{\ccall}{\mathsf{c\_call}}
+\newcommand{\blockconst}[3]{\mathsf{block}(#1,\,#2,\,#3)}
+
+\newcommand{\sep}{\; | \;}
 \newcommand{\letexp}[3]{\mathsf{let}\; #1 \; = \; #2 \; \mathsf{in} \; #3}
-\newcommand{\letcodeexp}[3]{\mathsf{let}\; (\mathsf{code} \; #1) \; = \; #2 \; \mathsf{in} \; #3}
+\newcommand{\letcodeexp}[3]{\mathsf{let}\; (\mathsf{code}^{\uparrow} \; #1) \; = \; #2 \; \mathsf{in} \; #3}
+\newcommand{\letcloexp}[3]{\mathsf{let}\; (\mathsf{clo} \; #1) \; = \; #2 \; \mathsf{in} \; #3}
+\newcommand{\letstaticcloexp}[3]{\mathsf{let}\; (\mathsf{clo}^{\uparrow} \; #1) \; = \; #2 \; \mathsf{in} \; #3}
+\newcommand{\letblockexp}[3]{\mathsf{let}\; (\mathsf{block}^{\uparrow} \; #1) \; = \; #2 \; \mathsf{in} \; #3}
 \newcommand{\subst}[3]{#1 \; [ #2 \setminus #3 ]}
 \newcommand{\letcont}[4]{#1 \; \mathsf{where} \; #2 \; #3 \; = \; #4}
 \newcommand{\step}{\longrightarrow}
 \newcommand{\applycont}[2]{#1 \; #2}
-\newcommand{\apply}[4]{#1 \; \, #2 \; \, #3 \; \, #4}
+\newcommand{\apply}[5]{\mathsf{call}(#1) \; \mathsf{with} \; (#2, \, #3, \, #4, \, #5)}
 \newcommand{\abst}[2]{\lambda \; #1.\, #2}
 \newcommand{\switch}[2]{\mathsf{switch}\; (#1) \; #2}
 \newcommand{\args}[1]{\overrightarrow{#1}}
 \newcommand{\substchain}[2]{\; [ #1 \setminus #2 ]}
+\newcommand{\invalid}{\mathsf{invalid}}
+\newcommand{\load}[3]{\mathsf{load}(#1,\,#2,\,#3)}
+\newcommand{\makeblock}[3]{\mathsf{make\_block}(#1,\,#2,\,#3)}
+
+\begin{figure}[ht]
+  \begin{align*}
+    %
+    \simple ::=~& \var \sep \symb \sep \const \\
+    %
+    \named ::=~& \simple \sep \prim \sep P \sep \staticconsts \sep \recinfo \\
+    %
+    \expr ::=~& \named \sep \letexp{\var}{\expr_1}{\expr_2} \sep \letcloexp{\mathcal{K}}{\setofclo}{\expr}\\
+    & \sep \letcodeexp{\codeid}{\code}{\expr} \sep \letstaticcloexp{\mathcal{K}}{\setofclo}{\expr} \\
+    & \sep \letblockexp{\blockpat}{\block}{\expr} \sep \letcont{\expr_1}{k}{x}{\expr_2} \\
+    & \sep \apply{\callid}{\expr_{\rho}}{res_k}{exn_k}{\args{\expr}} \sep \applycont{\expr_1}{\args{\expr_2}} \\
+    & \sep \switch{\expr_1}{\arms} \sep \invalid \\
+    %
+    P ::=~& \{ \mathsf{fns} : (\mathit{slot}^{f} \ast \, \idexpr ) \; \mathit{map} ; \;
+    \mathsf{vals} : (\mathit{slot}^{v} \ast \simple) \; \mathit{map} \}\\
+    %
+    \idexpr ::=~& \codeid \sep \expr \\
+    %
+    \callid ::=~& \direct \; \codeid \sep \indirect \sep \method \sep \ccall \\
+    %
+    \staticconsts ::=~& P \sep \blockconst{\mathit{tag}}{\mathit{mut}}{\args{\expr}} \sep \cdots \\
+    %
+    \prim ::=~& \load{\mathit{kind}}{\mathit{mut}}{\expr_b} \sep \makeblock{\mathit{kind}}{\mathit{mut}}{\args{\expr}} \\
+    & \sep \pi_{v} \; (\mathit{slot}^{f}) \sep \pi_{f_1} \; (\mathit{slot}^{f_2}) \sep \cdots
+  \end{align*}
+  \caption{Flambda2 Core Syntax (Abbreviated.) }
+  \label{fig:syntax}
+\end{figure}
+
+
+
+\section{Reduction strategy}
+
 
 
 This language has a call-by-value style reduction strategy.
@@ -132,17 +196,17 @@ or not the expression throws an exception.
   \inferrule
       [\footnotesize ApplyR]
       {\args{args} \step \args{args}'}
-      {\apply{e\; \rho}{res_k}{exn_k}{\args{args}} \step \apply{e\; \rho}{res_k}{exn_k}{\args{args}'}}
+      {\apply{e}{\rho}{res_k}{exn_k}{\args{args}} \step \apply{e}{\rho}{res_k}{exn_k}{\args{args}'}}
 
   \inferrule
       [\footnotesize ApplyL]
       {e \step e'}
-      {\apply{e\; \rho}{res_k}{exn_k}{\args{args}} \step \apply{e'\; \rho}{res_k}{exn_k}{\args{args}}}
+      {\apply{e}{\rho}{res_k}{exn_k}{\args{args}} \step \apply{e'}{\rho}{res_k}{exn_k}{\args{args}}}
 
   \inferrule
       [\footnotesize Apply-$\beta$]
       {}
-      {\apply{\mathsf{direct\_call}(\abst{(x, \, \rho, \, res_k, \, exn_k)}{e}) \; K}{\args{v}}{k_r}{k_e}
+      {\apply{\mathsf{direct}(\abst{(x, \, \rho, \, res_k, \, exn_k)}{e})}{K}{\args{v}}{k_r}{k_e}
         \step \subst{e}{\rho}{K}\substchain{x}{\args{v}}\substchain{res_k}{k_r}\substchain{exn_k}{k_e} }
 
   \inferrule
