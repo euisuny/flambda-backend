@@ -132,7 +132,7 @@ We plan to support the block-related primitives (\textsf{load} from a block and 
   \inferrule
       [\footnotesize LetCode-$\beta$]
       {}
-      {\letcodeexp{f\; (x, \, \rho,\, res_k, \, exn_k)}{e_1}{e_2} \step \subst{e_2}{f}{\lambda (x, \, \rho,\, res_k,\, exn_k)}. e_1}
+      {\letcodeexp{f\; (x, \, \rho,\, res_k, \, exn_k)}{e_1}{e_2} \step \subst{e_2}{f}{\lambda (x, \, \rho,\, res_k,\, exn_k). e_1}}
 
   %% \inferrule
   %%     [\footnotesize LetCodeDeleted]

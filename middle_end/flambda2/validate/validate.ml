@@ -567,6 +567,12 @@ let rec subst_params
     failwith "Unimplemented_param_switch"
   | Invalid _ -> e
 
+(* [LetCode-β] *)
+and subst_code (c : function_params_and_body Code0.t) _let_abst =
+  let _metadata = Code0.code_metadata c in
+  let _params_and_body = Code0.params_and_body c in
+  failwith "Unimplemented"
+
 (* [LetCont-β] *)
 let rec subst_cont (cont_e1: core_exp) (k: Bound_continuation.t)
     (args: Bound_parameters.t) (cont_e2: core_exp) : core_exp =
@@ -596,7 +602,7 @@ let rec subst_cont (cont_e1: core_exp) (k: Bound_continuation.t)
 let eval_prim_nullary (_v : P.nullary_primitive) : named =
   failwith "eval_prim_nullary"
 
-let eval_prim_unary (v : P.unary_primitive) (_arg : core_exp) : named =
+let eval_prim_unary _env (v : P.unary_primitive) (_arg : core_exp) : named =
   match v with
   | Project_value_slot _ ->
     failwith "Unimplemented_eval_prim_unary_project_value_slot"
@@ -705,10 +711,10 @@ let eval_prim_variadic (v : P.variadic_primitive) (args : core_exp list) : named
   | Make_array _ ->
     failwith "eval_prim_variadic_make_array_unspported"
 
-let eval_prim (v : primitive) : core_exp =
+let eval_prim (env : Env.t) (v : primitive) : core_exp =
   match v with
   | Nullary v -> Named (eval_prim_nullary v)
-  | Unary (v, arg) -> Named (eval_prim_unary v arg)
+  | Unary (v, arg) -> Named (eval_prim_unary env v arg)
   | Binary (v, arg1, arg2) -> eval_prim_binary v arg1 arg2
   | Ternary (v, arg1, arg2, arg3) -> Named (eval_prim_ternary v arg1 arg2 arg3)
   | Variadic (v, args) -> Named (eval_prim_variadic v args)
@@ -732,17 +738,24 @@ let rec normalize (env : Env.t) (e:core_exp) : core_exp =
   | Invalid _ -> e
 
 and normalize_let env let_abst body : core_exp =
-  (* [LetL]
-                  e1 ⟶ e1'
-     -------------------------------------
-     let x = e1 in e2 ⟶ let x = e1' in e2 *)
-  let x, e1, e2 =
-    Core_let.pattern_match {let_abst; expr_body = body}
-      ~f:(fun ~x ~e1 ~e2 -> (x, normalize env e1, e2))
-  in
-  (* [Let-β]
-    let x = v in e2 ⟶ e2 [x\v] *)
-  subst_pattern ~bound:x ~let_body:e1 e2
+  (* [LetCode]
+     let code f (x, ρ, res_k, exn_k) = e1 in e2 ⟶ e2 [f \ λ (x, ρ, res_k, exn_k). e1]
+
+      Dealing with only the non-recursive case now *)
+  match body with
+  | Named (Static_consts [Code code]) -> subst_code code let_abst
+  | _ ->
+      (* [LetL]
+                      e1 ⟶ e1'
+        -------------------------------------
+        let x = e1 in e2 ⟶ let x = e1' in e2 *)
+      let x, e1, e2 =
+        Core_let.pattern_match {let_abst; expr_body = body}
+          ~f:(fun ~x ~e1 ~e2 -> (x, normalize env e1, e2))
+      in
+      (* [Let-β]
+        let x = v in e2 ⟶ e2 [x\v] *)
+      subst_pattern ~bound:x ~let_body:e1 e2
 
 and normalize_let_cont _env (e:let_cont_expr) : core_exp =
   match e with
@@ -834,7 +847,7 @@ and normalize_named env (body : named) : core_exp =
     Named (Set_of_closures (normalize_set_of_closures env set))
   | Static_consts consts -> (* [Static_consts] are statically-allocated values *)
     normalize_static_const_group env consts
-  | Prim v -> eval_prim v
+  | Prim v -> eval_prim env v
 
 let simulation_relation src tgt =
   let {Simplify.unit = tgt; _} = tgt in
