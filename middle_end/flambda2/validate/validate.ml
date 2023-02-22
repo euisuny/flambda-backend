@@ -638,11 +638,29 @@ let rec subst_params
     (match List.assoc_opt s param_args with
     | Some arg_v -> arg_v
     | None -> e)
-  | Named (Prim (Binary (e, a1, a2))) ->
-    Named (Prim
-       (Binary (e, subst_params params a1 args, subst_params params a2 args)))
-  | Named (Prim _) ->
-    failwith "Unimplemented_param_named_prim"
+  | Named (Prim (Unary (e, arg))) ->
+    let arg = subst_params params arg args
+    in
+    Named (Prim (Unary (e, arg)))
+  | Named (Prim (Binary (e, arg1, arg2))) ->
+    let arg1 = subst_params params arg1 args
+    in
+    let arg2 = subst_params params arg2 args
+    in
+    Named (Prim (Binary (e, arg1, arg2)))
+  | Named (Prim (Ternary (e, arg1, arg2, arg3))) ->
+    let arg1 = subst_params params arg1 args
+    in
+    let arg2 = subst_params params arg2 args
+    in
+    let arg3 = subst_params params arg3 args
+    in
+    Named (Prim (Ternary (e, arg1, arg2, arg3)))
+  | Named (Prim (Variadic (e, args))) ->
+    let args = List.map (fun x -> subst_params params x args) args
+    in
+    Named (Prim (Variadic (e, args)))
+  | Named (Prim (Nullary _)) -> e
   | Named (Closure_expr _) ->
     failwith "Unimplemented_param_named_clo_expr"
   | Named (Set_of_closures _) ->
@@ -872,9 +890,37 @@ and normalize_let_cont _env (e:let_cont_expr) : core_exp =
 
   | Recursive _handlers -> failwith "Unimplemented_recursive"
 
-and normalize_apply _env _callee _continuation _exn_continuation _apply_args _call_kind
+and normalize_apply _env callee continuation exn_continuation apply_args call_kind
   : core_exp =
-  failwith "Unimplemented_normalize_apply"
+  match callee with
+  | Named (Static_consts [Code code]) ->
+    let slot_bound, slot_body =
+      Core_function_params_and_body.pattern_match
+        (Core_code.params_and_body code) ~f:(fun bff t -> bff, t)
+    in
+    let renaming = Renaming.empty
+    in
+    let renaming =
+      (match continuation with
+      | Apply_expr.Result_continuation.Return continuation ->
+          Renaming.add_continuation renaming
+            (Bound_for_function.return_continuation slot_bound)
+            continuation
+      | _ -> renaming)
+    in
+    let renaming =
+      Renaming.add_continuation renaming
+        (Bound_for_function.exn_continuation slot_bound)
+        exn_continuation
+    in
+    let exp =
+      apply_renaming slot_body renaming
+    in
+    subst_params (Bound_for_function.params slot_bound) exp
+      (List.map (normalize (Env.create ())) apply_args)
+  | _ ->
+    Apply {callee;continuation;
+           exn_continuation;apply_args;call_kind}
 
 and normalize_apply_cont env k args : core_exp =
   (* [ApplyCont]
@@ -1011,7 +1057,7 @@ and subst_my_closure_body
   | Invalid _ -> e
 
 and subst_my_closure_body_named
-    (_my_closure : Variable.t) (param : Bound_for_function.t)
+    (_my_closure : Variable.t) (_param : Bound_for_function.t)
     ({function_decls=_;value_slots;alloc_mode=_}: set_of_closures) (e : named)
   : core_exp =
   match e with
@@ -1022,29 +1068,31 @@ and subst_my_closure_body_named
        let fun_decls = clo.function_decls.in_order
        in
        (match Function_slot.Lmap.get_singleton fun_decls with
-        | Some (_, Exp (Named (Static_consts [Code code]))) ->
-          let slot_bound, slot_body =
-            Core_function_params_and_body.pattern_match
-              (Core_code.params_and_body code) ~f:(fun bff t -> bff, t)
-          in
-          let renaming = Renaming.empty
-          in
-          let renaming =
-            Renaming.add_continuation renaming
-              (Bound_for_function.return_continuation slot_bound)
-              (Bound_for_function.return_continuation param)
-          in
-          let renaming =
-            Renaming.add_continuation renaming
-              (Bound_for_function.exn_continuation slot_bound)
-              (Bound_for_function.exn_continuation param)
-          in
-          let renaming =
-            Renaming.add_variable renaming
-              (Bound_for_function.my_closure slot_bound)
-              (Bound_for_function.my_closure param)
-          in
-          apply_renaming slot_body renaming
+        | Some (_, Exp e) -> e
+          (* | Some (_, Exp (Named (Static_consts [Code code]))) -> *)
+          (* TODO: Rename my_closure *)
+          (* let slot_bound, slot_body =
+           *   Core_function_params_and_body.pattern_match
+           *     (Core_code.params_and_body code) ~f:(fun bff t -> bff, t)
+           * in
+           * let renaming = Renaming.empty
+           * in
+           * let renaming =
+           *   Renaming.add_continuation renaming
+           *     (Bound_for_function.return_continuation slot_bound)
+           *     (Bound_for_function.return_continuation param)
+           * in
+           * let renaming =
+           *   Renaming.add_continuation renaming
+           *     (Bound_for_function.exn_continuation slot_bound)
+           *     (Bound_for_function.exn_continuation param)
+           * in
+           * let renaming =
+           *   Renaming.add_variable renaming
+           *     (Bound_for_function.my_closure slot_bound)
+           *     (Bound_for_function.my_closure param)
+           * in
+           * apply_renaming slot_body renaming *)
         | _ -> Named e)
      | _ -> Named e)
   | _ -> Named e
