@@ -973,7 +973,6 @@ and normalize_set_of_closures env {function_decls; value_slots; alloc_mode}
       (fun x ->
          match x with
          | Exp (Named (Static_consts [Code code]))->
-           _std_print (Named (Static_consts [Code code]));
            let params_and_body =
              subst_my_closure
                code
@@ -1047,7 +1046,7 @@ and subst_my_closure_body_named
        let fun_decls = clo.function_decls.in_order
        in
        (match Function_slot.Lmap.get_singleton fun_decls with
-        (* TODO: Rename my_closure *)
+        (* TODO: Rename my_closure? *)
         | Some (_, Exp e) -> e
         | _ -> Named e)
      | _ -> Named e)
