@@ -77,10 +77,9 @@ and static_consts_to_core (e : Flambda.static_const_group) :
 and static_const_or_code_to_core (e : Flambda.static_const_or_code) :
   Flambda2_core.static_const_or_code =
   match e with
-  | Code e -> Code (function_params_and_body_to_code0
-                      (Code0.code_metadata e)
-                      (Code0.params_and_body e)
-                      (Code0.free_names_of_params_and_body e))
+  | Code e -> Code
+                (Code0.params_and_body e |>
+                 function_params_and_body_to_core)
   | Deleted_code -> Deleted_code
   | Static_const t -> Static_const (static_const_to_core t)
 
@@ -109,13 +108,6 @@ and field_of_static_block_to_core (e : Field_of_static_block.t) : core_exp =
   | Tagged_immediate e -> tagged_immediate_to_core e
   | Dynamically_computed (var, _) ->
     Named (Simple (Simple.var var))
-
-and function_params_and_body_to_code0 metadata (e : Flambda.function_params_and_body) free
-  : Flambda2_core.function_params_and_body Code0.t =
-  Core_code.create_with_metadata
-    ~params_and_body:(function_params_and_body_to_core e)
-    ~free_names_of_params_and_body:free
-    ~code_metadata:metadata
 
 and function_params_and_body_to_core (t : Flambda.function_params_and_body) :
   Flambda2_core.function_params_and_body =

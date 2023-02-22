@@ -209,9 +209,7 @@ and equiv_static_consts env
      Static_const (Immutable_string _)|
      Code _ | Deleted_code), _ -> compare const1 const2 = 0
 
-and equiv_code env (code1 : Core_code.t) (code2 : Core_code.t) =
-  let code1 = Core_code.params_and_body code1 in
-  let code2 = Core_code.params_and_body code2 in
+and equiv_code env code1 code2 =
   Core_function_params_and_body.pattern_match_pair code1 code2
     ~f:(fun
          ~return_continuation:_

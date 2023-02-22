@@ -59,7 +59,7 @@ and function_params_and_body =
   (Bound_for_function.t, core_exp) Name_abstraction.t
 
 and static_const_or_code =
-  | Code of function_params_and_body Code0.t
+  | Code of function_params_and_body
   | Deleted_code
   | Static_const of static_const
 
@@ -251,8 +251,7 @@ and apply_renaming_static_const_group t renaming : static_const_group =
 and apply_renaming_static_const_or_code t renaming : static_const_or_code =
   match t with
   | Code code ->
-    Code (Code0.apply_renaming
-            ~apply_renaming_function_params_and_body code renaming)
+    Code (apply_renaming_function_params_and_body code renaming)
   | Deleted_code -> Deleted_code
   | Static_const const ->
     Static_const (apply_renaming_static_const const renaming)
@@ -465,8 +464,8 @@ and print_named ppf (t : named) =
     fprintf ppf "prim@ %a"
       print_prim prim;
   | Closure_expr (slot, clo) ->
-    fprintf ppf "(%s, %a)"
-      (Function_slot.name slot)
+    fprintf ppf "(%a, %a)"
+      Function_slot.print slot
       (fun ppf clo ->
          print_named ppf (Set_of_closures clo)) clo
   | Set_of_closures clo ->
@@ -555,7 +554,7 @@ and print_static_const_group ppf t =
 
 and print_static_const_or_code ppf t =
   match t with
-  | Code code -> print_function_params_and_body ppf (Code0.params_and_body code)
+  | Code code -> print_function_params_and_body ppf code
   | Deleted_code -> fprintf ppf "deleted_code"
   | Static_const const -> print_static_const ppf const
 
@@ -654,7 +653,7 @@ and print_param ppf (k : Bound_parameter.t) =
   fprintf ppf "%s" (Bound_parameter.var k |> Variable.name)
 
 and print_cont ppf (k : Bound_continuation.t) =
-  fprintf ppf "%s" (Continuation.name k)
+  fprintf ppf "%a" Continuation.print k
 
 and print_recursive_let_cont ppf (k : Bound_continuations.t)
       ({continuation_map; body} : recursive_let_expr) =
@@ -686,8 +685,9 @@ and print_apply ppf
   Format.pp_print_list ~pp_sep:Format.pp_print_space print ppf apply_args
 
 and print_apply_cont ppf ({k ; args} : apply_cont_expr) =
-  fprintf ppf "%a@ " print_cont k;
-  Format.pp_print_list ~pp_sep:Format.pp_print_space print ppf args
+  fprintf ppf "%a@ "
+    print_cont k;
+    Format.pp_print_list ~pp_sep:Format.pp_print_space print ppf args
 
 and print_switch ppf ({scrutinee; arms} : switch_expr) =
   fprintf ppf "switch %a :" print scrutinee;
@@ -785,7 +785,7 @@ and ids_for_export_static_const_group t =
 and ids_for_export_static_const_or_code t =
   match t with
   | Code code ->
-    Code0.ids_for_export ~ids_for_export_function_params_and_body code
+    ids_for_export_function_params_and_body code
   | Deleted_code -> Ids_for_export.empty
   | Static_const const -> ids_for_export_static_const const
 
@@ -1045,24 +1045,4 @@ module Core_function_params_and_body = struct
                 ~my_closure:(Bound_for_function.my_closure bound_for_function)
                 ~my_region:(Bound_for_function.my_region bound_for_function)
                 ~my_depth:(Bound_for_function.my_depth bound_for_function))
-end
-
-module Core_code = struct
-  type t = function_params_and_body Code0.t
-
-  let code_metadata = Code0.code_metadata
-
-  let params_and_body = Code0.params_and_body
-
-  module Metadata_view = struct
-    type nonrec 'a t = t
-
-    let metadata = code_metadata
-  end
-
-  include Code_metadata.Code_metadata_accessors [@inlined hint] (Metadata_view)
-
-  let create_with_metadata =
-    Code0.create_with_metadata
-      ~print_function_params_and_body:print_function_params_and_body
 end

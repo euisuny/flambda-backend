@@ -58,7 +58,7 @@ and function_params_and_body =
   (Bound_for_function.t, core_exp) Name_abstraction.t
 
 and static_const_or_code =
-  | Code of function_params_and_body Code0.t
+  | Code of function_params_and_body
   | Deleted_code
   | Static_const of static_const
 
@@ -215,19 +215,6 @@ module Core_function_params_and_body : sig
       body1:core_exp -> body2:core_exp ->
       my_closure:Variable.t -> my_region:Variable.t -> my_depth:Variable.t -> 'a)
     -> 'a
-end
-
-module Core_code : sig
-  type t = Core_function_params_and_body.t Code0.t
-
-  val code_metadata : 'a Code0.t -> Code_metadata.t
-
-  val params_and_body : 'a Code0.t -> 'a
-
-  val create_with_metadata :
-    params_and_body:function_params_and_body ->
-    free_names_of_params_and_body:Name_occurrences.t ->
-    code_metadata:Code_metadata.t -> t
 end
 
 module Core_continuation_map : sig

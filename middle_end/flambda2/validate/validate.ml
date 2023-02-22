@@ -118,7 +118,8 @@ and subst_pattern_set_of_closures_named
             | Simple_value simple ->
               let bound = Simple.var (Bound_var.var b) in
               if (Simple.equal simple bound)
-              then (Value_exp let_body, k)
+              then
+               (Value_exp let_body, k)
               else (Simple_value simple, k)
             | Value_exp exp ->
               (Value_exp
@@ -868,10 +869,10 @@ and normalize_let env let_abst body : core_exp =
       (* [LetL]
                       e1 ⟶ e1'
         -------------------------------------
-        let x = e1 in e2 ⟶ let x = e1' in e2 *)
+         let x = e1 in e2 ⟶ let x = e1' in e2 *)
       let e1 = normalize env e1 in
       (* [Let-β]
-        let x = v in e1 ⟶ e2 [x\v] *)
+         let x = v in e1 ⟶ e2 [x\v] *)
       subst_pattern ~bound:x ~let_body:e1 e2
 
 and normalize_let_cont _env (e:let_cont_expr) : core_exp =
@@ -896,7 +897,7 @@ and normalize_apply _env callee continuation exn_continuation apply_args call_ki
   | Named (Static_consts [Code code]) ->
     let slot_bound, slot_body =
       Core_function_params_and_body.pattern_match
-        (Core_code.params_and_body code) ~f:(fun bff t -> bff, t)
+        code  ~f:(fun bff t -> bff, t)
     in
     let renaming = Renaming.empty
     in
@@ -945,20 +946,12 @@ and normalize_static_const_or_code env (const_or_code : static_const_or_code)
   | Code code ->
     let (param, body) =
       Core_function_params_and_body.pattern_match
-        (Code0.params_and_body code) ~f:(fun x y -> x, y)
+        code  ~f:(fun x y -> x, y)
     in
     let params_and_body =
       Core_function_params_and_body.create param (normalize env body)
     in
-    let free_names_of_params_and_body = Code0.free_names_of_params_and_body code
-    in
-    let code_metadata = Core_code.code_metadata code
-    in
-    Code
-      (Core_code.create_with_metadata
-         ~params_and_body
-         ~free_names_of_params_and_body
-         ~code_metadata)
+    Code params_and_body
   | Static_const const -> Static_const (normalize_static_const env const)
   | Deleted_code -> Deleted_code
 
@@ -980,19 +973,13 @@ and normalize_set_of_closures env {function_decls; value_slots; alloc_mode}
       (fun x ->
          match x with
          | Exp (Named (Static_consts [Code code]))->
+           _std_print (Named (Static_consts [Code code]));
            let params_and_body =
-            subst_my_closure
-              (Code0.params_and_body code)
+             subst_my_closure
+               code
               {function_decls;value_slots;alloc_mode}
            in
-           let code =
-            Core_code.create_with_metadata
-              ~params_and_body
-              ~free_names_of_params_and_body:
-              (Code0.free_names_of_params_and_body code)
-              ~code_metadata:(Core_code.code_metadata code)
-           in
-           Exp (Named (Static_consts [Code code]))
+           Exp (Named (Static_consts [Code params_and_body]))
          | _ -> x)
       function_decls.in_order
   in
@@ -1011,53 +998,45 @@ and normalize_set_of_closures env {function_decls; value_slots; alloc_mode}
     When we substitute in a set of closures for primitives,
     (Here is where the `Projection` primitives occur),
     we eliminate the projection. *)
-(* reduce_projection e let_body arg *)
-
 and subst_my_closure
-    (fn_expr: function_params_and_body)
+    (fn_expr : function_params_and_body)
     (clo : set_of_closures) : function_params_and_body =
-  let param = Core_function_params_and_body.function_param fn_expr
+  let param, body =
+    Core_function_params_and_body.pattern_match ~f:(fun x y -> x, y) fn_expr
   in
-  let my_closure : Variable.t = Bound_for_function.my_closure param
-  in
-  let body : core_exp =
-    Core_function_params_and_body.function_body fn_expr |>
-    subst_my_closure_body ~my_closure ~param ~clo
+  let body = subst_my_closure_body clo body
   in
   Core_function_params_and_body.create param body
 
-and subst_my_closure_body
-    ~(my_closure : Variable.t) ~(param : Bound_for_function.t)
-    ~(clo: set_of_closures) (e : core_exp) : core_exp =
+and subst_my_closure_body (clo: set_of_closures) (e : core_exp) : core_exp =
   match e with
   | Named e ->
-    subst_my_closure_body_named my_closure param clo e
+    subst_my_closure_body_named clo e
   | Let {let_abst; expr_body} ->
      Core_let.pattern_match {let_abst; expr_body}
        ~f:(fun ~x ~e1 ~e2 ->
           Core_let.create
             ~x
-            ~e1:(subst_my_closure_body ~my_closure ~param ~clo e1)
-            ~e2:(subst_my_closure_body ~my_closure ~param ~clo e2))
+            ~e1:(subst_my_closure_body clo e1)
+            ~e2:(subst_my_closure_body clo e2))
   | Let_cont _ ->
       failwith "Unimplemented subst_pattern_set_of_closures: Let_cont"
   | Apply {callee; continuation; exn_continuation; apply_args; call_kind} ->
     Apply
-      {callee = subst_my_closure_body ~my_closure ~param ~clo callee;
+      {callee = subst_my_closure_body clo callee;
        continuation; exn_continuation;
        apply_args =
-         List.map (subst_my_closure_body ~my_closure ~param ~clo) apply_args;
+         List.map (subst_my_closure_body clo) apply_args;
        call_kind}
   | Apply_cont {k;args} ->
      Apply_cont
        { k = k;
-         args = List.map (subst_my_closure_body ~my_closure ~param ~clo) args }
+         args = List.map (subst_my_closure_body clo) args }
   | Switch _ ->
       failwith "Unimplemented subst_pattern_set_of_closures: Switch"
   | Invalid _ -> e
 
 and subst_my_closure_body_named
-    (_my_closure : Variable.t) (_param : Bound_for_function.t)
     ({function_decls=_;value_slots;alloc_mode=_}: set_of_closures) (e : named)
   : core_exp =
   match e with
@@ -1068,31 +1047,8 @@ and subst_my_closure_body_named
        let fun_decls = clo.function_decls.in_order
        in
        (match Function_slot.Lmap.get_singleton fun_decls with
+        (* TODO: Rename my_closure *)
         | Some (_, Exp e) -> e
-          (* | Some (_, Exp (Named (Static_consts [Code code]))) -> *)
-          (* TODO: Rename my_closure *)
-          (* let slot_bound, slot_body =
-           *   Core_function_params_and_body.pattern_match
-           *     (Core_code.params_and_body code) ~f:(fun bff t -> bff, t)
-           * in
-           * let renaming = Renaming.empty
-           * in
-           * let renaming =
-           *   Renaming.add_continuation renaming
-           *     (Bound_for_function.return_continuation slot_bound)
-           *     (Bound_for_function.return_continuation param)
-           * in
-           * let renaming =
-           *   Renaming.add_continuation renaming
-           *     (Bound_for_function.exn_continuation slot_bound)
-           *     (Bound_for_function.exn_continuation param)
-           * in
-           * let renaming =
-           *   Renaming.add_variable renaming
-           *     (Bound_for_function.my_closure slot_bound)
-           *     (Bound_for_function.my_closure param)
-           * in
-           * apply_renaming slot_body renaming *)
         | _ -> Named e)
      | _ -> Named e)
   | _ -> Named e
