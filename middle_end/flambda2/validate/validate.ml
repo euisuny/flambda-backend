@@ -170,6 +170,7 @@ and _simple_to_field_of_static_block (x : Simple.t) (dbg : Debuginfo.t)
 
 and subst_pattern_singleton
       ~(bound : Bound_var.t) ~(let_body : core_exp) (e : core_exp) : core_exp =
+  _std_print e;
   (match e with
    | Named (Simple s) ->
      let bound = Simple.var (Bound_var.var bound) in
@@ -182,10 +183,40 @@ and subst_pattern_singleton
           (fun x -> subst_pattern_singleton ~bound ~let_body x) list
      in
      Named (Static_consts [Static_const (Block (tag, mut, list))])
+   | Named (Set_of_closures {function_decls; value_slots; alloc_mode}) ->
+     let value_slots =
+       Value_slot.Map.map
+         (fun (value, k) ->
+            match value with
+            | Simple_value simple ->
+              let bound = Simple.var (Bound_var.var bound) in
+              if (Simple.equal simple bound)
+              then (Value_exp let_body, k)
+              else (Simple_value simple, k)
+            | Value_exp exp ->
+              (Value_exp (subst_pattern_singleton ~bound ~let_body exp), k)
+         ) value_slots
+     in
+     _std_print
+       (Named (Set_of_closures {function_decls; value_slots; alloc_mode}));
+     Named (Set_of_closures {function_decls; value_slots; alloc_mode})
+   | Named (Closure_expr (slot, {function_decls; value_slots; alloc_mode})) ->
+     let value_slots =
+       Value_slot.Map.map
+         (fun (value, k) ->
+            match value with
+            | Simple_value simple ->
+              let bound = Simple.var (Bound_var.var bound) in
+              if (Simple.equal simple bound)
+              then (Value_exp let_body, k)
+              else (Simple_value simple, k)
+            | Value_exp exp ->
+              (Value_exp (subst_pattern_singleton ~bound ~let_body exp), k)
+         ) value_slots
+     in
+     Named (Closure_expr (slot, {function_decls; value_slots; alloc_mode}))
    | Named (Static_consts _) ->
      failwith "Unimplemented_subst_static_consts"
-   | Named (Closure_expr _) -> e
-   | Named (Set_of_closures _) -> e
    | Named (Rec_info _) -> e
    | Let {let_abst; expr_body} ->
      Core_let.pattern_match {let_abst; expr_body}
@@ -194,8 +225,21 @@ and subst_pattern_singleton
             ~x
             ~e1:(subst_pattern_singleton ~bound ~let_body e1)
             ~e2:(subst_pattern_singleton ~bound ~let_body e2))
+   | Let_cont (Non_recursive {handler;body}) ->
+     Let_cont
+       (Non_recursive
+          { handler =
+              Core_continuation_handler.pattern_match handler
+                (fun param exp ->
+                   Core_continuation_handler.create
+                     param (subst_pattern_singleton ~bound ~let_body exp));
+            body =
+              Core_letcont_body.pattern_match body
+                (fun cont exp ->
+                   Core_letcont_body.create
+                     cont (subst_pattern_singleton ~bound ~let_body exp))})
    | Let_cont _ ->
-     failwith "Unimplemented_subst_letcont"
+     failwith "Unimplemented_subst_letcont recursive case"
    | Apply _ ->
      failwith "Unimplemented_subst_apply"
    | Apply_cont {k; args} ->
@@ -463,6 +507,7 @@ and subst_code_id (bound : Code_id.t) ~(let_body : core_exp) (e : named) : core_
     in
     Named (Static_consts [Static_const
       (Static_set_of_closures {function_decls; value_slots; alloc_mode})])
+  | Static_consts [Code _] -> Named e
   | Static_consts _ -> Named e
   | Rec_info _ ->
     failwith "Unimplemented_subst_code_id"
@@ -567,12 +612,6 @@ let rec subst_params
     failwith "Unimplemented_param_switch"
   | Invalid _ -> e
 
-(* [LetCode-β] *)
-and subst_code (c : function_params_and_body Code0.t) _let_abst =
-  let _metadata = Code0.code_metadata c in
-  let _params_and_body = Code0.params_and_body c in
-  failwith "Unimplemented"
-
 (* [LetCont-β] *)
 let rec subst_cont (cont_e1: core_exp) (k: Bound_continuation.t)
     (args: Bound_parameters.t) (cont_e2: core_exp) : core_exp =
@@ -614,7 +653,7 @@ let eval_prim_unary _env (v : P.unary_primitive) (_arg : core_exp) : named =
     | Opaque_identity _ | Int_arith (_,_) | Float_arith _
     | Num_conv _ | Unbox_number _ | Box_number (_, _)
     | Project_function_slot _ ) ->
-    failwith "Unimplemented_eval_prim_unary"
+    (Prim (Unary (v, _arg)))
 
 let simple_tagged_immediate ~(const : Simple.t) : Targetint_31_63.t option =
   let constant =
@@ -734,27 +773,31 @@ let rec normalize (env : Env.t) (e:core_exp) : core_exp =
     (* The recursive call for [apply_cont] is done for the arguments *)
     normalize_apply_cont env k args
   | Switch _ -> failwith "Unimplemented_normalize_switch"
+  | Named (Set_of_closures _)
+  | Named (Closure_expr _) -> e
   | Named e -> normalize_named env e
   | Invalid _ -> e
 
 and normalize_let env let_abst body : core_exp =
-  (* [LetCode]
-     let code f (x, ρ, res_k, exn_k) = e1 in e2 ⟶ e2 [f \ λ (x, ρ, res_k, exn_k). e1]
-
-      Dealing with only the non-recursive case now *)
+  let x, e1, e2 =
+    Core_let.pattern_match {let_abst; expr_body = body}
+      ~f:(fun ~x ~e1 ~e2 -> (x, e1, e2))
+  in
   match body with
-  | Named (Static_consts [Code code]) -> subst_code code let_abst
+  | Named (Static_consts [Code _]) ->
+    (* [LetCode-β]
+       let code f (x, ρ, res_k, exn_k) = e1 in e2 ⟶ e2 [f \ λ (x, ρ, res_k, exn_k). e1]
+
+       Dealing with only the non-recursive case now *)
+    subst_pattern ~bound:x ~let_body:e1 e2
   | _ ->
       (* [LetL]
                       e1 ⟶ e1'
         -------------------------------------
         let x = e1 in e2 ⟶ let x = e1' in e2 *)
-      let x, e1, e2 =
-        Core_let.pattern_match {let_abst; expr_body = body}
-          ~f:(fun ~x ~e1 ~e2 -> (x, normalize env e1, e2))
-      in
+      let e1 = normalize env e1 in
       (* [Let-β]
-        let x = v in e2 ⟶ e2 [x\v] *)
+        let x = v in e1 ⟶ e2 [x\v] *)
       subst_pattern ~bound:x ~let_body:e1 e2
 
 and normalize_let_cont _env (e:let_cont_expr) : core_exp =
@@ -780,7 +823,7 @@ and normalize_apply_cont env k args : core_exp =
   (* [ApplyCont]
             args ⟶ args'
       --------------------------
-        k args ⟶ k args'       *)
+          k args ⟶ k args'       *)
   Apply_cont {k = k; args = List.map (normalize env) args}
 
 and normalize_static_const env (const : static_const) : static_const =
@@ -819,11 +862,16 @@ and normalize_static_const_or_code env (const_or_code : static_const_or_code)
 and normalize_static_const_group env (consts : static_const_group) : core_exp =
   Named (Static_consts (List.map (normalize_static_const_or_code env) consts))
 
-and normalize_set_of_closures env {function_decls; value_slots ; alloc_mode }
+and normalize_set_of_closures env {function_decls; value_slots; alloc_mode}
   : set_of_closures =
   { function_decls =
-      { funs = Function_slot.Map.map (normalize_function_expr env) function_decls.funs;
-        in_order = Function_slot.Lmap.map (normalize_function_expr env) function_decls.in_order}
+      { funs =
+          Function_slot.Map.map (normalize_function_expr env)
+            function_decls.funs;
+        in_order =
+          Function_slot.Lmap.map (normalize_function_expr env)
+            function_decls.in_order;
+      }
   ; value_slots = value_slots
   ; alloc_mode = alloc_mode }
 
@@ -838,8 +886,7 @@ and normalize_named env (body : named) : core_exp =
   match body with
   | Simple _ (* A [Simple] is a register-sized value *)
   | Rec_info _ (* Information about inlining recursive calls, an integer variable *) ->
-    Named (body) (* TODO (LATER): For [Static_consts], we might want to implement η-rules for
-                    [Blocks]? *)
+    Named (body)
   | Closure_expr (slot, set) ->
     Named (Closure_expr (slot, normalize_set_of_closures env set))
   | Set_of_closures set -> (* Map of [Code_id]s and [Simple]s corresponding to

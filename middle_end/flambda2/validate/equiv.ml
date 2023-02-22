@@ -71,9 +71,13 @@ let subst_name env n =
     ~symbol:(fun s -> Name.symbol (subst_symbol env s))
 
 let subst_simple env s =
-  Simple.pattern_match s
-    ~const:(fun _ -> s)
-    ~name:(fun n ~coercion:_ -> Simple.name (subst_name env n))
+  match s with
+  | Simple_value s ->
+    Simple_value
+      (Simple.pattern_match s
+      ~const:(fun _ -> s)
+      ~name:(fun n ~coercion:_ -> Simple.name (subst_name env n)))
+  | Value_exp _ -> s
 
 let subst_code_id env code_id =
   Env.find_code_id env code_id |> Option.value ~default:code_id
@@ -274,11 +278,20 @@ and equiv_set_of_closures env
   (* Comparing value slots *)
   let value_slots_by_value set =
     Value_slot.Map.bindings (set.value_slots)
-    |> List.map (fun (var, (value, kind)) -> kind, subst_simple env value, var)
+    |> List.map (fun (var, (value, kind)) ->
+      kind, subst_simple env value, var)
   in
   let compare (kind1, value1, _var1) (kind2, value2, _var2) =
     let c = Flambda_kind.With_subkind.compare kind1 kind2 in
-    if c = 0 then Simple.compare value1 value2 else c
+    if c = 0 then
+      (match value1, value2 with
+       | Simple_value value1, Simple_value value2 ->
+         Simple.compare value1 value2
+       | Value_exp exp1, Value_exp exp2 ->
+         if equiv env exp1 exp2 then 0 else 1
+       | _, _ -> 1
+      )
+    else c
   in
   let value_slots_eq =
     zip_sort_fold (value_slots_by_value set1) (value_slots_by_value set2)

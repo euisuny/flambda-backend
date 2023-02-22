@@ -173,6 +173,9 @@ let () =
   (* simplify_term "let3.fl";
    * normalize_term "let3.fl"; *)
 
+  (* simplify_term "scope.fl";
+   * normalize_term "scope.fl"; *)
+
   (* [Closures] *)
 
   (* simplify_term "apply1.fl";
@@ -181,20 +184,28 @@ let () =
    * normalize_term "apply2.fl"; *)
 
   (* [Dead closures are eliminated] *)
-  simplify_term "apply5.fl";
-  normalize_term "apply5.fl";
-
-  (* ---------- NEXT --------- *)
+  (* simplify_term "apply5.fl";
+   * normalize_term "apply5.fl"; *)
 
   (* simplify_term "apply3.fl";
    * normalize_term "apply3.fl"; *)
+
   (* [Let bindings can be out-of-order] *)
 
   (* simplify_term "apply4.fl";
    *  normalize_term "apply4.fl"; *)
 
+  (* ---------- NEXT --------- *)
+
   (* [Application] *)
 
   (* simplify_term "apply.fl";
    * normalize_term "apply.fl"; *)
+
+  (* simplify_term "apply_orig.fl";
+   * normalize_term "apply_orig.fl"; *)
+
+  simplify_term "apply_noinline.fl";
+  normalize_term "apply_noinline.fl";
+
   ()
