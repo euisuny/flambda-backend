@@ -30,7 +30,10 @@
     Flambda2_terms
     -open
     Flambda2_simplify
- ))
+    -open
+    Flambda2_lattices
+    -open
+    Flambda2_ui))
  (ocamlopt_flags
   (:standard -O3))
  (libraries
