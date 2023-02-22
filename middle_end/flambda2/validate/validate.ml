@@ -92,8 +92,24 @@ and subst_pattern_set_of_closures_named
       List.map (subst_pattern_set_of_closures ~bound ~let_body) args
     in
     (Prim (Variadic (e, args)))
-  | Set_of_closures _ ->
-    (* NEXT *) e
+  | Set_of_closures {function_decls; value_slots; alloc_mode} ->
+    let value_slots =
+      List.fold_left (fun value_slots b ->
+        Value_slot.Map.map
+          (fun (value, k) ->
+            match value with
+            | Simple_value simple ->
+              let bound = Simple.var (Bound_var.var b) in
+              if (Simple.equal simple bound)
+              then (Value_exp let_body, k)
+              else (Simple_value simple, k)
+            | Value_exp exp ->
+              (Value_exp
+                 (subst_pattern ~bound:(Bound_pattern.set_of_closures bound)
+                    ~let_body exp), k)
+          ) value_slots) value_slots bound
+    in
+    Set_of_closures {function_decls; value_slots; alloc_mode}
   | Static_consts [Static_const (Block (tag, mut, list))] ->
     let list =
       List.map (subst_pattern_set_of_closures ~bound ~let_body) list in
@@ -102,8 +118,7 @@ and subst_pattern_set_of_closures_named
       failwith "Unimplemented subst_pattern_set_of_closures: Named Sc"
   | Rec_info _ ->
       failwith "Unimplemented subst_pattern_set_of_closures: Named Ri"
-  | _ ->
-    (* NEXT *) e
+  | _ -> (* NEXT *) e
 
 and subst_pattern_primitive
       ~(bound : Bound_var.t) ~(let_body : core_exp) (e : primitive) : core_exp =
@@ -170,7 +185,6 @@ and _simple_to_field_of_static_block (x : Simple.t) (dbg : Debuginfo.t)
 
 and subst_pattern_singleton
       ~(bound : Bound_var.t) ~(let_body : core_exp) (e : core_exp) : core_exp =
-  _std_print e;
   (match e with
    | Named (Simple s) ->
      let bound = Simple.var (Bound_var.var bound) in
@@ -180,7 +194,8 @@ and subst_pattern_singleton
    | Named (Static_consts [Static_const (Block (tag, mut, list))]) ->
       let list =
         List.map
-          (fun x -> subst_pattern_singleton ~bound ~let_body x) list
+          (fun x ->
+             subst_pattern_singleton ~bound ~let_body x) list
      in
      Named (Static_consts [Static_const (Block (tag, mut, list))])
    | Named (Set_of_closures {function_decls; value_slots; alloc_mode}) ->
@@ -197,8 +212,6 @@ and subst_pattern_singleton
               (Value_exp (subst_pattern_singleton ~bound ~let_body exp), k)
          ) value_slots
      in
-     _std_print
-       (Named (Set_of_closures {function_decls; value_slots; alloc_mode}));
      Named (Set_of_closures {function_decls; value_slots; alloc_mode})
    | Named (Closure_expr (slot, {function_decls; value_slots; alloc_mode})) ->
      let value_slots =
