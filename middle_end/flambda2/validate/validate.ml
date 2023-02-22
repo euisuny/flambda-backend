@@ -786,8 +786,6 @@ let rec normalize (env : Env.t) (e:core_exp) : core_exp =
     (* The recursive call for [apply_cont] is done for the arguments *)
     normalize_apply_cont env k args
   | Switch _ -> failwith "Unimplemented_normalize_switch"
-  | Named (Set_of_closures _)
-  | Named (Closure_expr _) -> e
   | Named e -> normalize_named env e
   | Invalid _ -> e
 
@@ -875,23 +873,50 @@ and normalize_static_const_or_code env (const_or_code : static_const_or_code)
 and normalize_static_const_group env (consts : static_const_group) : core_exp =
   Named (Static_consts (List.map (normalize_static_const_or_code env) consts))
 
+(* N.B. This normalization is rather inefficient; it goes through three passes of
+  the value and function expressions *)
 and normalize_set_of_closures env {function_decls; value_slots; alloc_mode}
   : set_of_closures =
+  let value_slots =
+    Value_slot.Map.map
+      (fun (val_expr, kind) -> (normalize_value_expr env val_expr, kind))
+      value_slots
+  in
+  (* substituting in value slots for [Project_value_slots] *)
+  let in_order =
+    Function_slot.Lmap.map
+      (fun x ->
+         match x with
+         | Exp (Named (Static_consts [Code code]))->
+           project_value_slots value_slots code
+         | _ -> x)
+      function_decls.in_order
+  in
+  (* normalize function slots *)
+  let in_order =
+    Function_slot.Lmap.map (normalize_function_expr env) in_order
+  in
   { function_decls =
       { funs =
-          Function_slot.Map.map (normalize_function_expr env)
-            function_decls.funs;
-        in_order =
-          Function_slot.Lmap.map (normalize_function_expr env)
-            function_decls.in_order;
-      }
+          Function_slot.Map.of_list (Function_slot.Lmap.bindings in_order);
+        in_order}
   ; value_slots = value_slots
   ; alloc_mode = alloc_mode }
+
+and project_value_slots
+    (_value_slots : (value_expr * Flambda_kind.With_subkind.t) Value_slot.Map.t)
+    (_fn_expr: function_params_and_body Code0.t) =
+  failwith "Unimplemented"
 
 and normalize_function_expr env (fun_expr : function_expr) : function_expr =
   match fun_expr with
   | Id _ -> fun_expr
   | Exp exp -> Exp (normalize env exp)
+
+and normalize_value_expr env (val_expr : value_expr) : value_expr =
+  match val_expr with
+  | Simple_value _ -> val_expr
+  | Value_exp exp -> Value_exp (normalize env exp)
 
 (* This is a "normalization" of [named] expression, in quotations because there
   is some simple evaluation that occurs for primitive arithmetic expressions *)
