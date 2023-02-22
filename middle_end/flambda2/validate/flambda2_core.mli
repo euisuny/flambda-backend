@@ -32,7 +32,7 @@ and named =
 
 and set_of_closures =
   { function_decls : function_declarations;
-    value_slots : (Simple.t * Flambda_kind.With_subkind.t) Value_slot.Map.t;
+    value_slots : (value_expr * Flambda_kind.With_subkind.t) Value_slot.Map.t;
     alloc_mode : Alloc_mode.For_allocations.t }
 
 and function_declarations =
@@ -42,6 +42,10 @@ and function_declarations =
 and function_expr =
   | Id of Code_id.t
   | Exp of core_exp
+
+and value_expr =
+  | Simple_value of Simple.t
+  | Value_exp of core_exp
 
 and primitive =
   | Nullary of P.nullary_primitive

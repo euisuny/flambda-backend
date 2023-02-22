@@ -33,12 +33,16 @@ and named =
 
 and set_of_closures =
   { function_decls : function_declarations;
-    value_slots : (Simple.t * Flambda_kind.With_subkind.t) Value_slot.Map.t;
+    value_slots : (value_expr * Flambda_kind.With_subkind.t) Value_slot.Map.t;
     alloc_mode : Alloc_mode.For_allocations.t }
 
 and function_declarations =
   { funs : function_expr Function_slot.Map.t;
     in_order : function_expr Function_slot.Lmap.t}
+
+and value_expr =
+  | Simple_value of Simple.t
+  | Value_exp of core_exp
 
 and function_expr =
   | Id of Code_id.t
@@ -188,12 +192,19 @@ and apply_renaming_set_of_closures
   let changed = ref false in
   let value_slots' =
     Value_slot.Map.filter_map
-      (fun var (simple, kind) ->
+      (fun var (expr, kind) ->
          if Renaming.value_slot_is_used renaming var
          then (
-           let simple' = Simple.apply_renaming simple renaming in
-           if not (simple == simple') then changed := true;
-           Some (simple', kind))
+           match expr with
+           | Simple_value simple ->
+              let simple' = Simple.apply_renaming simple renaming in
+              if not (simple == simple') then changed := true;
+              Some (Simple_value simple', kind)
+           | Value_exp exp ->
+             let simple' = apply_renaming exp renaming in
+             if not (exp == simple') then changed := true;
+             Some (Value_exp simple', kind)
+         )
          else (
            changed := true;
            None))
@@ -485,9 +496,15 @@ and print_set_of_closures ppf
       print_function_declaration function_decls
       (Value_slot.Map.print print_value_slot) value_slots
 
-and print_value_slot ppf (simple, kind) =
-  Format.fprintf ppf "@[(%a @<1>\u{2237} %a)@]" Simple.print simple
+and print_value_slot ppf (value, kind) =
+  Format.fprintf ppf "@[(%a @<1>\u{2237} %a)@]"
+    print_value_expr value
     Flambda_kind.With_subkind.print kind
+
+and print_value_expr ppf value =
+  match value with
+  | Simple_value value -> Simple.print ppf value
+  | Value_exp exp -> print ppf exp
 
 and print_function_declaration ppf { funs = _ ; in_order } =
   Format.fprintf ppf "(%a)"
@@ -538,7 +555,7 @@ and print_static_const_group ppf t =
 
 and print_static_const_or_code ppf t =
   match t with
-  | Code code -> Code0.print ~print_function_params_and_body ppf code
+  | Code code -> print_function_params_and_body ppf (Code0.params_and_body code)
   | Deleted_code -> fprintf ppf "deleted_code"
   | Static_const const -> print_static_const ppf const
 
@@ -598,7 +615,9 @@ and print_function_params_and_body ppf (t:function_params_and_body) =
     (module Bound_for_function) t
     ~apply_renaming_to_term:apply_renaming
     ~f:(fun bff expr ->
-      fprintf ppf "ret: %a; exn: %a; %a"
+      fprintf ppf "λ params: %a, my_closure: %a, ret: %a, exn: %a. %a"
+        Bound_parameters.print (Bound_for_function.params bff)
+        Variable.print (Bound_for_function.my_closure bff)
         Continuation.print (Bound_for_function.return_continuation bff)
         Continuation.print (Bound_for_function.exn_continuation bff)
         print expr)
@@ -724,8 +743,11 @@ and ids_for_export_set_of_closures
   in
   Ids_for_export.union
     (Value_slot.Map.fold
-       (fun _value_slot (simple, _kind) ids ->
-          Ids_for_export.add_simple ids simple)
+       (fun _value_slot (value, _kind) ids ->
+          match value with
+          | Simple_value simple -> Ids_for_export.add_simple ids simple
+          | Value_exp exp -> Ids_for_export.union ids (ids_for_export exp)
+       )
        value_slots function_decls_ids)
     (Alloc_mode.For_allocations.ids_for_export alloc_mode)
 
@@ -960,7 +982,7 @@ module Core_continuation_handler = struct
         f params body1 body2)
 end
 
-module Core_letcont_body = struct
+module  Core_letcont_body = struct
   module A = Name_abstraction.Make (Bound_continuation) (T0)
   type t = (Bound_continuation.t, core_exp) Name_abstraction.t
   let create = A.create
