@@ -40,7 +40,7 @@ let rec subst_pattern ~(bound : Bound_pattern.t) ~(let_body : core_exp) (e : cor
 and subst_pattern_set_of_closures
       ~(bound : Bound_var.t list) ~(let_body : core_exp) (e : core_exp) : core_exp =
   match e with
-  | Named e -> Named (subst_pattern_set_of_closures_named ~bound ~let_body e)
+  | Named e -> subst_pattern_set_of_closures_named ~bound ~let_body e
   | Let {let_abst; expr_body} ->
      Core_let.pattern_match {let_abst; expr_body}
        ~f:(fun ~x ~e1 ~e2 ->
@@ -50,8 +50,13 @@ and subst_pattern_set_of_closures
             ~e2:(subst_pattern_set_of_closures ~bound ~let_body e2))
   | Let_cont _ ->
       failwith "Unimplemented subst_pattern_set_of_closures: Let_cont"
-  | Apply _ ->
-      failwith "Unimplemented subst_pattern_set_of_closures: Apply"
+  | Apply {callee; continuation; exn_continuation; apply_args; call_kind} ->
+    Apply
+      {callee = subst_pattern_set_of_closures ~bound ~let_body callee;
+       continuation; exn_continuation;
+       apply_args =
+         List.map (subst_pattern_set_of_closures ~bound ~let_body) apply_args;
+       call_kind}
   | Apply_cont {k;args} ->
      Apply_cont
        { k = k;
@@ -61,7 +66,7 @@ and subst_pattern_set_of_closures
   | Invalid _ -> e
 
 and subst_pattern_set_of_closures_named
-      ~(bound : Bound_var.t list) ~(let_body : core_exp) (e : named) : named =
+      ~(bound : Bound_var.t list) ~(let_body : core_exp) (e : named) : core_exp =
   match e with
   | Simple v ->
     let opt_var =
@@ -78,20 +83,32 @@ and subst_pattern_set_of_closures_named
           in
           let (slot, _) = List.nth decls i
           in
-          Closure_expr (slot, soc)
+          Named (Closure_expr (slot, soc))
        | _ -> failwith "Expected set of closures")
-    | _ -> e)
+    | _ -> Named e)
+  | Prim (Unary (e, arg)) ->
+    let arg = subst_pattern_set_of_closures ~bound ~let_body arg
+    in
+    Named (Prim (Unary (e, arg)))
   | Prim (Binary (e, arg1, arg2)) ->
     let arg1 = subst_pattern_set_of_closures ~bound ~let_body arg1
     in
     let arg2 = subst_pattern_set_of_closures ~bound ~let_body arg2
     in
-    (Prim (Binary (e, arg1, arg2)))
+    Named (Prim (Binary (e, arg1, arg2)))
+  | Prim (Ternary (e, arg1, arg2, arg3)) ->
+    let arg1 = subst_pattern_set_of_closures ~bound ~let_body arg1
+    in
+    let arg2 = subst_pattern_set_of_closures ~bound ~let_body arg2
+    in
+    let arg3 = subst_pattern_set_of_closures ~bound ~let_body arg3
+    in
+    Named (Prim (Ternary (e, arg1, arg2, arg3)))
   | Prim (Variadic (e, args)) ->
     let args =
       List.map (subst_pattern_set_of_closures ~bound ~let_body) args
     in
-    (Prim (Variadic (e, args)))
+    Named (Prim (Variadic (e, args)))
   | Set_of_closures {function_decls; value_slots; alloc_mode} ->
     let value_slots =
       List.fold_left (fun value_slots b ->
@@ -109,16 +126,36 @@ and subst_pattern_set_of_closures_named
                     ~let_body exp), k)
           ) value_slots) value_slots bound
     in
-    Set_of_closures {function_decls; value_slots; alloc_mode}
+    Named (Set_of_closures {function_decls; value_slots; alloc_mode})
+  | Closure_expr
+      (slot, {function_decls; value_slots; alloc_mode}) ->
+    let value_slots =
+      List.fold_left (fun value_slots b ->
+        Value_slot.Map.map
+          (fun (value, k) ->
+             match value with
+             | Simple_value simple ->
+               let bound = Simple.var (Bound_var.var b) in
+               if (Simple.equal simple bound)
+               then (Value_exp let_body, k)
+               else (Simple_value simple, k)
+             | Value_exp exp ->
+               (Value_exp
+                  (subst_pattern ~bound:(Bound_pattern.set_of_closures bound)
+                     ~let_body exp), k)
+          ) value_slots) value_slots bound
+    in
+    Named (Closure_expr (slot, {function_decls; value_slots; alloc_mode}))
   | Static_consts [Static_const (Block (tag, mut, list))] ->
     let list =
       List.map (subst_pattern_set_of_closures ~bound ~let_body) list in
-    Static_consts [Static_const (Block (tag, mut, list))]
+    Named (Static_consts [Static_const (Block (tag, mut, list))])
   | Static_consts _ ->
       failwith "Unimplemented subst_pattern_set_of_closures: Named Sc"
   | Rec_info _ ->
-      failwith "Unimplemented subst_pattern_set_of_closures: Named Ri"
-  | _ -> (* NEXT *) e
+    failwith "Unimplemented subst_pattern_set_of_closures: Named Ri"
+  | _ ->
+    failwith "Unimplemenetd subst_pattern_set_of_closures_named"
 
 and subst_pattern_primitive
       ~(bound : Bound_var.t) ~(let_body : core_exp) (e : primitive) : core_exp =
@@ -253,8 +290,13 @@ and subst_pattern_singleton
                      cont (subst_pattern_singleton ~bound ~let_body exp))})
    | Let_cont _ ->
      failwith "Unimplemented_subst_letcont recursive case"
-   | Apply _ ->
-     failwith "Unimplemented_subst_apply"
+   | Apply {callee; continuation; exn_continuation; apply_args; call_kind} ->
+     Apply
+       {callee = subst_pattern_singleton ~bound ~let_body callee;
+        continuation; exn_continuation;
+        apply_args =
+          List.map (subst_pattern_singleton ~bound ~let_body) apply_args;
+        call_kind}
    | Apply_cont {k; args} ->
      Apply_cont
        { k = k;
@@ -640,8 +682,13 @@ let rec subst_cont (cont_e1: core_exp) (k: Bound_continuation.t)
     Core_let.create ~x:bound ~e1:e ~e2:body
   | Let_cont _ ->
     failwith "Unimplemented_letcont"
-  | Apply _ ->
-    failwith "Unimplemented_apply"
+  | Apply {callee; continuation; exn_continuation; apply_args; call_kind} ->
+    Apply
+      {callee = subst_cont callee k args cont_e2;
+       continuation; exn_continuation;
+       apply_args =
+         List.map (fun e1 -> subst_cont e1 k args cont_e2) apply_args;
+       call_kind}
   | Apply_cont {k = cont; args = concrete_args} ->
     if Continuation.equal cont k
     then subst_params args cont_e2 concrete_args
@@ -656,8 +703,7 @@ let eval_prim_nullary (_v : P.nullary_primitive) : named =
 
 let eval_prim_unary _env (v : P.unary_primitive) (_arg : core_exp) : named =
   match v with
-  | Project_value_slot _ ->
-    failwith "Unimplemented_eval_prim_unary_project_value_slot"
+  | Project_value_slot _ -> (Prim (Unary (v, _arg))) (* TODO *)
   | (Get_tag | Array_length | Int_as_pointer | Boolean_not
     | Reinterpret_int64_as_float | Untag_immediate | Tag_immediate
     | Is_boxed_float | Is_flat_float_array | Begin_try_region
@@ -781,7 +827,6 @@ let rec normalize (env : Env.t) (e:core_exp) : core_exp =
     |> normalize env
   | Apply {callee; continuation; exn_continuation; apply_args; call_kind} ->
     normalize_apply env callee continuation exn_continuation apply_args call_kind
-    |> normalize env
   | Apply_cont {k ; args} ->
     (* The recursive call for [apply_cont] is done for the arguments *)
     normalize_apply_cont env k args
@@ -827,8 +872,9 @@ and normalize_let_cont _env (e:let_cont_expr) : core_exp =
 
   | Recursive _handlers -> failwith "Unimplemented_recursive"
 
-and normalize_apply _env _callee _continuation _exn_continuation _args _call_kind : core_exp =
-  failwith "Unimplemented_apply"
+and normalize_apply _env _callee _continuation _exn_continuation _apply_args _call_kind
+  : core_exp =
+  failwith "Unimplemented_normalize_apply"
 
 and normalize_apply_cont env k args : core_exp =
   (* [ApplyCont]
@@ -888,7 +934,19 @@ and normalize_set_of_closures env {function_decls; value_slots; alloc_mode}
       (fun x ->
          match x with
          | Exp (Named (Static_consts [Code code]))->
-           project_value_slots value_slots code
+           let params_and_body =
+            subst_my_closure
+              (Code0.params_and_body code)
+              {function_decls;value_slots;alloc_mode}
+           in
+           let code =
+            Core_code.create_with_metadata
+              ~params_and_body
+              ~free_names_of_params_and_body:
+              (Code0.free_names_of_params_and_body code)
+              ~code_metadata:(Core_code.code_metadata code)
+           in
+           Exp (Named (Static_consts [Code code]))
          | _ -> x)
       function_decls.in_order
   in
@@ -900,13 +958,96 @@ and normalize_set_of_closures env {function_decls; value_slots; alloc_mode}
       { funs =
           Function_slot.Map.of_list (Function_slot.Lmap.bindings in_order);
         in_order}
-  ; value_slots = value_slots
+  ; value_slots = Value_slot.Map.empty
   ; alloc_mode = alloc_mode }
 
-and project_value_slots
-    (_value_slots : (value_expr * Flambda_kind.With_subkind.t) Value_slot.Map.t)
-    (_fn_expr: function_params_and_body Code0.t) =
-  failwith "Unimplemented"
+(* N.B. [PROJECTION REDUCTION]
+    When we substitute in a set of closures for primitives,
+    (Here is where the `Projection` primitives occur),
+    we eliminate the projection. *)
+(* reduce_projection e let_body arg *)
+
+and subst_my_closure
+    (fn_expr: function_params_and_body)
+    (clo : set_of_closures) : function_params_and_body =
+  let param = Core_function_params_and_body.function_param fn_expr
+  in
+  let my_closure : Variable.t = Bound_for_function.my_closure param
+  in
+  let body : core_exp =
+    Core_function_params_and_body.function_body fn_expr |>
+    subst_my_closure_body ~my_closure ~param ~clo
+  in
+  Core_function_params_and_body.create param body
+
+and subst_my_closure_body
+    ~(my_closure : Variable.t) ~(param : Bound_for_function.t)
+    ~(clo: set_of_closures) (e : core_exp) : core_exp =
+  match e with
+  | Named e ->
+    subst_my_closure_body_named my_closure param clo e
+  | Let {let_abst; expr_body} ->
+     Core_let.pattern_match {let_abst; expr_body}
+       ~f:(fun ~x ~e1 ~e2 ->
+          Core_let.create
+            ~x
+            ~e1:(subst_my_closure_body ~my_closure ~param ~clo e1)
+            ~e2:(subst_my_closure_body ~my_closure ~param ~clo e2))
+  | Let_cont _ ->
+      failwith "Unimplemented subst_pattern_set_of_closures: Let_cont"
+  | Apply {callee; continuation; exn_continuation; apply_args; call_kind} ->
+    Apply
+      {callee = subst_my_closure_body ~my_closure ~param ~clo callee;
+       continuation; exn_continuation;
+       apply_args =
+         List.map (subst_my_closure_body ~my_closure ~param ~clo) apply_args;
+       call_kind}
+  | Apply_cont {k;args} ->
+     Apply_cont
+       { k = k;
+         args = List.map (subst_my_closure_body ~my_closure ~param ~clo) args }
+  | Switch _ ->
+      failwith "Unimplemented subst_pattern_set_of_closures: Switch"
+  | Invalid _ -> e
+
+and subst_my_closure_body_named
+    (_my_closure : Variable.t) (param : Bound_for_function.t)
+    ({function_decls=_;value_slots;alloc_mode=_}: set_of_closures) (e : named)
+  : core_exp =
+  match e with
+  | Prim
+      (Unary (Project_value_slot slot, _arg)) ->
+    (match Value_slot.Map.find_opt slot.value_slot value_slots with
+     | Some (Value_exp (Named (Set_of_closures clo)), _) ->
+       let fun_decls = clo.function_decls.in_order
+       in
+       (match Function_slot.Lmap.get_singleton fun_decls with
+        | Some (_, Exp (Named (Static_consts [Code code]))) ->
+          let slot_bound, slot_body =
+            Core_function_params_and_body.pattern_match
+              (Core_code.params_and_body code) ~f:(fun bff t -> bff, t)
+          in
+          let renaming = Renaming.empty
+          in
+          let renaming =
+            Renaming.add_continuation renaming
+              (Bound_for_function.return_continuation slot_bound)
+              (Bound_for_function.return_continuation param)
+          in
+          let renaming =
+            Renaming.add_continuation renaming
+              (Bound_for_function.exn_continuation slot_bound)
+              (Bound_for_function.exn_continuation param)
+          in
+          let renaming =
+            Renaming.add_variable renaming
+              (Bound_for_function.my_closure slot_bound)
+              (Bound_for_function.my_closure param)
+          in
+          apply_renaming slot_body renaming
+        | _ -> Named e)
+     | _ -> Named e)
+  | _ -> Named e
 
 and normalize_function_expr env (fun_expr : function_expr) : function_expr =
   match fun_expr with

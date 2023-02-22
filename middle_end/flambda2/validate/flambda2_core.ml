@@ -520,22 +520,22 @@ and print_prim ppf (t : primitive) =
   | Nullary prim ->
     print_nullary_prim ppf prim
   | Unary (prim, arg) ->
-    fprintf ppf "(%a, %a)"
+    fprintf ppf "(unary %a@ %a)"
      P.print_unary_primitive prim
      print arg
   | Binary (prim, arg1, arg2) ->
-    fprintf ppf "(%a, %a, %a)"
+    fprintf ppf "(binary@ %a@ %a@ %a)"
     P.print_binary_primitive prim
     print arg1
     print arg2
   | Ternary (prim, arg1, arg2, arg3) ->
-    fprintf ppf "(%a, %a, %a, %a)"
+    fprintf ppf "(ternary@ %a@ %a@ %a@ %a)"
     P.print_ternary_primitive prim
     print arg1
     print arg2
     print arg3
   | Variadic (prim, args) ->
-    fprintf ppf "(%a, %a)"
+    fprintf ppf "(variadic@ %a@ %a)"
     P.print_variadic_primitive prim
     (Format.pp_print_list ~pp_sep: Format.pp_print_space print) args
 
