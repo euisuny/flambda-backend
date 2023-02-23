@@ -877,7 +877,7 @@ let rec expr env (e : Fexpr.expr) : Flambda.Expr.t =
         ~args:((List.map (simple env)) args)
         ~call_kind Debuginfo.none ~inlined ~inlining_state ~probe_name:None
         ~position:Normal ~relative_history:Inlining_history.Relative.empty
-        ~region:(Variable.create "FIXME")
+        ~region:(find_var env { Fexpr.txt = "my_region"; loc = Loc_unknown })
       (* CR mshinwell: fix region support *)
     in
     Flambda.Expr.create_apply apply
