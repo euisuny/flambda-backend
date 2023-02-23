@@ -48,8 +48,22 @@ and subst_pattern_set_of_closures
             ~x
             ~e1:(subst_pattern_set_of_closures ~bound ~let_body e1)
             ~e2:(subst_pattern_set_of_closures ~bound ~let_body e2))
-  | Let_cont _ ->
-      failwith "Unimplemented subst_pattern_set_of_closures: Let_cont"
+  | Let_cont (Non_recursive {handler; body}) ->
+    let handler =
+      Core_continuation_handler.pattern_match handler
+        (fun param exp ->
+           Core_continuation_handler.create param
+             (subst_pattern_set_of_closures ~bound ~let_body exp))
+    in
+    let body =
+      Core_letcont_body.pattern_match body
+        (fun cont exp ->
+           Core_letcont_body.create cont
+             (subst_pattern_set_of_closures ~bound ~let_body exp))
+    in
+    Let_cont (Non_recursive {handler; body})
+  | Let_cont (Recursive _) ->
+      failwith "Unimplemented subst_pattern_set_of_closures: Let_cont recursive case"
   | Apply {callee; continuation; exn_continuation; apply_args; call_kind} ->
     Apply
       {callee = subst_pattern_set_of_closures ~bound ~let_body callee;
@@ -281,8 +295,10 @@ and subst_pattern_singleton
      Apply_cont
        { k = k;
          args = List.map (subst_pattern_singleton ~bound ~let_body) args }
-   | Switch _ ->
-     failwith "Unimplemented_subst_switch"
+   | Switch {scrutinee; arms} ->
+     Switch
+       { scrutinee = subst_pattern_singleton ~bound ~let_body scrutinee;
+         arms = Targetint_31_63.Map.map (subst_pattern_singleton ~bound ~let_body) arms;}
    | Invalid _ -> e)
 
 and subst_block_like
@@ -713,10 +729,28 @@ let rec subst_params
       {k = k;
        args = List.map (fun x ->
          subst_params params x args) args'}
-  | Let_cont _ ->
-    failwith "Unimplemented_param_letcont"
-  | Apply _ ->
-    failwith "Unimplemented_param_apply"
+  | Let_cont (Non_recursive {handler; body}) ->
+    Let_cont
+      (Non_recursive
+         { handler =
+             Core_continuation_handler.pattern_match handler
+               (fun param exp ->
+                  Core_continuation_handler.create
+                    param (subst_params params exp args));
+           body =
+             Core_letcont_body.pattern_match body
+               (fun cont exp ->
+                  Core_letcont_body.create
+                    cont (subst_params params exp args))})
+  | Let_cont (Recursive _) ->
+    failwith "Unimplemented_param_letcont recursive"
+  | Apply {callee; continuation; exn_continuation; apply_args; call_kind} ->
+    Apply
+      {callee = subst_params params callee args;
+       continuation; exn_continuation;
+       apply_args =
+         List.map (fun exp -> subst_params params exp args) apply_args;
+       call_kind}
   | Switch _ ->
     failwith "Unimplemented_param_switch"
   | Invalid _ -> e
@@ -747,9 +781,12 @@ let rec subst_cont (cont_e1: core_exp) (k: Bound_continuation.t)
     if Continuation.equal cont k
     then subst_params args cont_e2 concrete_args
     else
-      failwith "Unimplemented_apply_cont"
-  | Switch _ ->
-    failwith "Unimplemented_subst_cont"
+      Apply_cont
+        {k = cont; args = List.map (fun x -> subst_cont x k args cont_e2) concrete_args}
+  | Switch {scrutinee; arms} ->
+    Switch
+      {scrutinee = subst_cont scrutinee k args cont_e2;
+       arms = Targetint_31_63.Map.map (fun x -> subst_cont x k args cont_e2) arms;}
   | Invalid _ -> cont_e1
 
 let eval_prim_nullary (_v : P.nullary_primitive) : named =
@@ -758,8 +795,13 @@ let eval_prim_nullary (_v : P.nullary_primitive) : named =
 let eval_prim_unary _env (v : P.unary_primitive) (_arg : core_exp) : named =
   match v with
   | Project_value_slot _ -> (Prim (Unary (v, _arg))) (* TODO *)
+  | Untag_immediate ->
+    (match _arg with
+     | Named (Prim (Unary (Tag_immediate, Named (Prim (Unary (Is_int a, e)))))) ->
+       (Prim (Unary (Is_int a, e)))
+     | _ -> (Prim (Unary (v, _arg))))
   | (Get_tag | Array_length | Int_as_pointer | Boolean_not
-    | Reinterpret_int64_as_float | Untag_immediate | Tag_immediate
+    | Reinterpret_int64_as_float | Tag_immediate
     | Is_boxed_float | Is_flat_float_array | Begin_try_region
     | End_region | Obj_dup | Duplicate_block _ | Duplicate_array _
     | Is_int _ | Bigarray_length _ | String_length _
@@ -884,7 +926,8 @@ let rec normalize (env : Env.t) (e:core_exp) : core_exp =
   | Apply_cont {k ; args} ->
     (* The recursive call for [apply_cont] is done for the arguments *)
     normalize_apply_cont env k args
-  | Switch _ -> failwith "Unimplemented_normalize_switch"
+  | Switch {scrutinee; arms} -> (* TODO *)
+    Switch {scrutinee = normalize env scrutinee; arms}
   | Named e -> normalize_named env e
   | Invalid _ -> e
 
@@ -934,26 +977,15 @@ and normalize_let env let_abst body : core_exp =
 
 (* FIXME : This is buggy *)
 and normalize_let_static ~bound ~static_consts =
-  let acc =
-    List.fold_left
-    (fun acc (id, const) ->
-        match acc, const, id with
-        | Named acc,
-          Static_const (Static_set_of_closures _),
-          Bound_static.Pattern.Set_of_closures set ->
-          subst_bound_set_of_closures set ~let_body:(Named (Static_consts [const])) acc
-        | _ -> acc)
-    (Named (Static_consts static_consts))
-    (List.combine (Bound_pattern.must_be_static bound |> Bound_static.to_list)
-        static_consts)
-  in
   List.fold_left
   (fun acc (id, const) ->
       match acc, const, id with
-      | Named acc, Code body, Bound_static.Pattern.Code id ->
-        subst_code_id id ~let_body:(Named (Static_consts [Code body])) acc
+      | Named acc,
+        Static_const (Static_set_of_closures _),
+        Bound_static.Pattern.Set_of_closures set ->
+        subst_bound_set_of_closures set ~let_body:(Named (Static_consts [const])) acc
       | _ -> acc)
-  acc
+  (Named (Static_consts static_consts))
   (List.combine (Bound_pattern.must_be_static bound |> Bound_static.to_list)
       static_consts)
 
@@ -1064,7 +1096,8 @@ and normalize_set_of_closures env {function_decls; value_slots; alloc_mode}
          | _ -> x)
       function_decls.in_order
   in
-  (* normalize function slots *)
+  (* normalize function slots
+     NOTE : This might need to change when we're dealing with effectful functions*)
   let in_order =
     Function_slot.Lmap.map (normalize_function_expr env) in_order
   in
@@ -1100,8 +1133,22 @@ and subst_my_closure_body (clo: set_of_closures) (e : core_exp) : core_exp =
             ~x
             ~e1:(subst_my_closure_body clo e1)
             ~e2:(subst_my_closure_body clo e2))
-  | Let_cont _ ->
-      failwith "Unimplemented subst_pattern_set_of_closures: Let_cont"
+  | Let_cont (Non_recursive {handler; body}) ->
+    let handler =
+      Core_continuation_handler.pattern_match handler
+        (fun param exp ->
+           Core_continuation_handler.create param
+             (subst_my_closure_body clo exp))
+    in
+    let body =
+      Core_letcont_body.pattern_match body
+        (fun cont exp ->
+           Core_letcont_body.create cont
+             (subst_my_closure_body clo exp))
+    in
+    Let_cont (Non_recursive {handler; body})
+  | Let_cont (Recursive _) ->
+    failwith "Unimplemented subst_pattern_set_of_closures: Let_cont recursive case"
   | Apply {callee; continuation; exn_continuation; apply_args; call_kind} ->
     Apply
       {callee = subst_my_closure_body clo callee;
@@ -1110,11 +1157,13 @@ and subst_my_closure_body (clo: set_of_closures) (e : core_exp) : core_exp =
          List.map (subst_my_closure_body clo) apply_args;
        call_kind}
   | Apply_cont {k;args} ->
-     Apply_cont
-       { k = k;
-         args = List.map (subst_my_closure_body clo) args }
-  | Switch _ ->
-      failwith "Unimplemented subst_pattern_set_of_closures: Switch"
+    Apply_cont
+      { k = k;
+        args = List.map (subst_my_closure_body clo) args }
+  | Switch {scrutinee; arms} ->
+    Switch
+      { scrutinee = subst_my_closure_body clo scrutinee;
+        arms = Targetint_31_63.Map.map (subst_my_closure_body clo) arms; }
   | Invalid _ -> e
 
 and subst_my_closure_body_named
