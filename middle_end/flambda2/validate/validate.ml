@@ -785,6 +785,22 @@ let rec subst_cont (cont_e1: core_exp) (k: Bound_continuation.t)
   | Let_cont (Recursive _) ->
     failwith "Unimplemented subst cont recursive case"
   | Apply {callee; continuation; exn_continuation; apply_args; call_kind} ->
+    let continuation =
+      (match continuation with
+      | Cont_id (Return cont) ->
+        if Continuation.equal cont k
+        then Handler (Core_continuation_handler.create args cont_e2)
+        else continuation
+      | _ -> continuation)
+    in
+    let exn_continuation =
+      (match exn_continuation with
+       | Cont_id cont ->
+         if Continuation.equal cont k
+         then Handler (Core_continuation_handler.create args cont_e2)
+         else exn_continuation
+       | _ -> exn_continuation)
+    in
     Apply
       {callee = subst_cont callee k args cont_e2;
        continuation; exn_continuation;
@@ -1020,6 +1036,8 @@ and normalize_let_cont _env (e:let_cont_expr) : core_exp =
     | _ -> subst_cont e1 k args e2)
   | Recursive _handlers -> failwith "Unimplemented_recursive"
 
+(* TODO: substitute in continuation and exn_continuations (if it has in-lined
+          handlers) *)
 and normalize_apply _env callee continuation exn_continuation apply_args call_kind
   : core_exp =
   match callee with
