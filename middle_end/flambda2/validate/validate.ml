@@ -378,8 +378,10 @@ and subst_bound_set_of_closures (bound : Symbol.t Function_slot.Lmap.t) ~let_bod
         | Some (Static_const (Static_set_of_closures set)) ->
           (let bound = Function_slot.Lmap.bindings bound
            in
+           (* try to find if any of the symbols being bound is the same as the variable v *)
            let bound_closure =
-              List.find_opt (fun (_, x) -> Simple.equal v (Simple.symbol x)) bound
+             List.find_opt (fun (_, x) ->
+               Simple.same v (Simple.symbol x)) bound
            in
            (match bound_closure with
             | None -> Named e
@@ -444,7 +446,18 @@ and subst_bound_set_of_closures_static_const_or_code
   match e with
   | Static_const const ->
     Static_const (subst_bound_set_of_closures_static_const ~bound ~let_body const)
-  | (Code _ | Deleted_code) -> e
+  | Code params_and_body ->
+    Code
+      (Core_function_params_and_body.pattern_match
+         params_and_body
+         ~f:(fun
+            params body ->
+            Core_function_params_and_body.create
+              params
+              (subst_pattern_static
+                 ~bound:(Bound_static.Pattern.set_of_closures bound)
+                 ~let_body body)))
+  | Deleted_code -> e
 
 and subst_bound_set_of_closures_static_const
       ~bound ~(let_body : core_exp) (e : static_const) : static_const =
@@ -456,6 +469,25 @@ and subst_bound_set_of_closures_static_const
         args
     in
     Block (tag, mut, args)
+  | Static_set_of_closures {function_decls;value_slots;alloc_mode}->
+    (let in_order : function_expr Function_slot.Lmap.t =
+       function_decls.in_order |>
+       Function_slot.Lmap.map
+         (fun x ->
+            match x with
+            | Id code_id -> Id code_id
+            | Exp e ->
+              Exp (subst_pattern_static
+                     ~bound:(Bound_static.Pattern.set_of_closures bound)
+                     ~let_body e))
+     in
+     let function_decls =
+       { funs = Function_slot.Map.of_list (Function_slot.Lmap.bindings in_order);
+         in_order }
+     in
+     (Static_set_of_closures {function_decls; value_slots; alloc_mode}))
+    (* let function_decls
+     * failwith "Unimplemented static set of closures" *)
   | _ -> e (* NEXT *)
 
 and subst_code_id_set_of_closures (bound : Code_id.t) ~(let_body : core_exp)
@@ -610,7 +642,13 @@ and subst_pattern_static
      | Recursive _ ->
        failwith "Unimplemented_static_clo_recursive"
     )
-  | Apply _ -> failwith "Unimplemented_subst_pattern_static"
+  | Apply {callee; continuation; exn_continuation; apply_args; call_kind} ->
+    Apply
+      {callee = subst_pattern_static ~bound ~let_body callee;
+       continuation; exn_continuation;
+       apply_args =
+         List.map (subst_pattern_static ~bound ~let_body) apply_args;
+       call_kind}
   | Invalid _ -> e
 
 (* NOTE: Be careful with dominator-style [Static] scoping.. *)
@@ -894,15 +932,30 @@ and normalize_let env let_abst body : core_exp =
          let x = v in e1 ⟶ e2 [x\v] *)
       subst_pattern ~bound:x ~let_body:e1 e2
 
+(* FIXME : This is buggy *)
 and normalize_let_static ~bound ~static_consts =
-  List.fold_left
+  let acc =
+    List.fold_left
     (fun acc (id, const) ->
         match acc, const, id with
-        | Named acc, Code body, Bound_static.Pattern.Code id ->
-          subst_code_id id ~let_body:(Named (Static_consts [Code body])) acc
-        | _ -> acc) (Named (Static_consts static_consts))
+        | Named acc,
+          Static_const (Static_set_of_closures _),
+          Bound_static.Pattern.Set_of_closures set ->
+          subst_bound_set_of_closures set ~let_body:(Named (Static_consts [const])) acc
+        | _ -> acc)
+    (Named (Static_consts static_consts))
     (List.combine (Bound_pattern.must_be_static bound |> Bound_static.to_list)
         static_consts)
+  in
+  List.fold_left
+  (fun acc (id, const) ->
+      match acc, const, id with
+      | Named acc, Code body, Bound_static.Pattern.Code id ->
+        subst_code_id id ~let_body:(Named (Static_consts [Code body])) acc
+      | _ -> acc)
+  acc
+  (List.combine (Bound_pattern.must_be_static bound |> Bound_static.to_list)
+      static_consts)
 
 and normalize_let_cont _env (e:let_cont_expr) : core_exp =
   match e with
