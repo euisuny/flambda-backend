@@ -14,6 +14,10 @@ type core_exp =
   | Switch of switch_expr
   | Invalid of { message : string }
 
+and 'a id_or_exp =
+  | Id of 'a
+  | Exp of core_exp
+
 (** Let expressions [let x = e1 in e2]
 
    [fun x -> e2] = let_abst
@@ -39,13 +43,9 @@ and function_declarations =
   { funs : function_expr Function_slot.Map.t;
     in_order : function_expr Function_slot.Lmap.t}
 
-and function_expr =
-  | Id of Code_id.t
-  | Exp of core_exp
+and value_expr = Simple.t id_or_exp
 
-and value_expr =
-  | Simple_value of Simple.t
-  | Value_exp of core_exp
+and function_expr = Code_id.t id_or_exp
 
 and primitive =
   | Nullary of P.nullary_primitive
@@ -114,10 +114,14 @@ and continuation_handler =
 
 and apply_expr =
   { callee: core_exp;
-    continuation: Apply_expr.Result_continuation.t;
-    exn_continuation: Continuation.t;
+    continuation: continuation_expr;
+    exn_continuation: exn_continuation_expr;
     apply_args: core_exp list;
     call_kind: Call_kind.t; }
+
+and continuation_expr = Apply_expr.Result_continuation.t id_or_exp
+
+and exn_continuation_expr = Continuation.t id_or_exp
 
 and apply_cont_expr =
   { k : Continuation.t;

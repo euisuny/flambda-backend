@@ -15,6 +15,10 @@ type core_exp =
   | Switch of switch_expr
   | Invalid of { message : string }
 
+and 'a id_or_exp =
+  | Id of 'a
+  | Exp of core_exp
+
 (** Let expressions [let x = e1 in e2]
 
    [fun x -> e2] = let_abst
@@ -40,13 +44,9 @@ and function_declarations =
   { funs : function_expr Function_slot.Map.t;
     in_order : function_expr Function_slot.Lmap.t}
 
-and value_expr =
-  | Simple_value of Simple.t
-  | Value_exp of core_exp
+and value_expr = Simple.t id_or_exp
 
-and function_expr =
-  | Id of Code_id.t
-  | Exp of core_exp
+and function_expr = Code_id.t id_or_exp
 
 and primitive =
   | Nullary of P.nullary_primitive
@@ -115,10 +115,14 @@ and continuation_handler =
 
 and apply_expr =
   { callee: core_exp;
-    continuation: Apply_expr.Result_continuation.t;
-    exn_continuation: Continuation.t;
+    continuation: continuation_expr;
+    exn_continuation: exn_continuation_expr;
     apply_args: core_exp list;
     call_kind: Call_kind.t; }
+
+and continuation_expr = Apply_expr.Result_continuation.t id_or_exp
+
+and exn_continuation_expr = Continuation.t id_or_exp
 
 and apply_cont_expr =
   { k : Continuation.t;
@@ -127,6 +131,22 @@ and apply_cont_expr =
 and switch_expr =
   { scrutinee : core_exp;
     arms : core_exp Targetint_31_63.Map.t }
+
+(* IY: Well, more of a specialized [bimap] *)
+let fmap_id_or_exp :
+  'a id_or_exp -> ('a -> 'b) -> (core_exp -> core_exp) -> 'b id_or_exp =
+  fun idorexp fid fexp ->
+    match idorexp with
+    | Id id -> Id (fid id)
+    | Exp exp -> Exp (fexp exp)
+
+(* IY: What's the right name for this.. *)
+let merge_id_or_exp :
+  'a id_or_exp -> ('a -> 'b) -> (core_exp -> 'b) -> 'b =
+  fun idorexp fid fexp ->
+    match idorexp with
+    | Id id -> fid id
+    | Exp exp -> fexp exp
 
 (** Nominal renaming for [core_exp] **)
 let rec apply_renaming t renaming : core_exp =
@@ -196,14 +216,14 @@ and apply_renaming_set_of_closures
          if Renaming.value_slot_is_used renaming var
          then (
            match expr with
-           | Simple_value simple ->
+           | Id simple ->
               let simple' = Simple.apply_renaming simple renaming in
               if not (simple == simple') then changed := true;
-              Some (Simple_value simple', kind)
-           | Value_exp exp ->
+              Some (Id simple', kind)
+           | Exp exp ->
              let simple' = apply_renaming exp renaming in
              if not (exp == simple') then changed := true;
-             Some (Value_exp simple', kind)
+             Some (Exp simple', kind)
          )
          else (
            changed := true;
@@ -367,9 +387,15 @@ and apply_renaming_apply
       renaming:
   apply_expr =
   let continuation =
-    Apply_expr.Result_continuation.apply_renaming continuation renaming in
+    fmap_id_or_exp continuation
+      (fun continuation -> Apply_expr.Result_continuation.apply_renaming continuation renaming)
+      (fun exp -> apply_renaming exp renaming)
+  in
   let exn_continuation =
-    Renaming.apply_continuation renaming exn_continuation in
+    fmap_id_or_exp exn_continuation
+      (fun exn_continuation -> Renaming.apply_continuation renaming exn_continuation)
+      (fun exp -> apply_renaming exp renaming)
+  in
   let callee = apply_renaming callee renaming in
   let apply_args =
     List.map (fun x -> apply_renaming x renaming) apply_args in
@@ -501,9 +527,9 @@ and print_value_slot ppf (value, kind) =
     Flambda_kind.With_subkind.print kind
 
 and print_value_expr ppf value =
-  match value with
-  | Simple_value value -> Simple.print ppf value
-  | Value_exp exp -> print ppf exp
+  merge_id_or_exp value
+    (Simple.print ppf)
+    (print ppf)
 
 and print_function_declaration ppf { funs = _ ; in_order } =
   Format.fprintf ppf "(%a)"
@@ -676,12 +702,22 @@ and print_continuation_handler ppf key (t : continuation_handler) =
         (Continuation.name key)
         Bound_parameters.print k print body)
 
+and print_continuation_expr ppf (t : continuation_expr) =
+  merge_id_or_exp t
+    (Apply_expr.Result_continuation.print ppf)
+    (print ppf)
+
+and print_exn_continuation_expr ppf (t : exn_continuation_expr) =
+  merge_id_or_exp t
+    (Continuation.print ppf)
+    (print ppf)
+
 and print_apply ppf
       ({callee; continuation; exn_continuation; apply_args; _} : apply_expr) =
   fprintf ppf "%a %a %a "
     print callee
-    Apply_expr.Result_continuation.print continuation
-    Continuation.print exn_continuation;
+    print_continuation_expr continuation
+    print_exn_continuation_expr exn_continuation;
   Format.pp_print_list ~pp_sep:Format.pp_print_space print ppf apply_args
 
 and print_apply_cont ppf ({k ; args} : apply_cont_expr) =
@@ -744,10 +780,9 @@ and ids_for_export_set_of_closures
   Ids_for_export.union
     (Value_slot.Map.fold
        (fun _value_slot (value, _kind) ids ->
-          match value with
-          | Simple_value simple -> Ids_for_export.add_simple ids simple
-          | Value_exp exp -> Ids_for_export.union ids (ids_for_export exp)
-       )
+          merge_id_or_exp value
+            (Ids_for_export.add_simple ids)
+            (fun exp -> Ids_for_export.union ids (ids_for_export exp)))
        value_slots function_decls_ids)
     (Alloc_mode.For_allocations.ids_for_export alloc_mode)
 
@@ -880,9 +915,15 @@ and ids_for_export_apply
       (fun ids arg -> Ids_for_export.union ids (ids_for_export arg))
        callee_ids apply_args in
   let result_continuation_ids =
-    Apply_expr.Result_continuation.ids_for_export continuation in
+    merge_id_or_exp continuation
+      (Apply_expr.Result_continuation.ids_for_export)
+      ids_for_export
+  in
   let exn_continuation_ids =
-    Ids_for_export.add_continuation Ids_for_export.empty exn_continuation in
+    merge_id_or_exp exn_continuation
+      (Ids_for_export.add_continuation Ids_for_export.empty)
+      ids_for_export
+  in
   let call_kind_ids = Call_kind.ids_for_export call_kind in
   (Ids_for_export.union
     (Ids_for_export.union callee_and_args_ids call_kind_ids)
