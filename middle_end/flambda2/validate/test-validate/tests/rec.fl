@@ -2,13 +2,13 @@ let $camlRec__first_const24 = Block 0 () in
 let code rec size(6) f_0 (x) my_closure my_region my_depth -> k * k1 =
   let next_depth = rec_info (succ my_depth) in
   let g = %project_function_slot (f -> g) my_closure in
-  apply direct(g_1) g (x) -> k2 * k1
+  apply direct(g_1) g (x) &my_region -> k2 * k1
     where k2 (a) =
       cont k (a)
 and code rec size(6) g_1 (x) my_closure my_region my_depth -> k * k1 =
   let next_depth = rec_info (succ my_depth) in
   let f = %project_function_slot (g -> f) my_closure in
-  apply direct(f_0) f (x) -> k2 * k1
+  apply direct(f_0) f (x) &my_region -> k2 * k1
     where k2 (a) =
       cont k (a)
 in

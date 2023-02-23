@@ -45,7 +45,7 @@ let check_alpha_equivalence file1 file2 : unit =
   Compilation_unit.set_current (Some comp_unit);
 
   Format.fprintf Format.std_formatter
-    "..............................................................................@.";
+    "..............................................................................@. ";
   let fl_output = parse_flambda (cwd ^ test_dir ^ file1) in
   let core_output = flambda_unit_to_core fl_output in
 
@@ -194,6 +194,8 @@ let () =
 
   (* simplify_term "apply4.fl";
    *  normalize_term "apply4.fl"; *)
+
+  (* ------------- NEW --------------- *)
 
   (* [Application] *)
 
