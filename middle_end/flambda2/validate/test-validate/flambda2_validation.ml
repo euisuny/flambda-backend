@@ -195,17 +195,22 @@ let () =
   (* simplify_term "apply4.fl";
    *  normalize_term "apply4.fl"; *)
 
-  (* ---------- NEXT --------- *)
-
   (* [Application] *)
 
   (* simplify_term "apply.fl";
    * normalize_term "apply.fl"; *)
 
+  (* simplify_term "apply_noinline.fl";
+   * normalize_term "apply_noinline.fl"; *)
+
+  (* [Inlining] *)
+
   (* simplify_term "apply_orig.fl";
    * normalize_term "apply_orig.fl"; *)
 
-  simplify_term "apply_noinline.fl";
-  normalize_term "apply_noinline.fl";
+  (* ---------- NEXT --------- *)
+  (* [Recursive] *)
 
+  simplify_term "rec.fl";
+  normalize_term "rec.fl";
   ()
