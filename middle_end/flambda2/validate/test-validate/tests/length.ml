@@ -3,8 +3,4 @@ let rec length x =
   | [] -> 0
   | a :: l -> 1 + length l
 
-let foo () =
-  let y = 3
-  in
-  let rec g x= f x + y
-  and f x = g x
+let _ = length [1;2;3]
