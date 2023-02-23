@@ -31,6 +31,7 @@
 \newcommand{\staticconsts}{\chi}
 \newcommand{\recinfo}{\mathsf{rec\_info}}
 \newcommand{\idexpr}{\mathit{id\_exp}}
+\newcommand{\simpleexpr}{\mathit{simple\_exp}}
 \newcommand{\symb}{\mathit{symbol}}
 \newcommand{\const}{\mathit{const}}
 \newcommand{\callid}{\kappa}
@@ -39,6 +40,7 @@
 \newcommand{\method}{\mathsf{method}}
 \newcommand{\ccall}{\mathsf{c\_call}}
 \newcommand{\blockconst}[3]{\mathsf{block}(#1,\,#2,\,#3)}
+\newcommand{\contid}[1]{\mathsf{cont}\; #1}
 
 \newcommand{\sep}{\; | \;}
 \newcommand{\letexp}[3]{\mathsf{let}\; #1 \; = \; #2 \; \mathsf{in} \; #3}
@@ -47,7 +49,7 @@
 \newcommand{\letstaticcloexp}[3]{\mathsf{let}\; (\mathsf{clo}^{\uparrow} \; #1) \; = \; #2 \; \mathsf{in} \; #3}
 \newcommand{\letblockexp}[3]{\mathsf{let}\; (\mathsf{block}^{\uparrow} \; #1) \; = \; #2 \; \mathsf{in} \; #3}
 \newcommand{\subst}[3]{#1 \; [ #2 \setminus #3 ]}
-\newcommand{\letcont}[4]{#1 \; \mathsf{where} \; #2 \; #3 \; = \; #4}
+\newcommand{\letcont}[4]{#1 \; \mathsf{where} \; (\contid{#2}) \; #3 \; = \; #4}
 \newcommand{\step}{\longrightarrow}
 \newcommand{\applycont}[2]{#1 \; #2}
 \newcommand{\apply}[5]{\mathsf{call}(#1) \; \mathsf{with} \; (#2, \, #3, \, #4, \, #5)}
@@ -76,10 +78,14 @@
     & \sep \apply{\callid}{\expr_{\rho}}{res_k}{exn_k}{\args{\expr}} \sep \applycont{\expr_1}{\args{\expr_2}} \\
     & \sep \switch{\expr_1}{\arms} \sep \invalid \\
     %
+    x_k ::=~& \contid{k} \sep \abst{x}{\expr} \\
+    %
     P ::=~& \{ \mathsf{fns} : (\mathit{slot}^{f} \ast \, \idexpr ) \; \mathit{map} ; \;
-    \mathsf{vals} : (\mathit{slot}^{v} \ast \simple) \; \mathit{map} \}\\
+    \mathsf{vals} : (\mathit{slot}^{v} \ast \simpleexpr) \; \mathit{map} \}\\
     %
     \idexpr ::=~& \codeid \sep \expr \\
+    %
+    \simpleexpr ::=~& \simple \sep \expr \\
     %
     \callid ::=~& \direct \; \codeid \sep \indirect \sep \method \sep \ccall \\
     %
