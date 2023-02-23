@@ -56,7 +56,7 @@ and function_declarations_to_core (e : Function_declarations.t) : function_decla
 and value_slots_to_core
       (e : (Simple.t * Flambda_kind.With_subkind.t) Value_slot.Map.t) :
   (value_expr * Flambda_kind.With_subkind.t) Value_slot.Map.t =
-    Value_slot.Map.map (fun (x, y) -> (Simple_value x, y)) e
+    Value_slot.Map.map (fun (x, y) -> (Id x, y)) e
 
 and prim_to_core (e : P.t) : primitive =
   match e with
@@ -151,9 +151,9 @@ and cont_handlers_to_core (e : Continuation_handlers.t) :
 and apply_to_core (e : Apply.t) : core_exp =
   Apply {
     callee = Apply_expr.callee e |> simple_to_core;
-    continuation = Apply_expr.continuation e;
-    exn_continuation = Apply_expr.exn_continuation e |>
-                        Exn_continuation.exn_handler;
+    continuation = Id (Apply_expr.continuation e);
+    exn_continuation = Id (Apply_expr.exn_continuation e |>
+                        Exn_continuation.exn_handler);
     apply_args = Apply_expr.args e |> List.map simple_to_core;
     call_kind = Apply_expr.call_kind e;}
 

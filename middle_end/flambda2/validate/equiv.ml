@@ -72,12 +72,11 @@ let subst_name env n =
 
 let subst_simple env s =
   match s with
-  | Simple_value s ->
-    Simple_value
-      (Simple.pattern_match s
+  | Id s ->
+    Id (Simple.pattern_match s
       ~const:(fun _ -> s)
       ~name:(fun n ~coercion:_ -> Simple.name (subst_name env n)))
-  | Value_exp _ -> s
+  | Exp _ -> s
 
 let subst_code_id env code_id =
   Env.find_code_id env code_id |> Option.value ~default:code_id
@@ -283,9 +282,9 @@ and equiv_set_of_closures env
     let c = Flambda_kind.With_subkind.compare kind1 kind2 in
     if c = 0 then
       (match value1, value2 with
-       | Simple_value value1, Simple_value value2 ->
+       | Id value1, Id value2 ->
          Simple.compare value1 value2
-       | Value_exp exp1, Value_exp exp2 ->
+       | Exp exp1, Exp exp2 ->
          if equiv env exp1 exp2 then 0 else 1
        | _, _ -> 1
       )
@@ -400,11 +399,24 @@ and equiv_cont_handler_map env
       (map1 : continuation_handler_map) (map2 : continuation_handler_map) =
   Continuation.Map.equal (equiv_cont_handler env) map1 map2
 
+and equiv_continuation_expr env (e1 : continuation_expr) (e2 : continuation_expr) : eq =
+  match e1, e2 with
+  | Id e1, Id e2 -> Apply_expr.Result_continuation.equal e1 e2
+  | Exp e1, Exp e2 -> equiv env e1 e2
+  | _, _ -> false
+
+and equiv_exn_continuation_expr env
+      (e1 : exn_continuation_expr) (e2 : exn_continuation_expr) : eq =
+  match e1, e2 with
+  | Id e1, Id e2 -> Continuation.equal e1 e2
+  | Exp e1, Exp e2 -> equiv env e1 e2
+  | _, _ -> false
+
 (* [apply] *)
 and equiv_apply env (e1 : apply_expr) (e2 : apply_expr) : eq =
   let equiv_conts =
-    Apply_expr.Result_continuation.equal (e1.continuation) (e2.continuation) &&
-    Continuation.equal (e1.exn_continuation) (e2.exn_continuation) in
+    equiv_continuation_expr env (e1.continuation) (e2.continuation) &&
+    equiv_exn_continuation_expr env (e1.exn_continuation) (e2.exn_continuation) in
   let callee = equiv env (e1.callee) (e2.callee) in
   let args =
     zip_fold (e1.apply_args) (e2.apply_args)

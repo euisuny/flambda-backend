@@ -131,6 +131,11 @@ and switch_expr =
   { scrutinee : core_exp;
     arms : core_exp Targetint_31_63.Map.t }
 
+val fmap_id_or_exp :
+  'a id_or_exp -> ('a -> 'b) -> (core_exp -> core_exp) -> 'b id_or_exp
+
+val merge_id_or_exp : 'a id_or_exp -> ('a -> 'b) -> (core_exp -> 'b) -> 'b
+
 module T0 : sig
   type t = core_exp
 

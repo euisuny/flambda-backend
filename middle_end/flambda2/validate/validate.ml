@@ -129,14 +129,14 @@ and subst_pattern_set_of_closures_named
         Value_slot.Map.map
           (fun (value, k) ->
             match value with
-            | Simple_value simple ->
+            | Id simple ->
               let bound = Simple.var (Bound_var.var b) in
               if (Simple.equal simple bound)
               then
-               (Value_exp let_body, k)
-              else (Simple_value simple, k)
-            | Value_exp exp ->
-              (Value_exp
+               (Exp let_body, k)
+              else (Id simple, k)
+            | Exp exp ->
+              (Exp
                  (subst_pattern ~bound:(Bound_pattern.set_of_closures bound)
                     ~let_body exp), k)
           ) value_slots) value_slots bound
@@ -149,13 +149,13 @@ and subst_pattern_set_of_closures_named
         Value_slot.Map.map
           (fun (value, k) ->
              match value with
-             | Simple_value simple ->
+             | Id simple ->
                let bound = Simple.var (Bound_var.var b) in
                if (Simple.equal simple bound)
-               then (Value_exp let_body, k)
-               else (Simple_value simple, k)
-             | Value_exp exp ->
-               (Value_exp
+               then (Exp let_body, k)
+               else (Id simple, k)
+             | Exp exp ->
+               (Exp
                   (subst_pattern ~bound:(Bound_pattern.set_of_closures bound)
                      ~let_body exp), k)
           ) value_slots) value_slots bound
@@ -234,13 +234,13 @@ and subst_pattern_singleton
        Value_slot.Map.map
          (fun (value, k) ->
             match value with
-            | Simple_value simple ->
+            | Id simple ->
               let bound = Simple.var (Bound_var.var bound) in
               if (Simple.equal simple bound)
-              then (Value_exp let_body, k)
-              else (Simple_value simple, k)
-            | Value_exp exp ->
-              (Value_exp (subst_pattern_singleton ~bound ~let_body exp), k)
+              then (Exp let_body, k)
+              else (Id simple, k)
+            | Exp exp ->
+              (Exp (subst_pattern_singleton ~bound ~let_body exp), k)
          ) value_slots
      in
      Named (Set_of_closures {function_decls; value_slots; alloc_mode})
@@ -249,13 +249,13 @@ and subst_pattern_singleton
        Value_slot.Map.map
          (fun (value, k) ->
             match value with
-            | Simple_value simple ->
+            | Id simple ->
               let bound = Simple.var (Bound_var.var bound) in
               if (Simple.equal simple bound)
-              then (Value_exp let_body, k)
-              else (Simple_value simple, k)
-            | Value_exp exp ->
-              (Value_exp (subst_pattern_singleton ~bound ~let_body exp), k)
+              then (Exp let_body, k)
+              else (Id simple, k)
+            | Exp exp ->
+              (Exp (subst_pattern_singleton ~bound ~let_body exp), k)
          ) value_slots
      in
      Named (Closure_expr (slot, {function_decls; value_slots; alloc_mode}))
@@ -713,8 +713,8 @@ let rec subst_params
     in
     Named (Prim (Variadic (e, args)))
   | Named (Prim (Nullary _)) -> e
-  | Named (Closure_expr _) ->
-    failwith "Unimplemented_param_named_clo_expr"
+  | Named (Closure_expr _) -> e
+    (* failwith "Unimplemented_param_named_clo_expr" *)
   | Named (Set_of_closures _) ->
     failwith "Unimplemented_param_named_clo"
   | Named (Static_consts _ | Rec_info _) -> e
@@ -768,8 +768,22 @@ let rec subst_cont (cont_e1: core_exp) (k: Bound_continuation.t)
               subst_cont e2 k args cont_e2))
     in
     Core_let.create ~x:bound ~e1:e ~e2:body
-  | Let_cont _ ->
-    failwith "Unimplemented_letcont"
+  | Let_cont (Non_recursive {handler; body})->
+    let handler =
+      Core_continuation_handler.pattern_match handler
+        (fun param exp ->
+           Core_continuation_handler.create param
+             (subst_cont exp k args cont_e2))
+    in
+    let body =
+      Core_letcont_body.pattern_match body
+        (fun cont exp ->
+           Core_letcont_body.create cont
+             (subst_cont exp k args cont_e2))
+    in
+    Let_cont (Non_recursive {handler; body})
+  | Let_cont (Recursive _) ->
+    failwith "Unimplemented subst cont recursive case"
   | Apply {callee; continuation; exn_continuation; apply_args; call_kind} ->
     Apply
       {callee = subst_cont callee k args cont_e2;
@@ -868,7 +882,7 @@ let eval_prim_binary
   | Int_shift (_,_)
   | Int_comp (_,_)
   | Float_arith _
-  | Float_comp _ -> failwith "Unimplemented eval_prim_binary"
+  | Float_comp _ -> Named (Prim (Binary (v, arg1, arg2)))
 
 let eval_prim_ternary (_v : P.ternary_primitive)
       (_arg1 : core_exp) (_arg2 : core_exp) (_arg3 : core_exp) : named =
@@ -941,7 +955,7 @@ and normalize_let env let_abst body : core_exp =
     (* [LetCode-β] Non-recursive case
        let code f (x, ρ, res_k, exn_k) = e1 in e2 ⟶ e2 [f \ λ (x, ρ, res_k, exn_k). e1] *)
     subst_pattern ~bound:x ~let_body:e1 e2
-  | Named (Static_consts (a :: l)) ->
+  | Named (Static_consts _) ->
     (* [LetCode-β] Recursive case
        Static variables may bind mutually recursive objects
        (e.g. a (mutually recursive) list of code blocks and a set of closure
@@ -961,8 +975,8 @@ and normalize_let env let_abst body : core_exp =
        variables. *)
 
     (* [LetStatic-β] *)
-    let e1 = normalize_let_static ~bound:x ~static_consts:(a :: l)
-    in
+    (* let e1 = normalize_let_static ~bound:x ~static_consts:(a :: l)
+     * in *)
     (* [Let-β] *)
     subst_pattern ~bound:x ~let_body:e1 e2
   | _ ->
@@ -975,19 +989,19 @@ and normalize_let env let_abst body : core_exp =
          let x = v in e1 ⟶ e2 [x\v] *)
       subst_pattern ~bound:x ~let_body:e1 e2
 
-(* FIXME : This is buggy *)
-and normalize_let_static ~bound ~static_consts =
-  List.fold_left
-  (fun acc (id, const) ->
-      match acc, const, id with
-      | Named acc,
-        Static_const (Static_set_of_closures _),
-        Bound_static.Pattern.Set_of_closures set ->
-        subst_bound_set_of_closures set ~let_body:(Named (Static_consts [const])) acc
-      | _ -> acc)
-  (Named (Static_consts static_consts))
-  (List.combine (Bound_pattern.must_be_static bound |> Bound_static.to_list)
-      static_consts)
+(* (* FIXME : This is buggy *)
+ * and normalize_let_static ~bound ~static_consts =
+ *   List.fold_left
+ *   (fun acc (id, const) ->
+ *       match acc, const, id with
+ *       | Named acc,
+ *         Static_const (Static_set_of_closures _),
+ *         Bound_static.Pattern.Set_of_closures set ->
+ *         subst_bound_set_of_closures set ~let_body:(Named (Static_consts [const])) acc
+ *       | _ -> acc)
+ *   (Named (Static_consts static_consts))
+ *   (List.combine (Bound_pattern.must_be_static bound |> Bound_static.to_list)
+ *       static_consts) *)
 
 and normalize_let_cont _env (e:let_cont_expr) : core_exp =
   match e with
@@ -1001,8 +1015,9 @@ and normalize_let_cont _env (e:let_cont_expr) : core_exp =
     in
     (* [LetCont-β]
        e1 where k args = e2 ⟶ e1 [k \ λ args. e2] *)
-    subst_cont e1 k args e2
-
+    (match e1 with
+    | Apply _ -> Let_cont (Non_recursive {handler; body})
+    | _ -> subst_cont e1 k args e2)
   | Recursive _handlers -> failwith "Unimplemented_recursive"
 
 and normalize_apply _env callee continuation exn_continuation apply_args call_kind
@@ -1017,16 +1032,19 @@ and normalize_apply _env callee continuation exn_continuation apply_args call_ki
     in
     let renaming =
       (match continuation with
-      | Apply_expr.Result_continuation.Return continuation ->
+      | Id (Apply_expr.Result_continuation.Return continuation) ->
           Renaming.add_continuation renaming
             (Bound_for_function.return_continuation slot_bound)
             continuation
       | _ -> renaming)
     in
     let renaming =
-      Renaming.add_continuation renaming
-        (Bound_for_function.exn_continuation slot_bound)
-        exn_continuation
+      (match exn_continuation with
+       | Id exn_continuation ->
+         Renaming.add_continuation renaming
+           (Bound_for_function.exn_continuation slot_bound)
+           exn_continuation
+       | _ -> renaming)
     in
     let exp =
       apply_renaming slot_body renaming
@@ -1173,7 +1191,7 @@ and subst_my_closure_body_named
   | Prim
       (Unary (Project_value_slot slot, _arg)) ->
     (match Value_slot.Map.find_opt slot.value_slot value_slots with
-     | Some (Value_exp (Named (Set_of_closures clo)), _) ->
+     | Some (Exp (Named (Set_of_closures clo)), _) ->
        let fun_decls = clo.function_decls.in_order
        in
        (match Function_slot.Lmap.get_singleton fun_decls with
@@ -1190,8 +1208,8 @@ and normalize_function_expr env (fun_expr : function_expr) : function_expr =
 
 and normalize_value_expr env (val_expr : value_expr) : value_expr =
   match val_expr with
-  | Simple_value _ -> val_expr
-  | Value_exp exp -> Value_exp (normalize env exp)
+  | Id _ -> val_expr
+  | Exp exp -> Exp (normalize env exp)
 
 (* This is a "normalization" of [named] expression, in quotations because there
   is some simple evaluation that occurs for primitive arithmetic expressions *)
