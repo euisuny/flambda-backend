@@ -401,15 +401,15 @@ and equiv_cont_handler_map env
 
 and equiv_continuation_expr env (e1 : continuation_expr) (e2 : continuation_expr) : eq =
   match e1, e2 with
-  | Id e1, Id e2 -> Apply_expr.Result_continuation.equal e1 e2
-  | Exp e1, Exp e2 -> equiv env e1 e2
+  | Cont_id e1, Cont_id e2 -> Apply_expr.Result_continuation.equal e1 e2
+  | Handler e1, Handler e2 -> equiv_cont_handler env e1 e2
   | _, _ -> false
 
 and equiv_exn_continuation_expr env
       (e1 : exn_continuation_expr) (e2 : exn_continuation_expr) : eq =
   match e1, e2 with
-  | Id e1, Id e2 -> Continuation.equal e1 e2
-  | Exp e1, Exp e2 -> equiv env e1 e2
+  | Cont_id e1, Cont_id e2 -> Continuation.equal e1 e2
+  | Handler e1, Handler e2 -> equiv_cont_handler env e1 e2
   | _, _ -> false
 
 (* [apply] *)

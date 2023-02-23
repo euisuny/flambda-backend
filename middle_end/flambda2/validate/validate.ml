@@ -1032,7 +1032,7 @@ and normalize_apply _env callee continuation exn_continuation apply_args call_ki
     in
     let renaming =
       (match continuation with
-      | Id (Apply_expr.Result_continuation.Return continuation) ->
+      | Cont_id (Apply_expr.Result_continuation.Return continuation) ->
           Renaming.add_continuation renaming
             (Bound_for_function.return_continuation slot_bound)
             continuation
@@ -1040,7 +1040,7 @@ and normalize_apply _env callee continuation exn_continuation apply_args call_ki
     in
     let renaming =
       (match exn_continuation with
-       | Id exn_continuation ->
+       | Cont_id exn_continuation ->
          Renaming.add_continuation renaming
            (Bound_for_function.exn_continuation slot_bound)
            exn_continuation

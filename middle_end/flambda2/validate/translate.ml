@@ -151,8 +151,8 @@ and cont_handlers_to_core (e : Continuation_handlers.t) :
 and apply_to_core (e : Apply.t) : core_exp =
   Apply {
     callee = Apply_expr.callee e |> simple_to_core;
-    continuation = Id (Apply_expr.continuation e);
-    exn_continuation = Id (Apply_expr.exn_continuation e |>
+    continuation = Cont_id (Apply_expr.continuation e);
+    exn_continuation = Cont_id (Apply_expr.exn_continuation e |>
                         Exn_continuation.exn_handler);
     apply_args = Apply_expr.args e |> List.map simple_to_core;
     call_kind = Apply_expr.call_kind e;}

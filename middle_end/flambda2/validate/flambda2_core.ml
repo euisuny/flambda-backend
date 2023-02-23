@@ -19,6 +19,10 @@ and 'a id_or_exp =
   | Id of 'a
   | Exp of core_exp
 
+and 'a id_or_cont =
+  | Cont_id of 'a
+  | Handler of continuation_handler
+
 (** Let expressions [let x = e1 in e2]
 
    [fun x -> e2] = let_abst
@@ -120,9 +124,9 @@ and apply_expr =
     apply_args: core_exp list;
     call_kind: Call_kind.t; }
 
-and continuation_expr = Apply_expr.Result_continuation.t id_or_exp
+and continuation_expr = Apply_expr.Result_continuation.t id_or_cont
 
-and exn_continuation_expr = Continuation.t id_or_exp
+and exn_continuation_expr = Continuation.t id_or_cont
 
 and apply_cont_expr =
   { k : Continuation.t;
@@ -140,6 +144,14 @@ let fmap_id_or_exp :
     | Id id -> Id (fid id)
     | Exp exp -> Exp (fexp exp)
 
+let fmap_id_or_cont :
+  'a id_or_cont -> ('a -> 'b) ->
+  (continuation_handler -> continuation_handler) -> 'b id_or_cont =
+  fun idorexp fid fexp ->
+    match idorexp with
+    | Cont_id id -> Cont_id (fid id)
+    | Handler exp -> Handler (fexp exp)
+
 (* IY: What's the right name for this.. *)
 let merge_id_or_exp :
   'a id_or_exp -> ('a -> 'b) -> (core_exp -> 'b) -> 'b =
@@ -147,6 +159,14 @@ let merge_id_or_exp :
     match idorexp with
     | Id id -> fid id
     | Exp exp -> fexp exp
+
+let merge_id_or_cont :
+  'a id_or_cont -> ('a -> 'b) ->
+  (continuation_handler -> 'b) -> 'b =
+  fun idorexp fid fexp ->
+    match idorexp with
+    | Cont_id id -> fid id
+    | Handler exp -> fexp exp
 
 (** Nominal renaming for [core_exp] **)
 let rec apply_renaming t renaming : core_exp =
@@ -387,14 +407,14 @@ and apply_renaming_apply
       renaming:
   apply_expr =
   let continuation =
-    fmap_id_or_exp continuation
+    fmap_id_or_cont continuation
       (fun continuation -> Apply_expr.Result_continuation.apply_renaming continuation renaming)
-      (fun exp -> apply_renaming exp renaming)
+      (fun exp -> apply_renaming_cont_handler exp renaming)
   in
   let exn_continuation =
-    fmap_id_or_exp exn_continuation
+    fmap_id_or_cont exn_continuation
       (fun exn_continuation -> Renaming.apply_continuation renaming exn_continuation)
-      (fun exp -> apply_renaming exp renaming)
+      (fun exp -> apply_renaming_cont_handler exp renaming)
   in
   let callee = apply_renaming callee renaming in
   let apply_args =
@@ -702,15 +722,24 @@ and print_continuation_handler ppf key (t : continuation_handler) =
         (Continuation.name key)
         Bound_parameters.print k print body)
 
+and print_handler ppf (t : continuation_handler) =
+  Name_abstraction.pattern_match_for_printing
+    (module Bound_parameters) t
+    ~apply_renaming_to_term:apply_renaming
+    ~f:(fun k expr_body ->
+      fprintf ppf "(λ %a, %a)"
+        print_params k
+        print expr_body)
+
 and print_continuation_expr ppf (t : continuation_expr) =
-  merge_id_or_exp t
+  merge_id_or_cont t
     (Apply_expr.Result_continuation.print ppf)
-    (print ppf)
+    (print_handler ppf)
 
 and print_exn_continuation_expr ppf (t : exn_continuation_expr) =
-  merge_id_or_exp t
+  merge_id_or_cont t
     (Continuation.print ppf)
-    (print ppf)
+    (print_handler ppf)
 
 and print_apply ppf
       ({callee; continuation; exn_continuation; apply_args; _} : apply_expr) =
@@ -915,14 +944,14 @@ and ids_for_export_apply
       (fun ids arg -> Ids_for_export.union ids (ids_for_export arg))
        callee_ids apply_args in
   let result_continuation_ids =
-    merge_id_or_exp continuation
+    merge_id_or_cont continuation
       (Apply_expr.Result_continuation.ids_for_export)
-      ids_for_export
+      ids_for_export_cont_handler
   in
   let exn_continuation_ids =
-    merge_id_or_exp exn_continuation
+    merge_id_or_cont exn_continuation
       (Ids_for_export.add_continuation Ids_for_export.empty)
-      ids_for_export
+      ids_for_export_cont_handler
   in
   let call_kind_ids = Call_kind.ids_for_export call_kind in
   (Ids_for_export.union

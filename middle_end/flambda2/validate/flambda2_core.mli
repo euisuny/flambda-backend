@@ -18,6 +18,10 @@ and 'a id_or_exp =
   | Id of 'a
   | Exp of core_exp
 
+and 'a id_or_cont =
+  | Cont_id of 'a
+  | Handler of continuation_handler
+
 (** Let expressions [let x = e1 in e2]
 
    [fun x -> e2] = let_abst
@@ -119,9 +123,9 @@ and apply_expr =
     apply_args: core_exp list;
     call_kind: Call_kind.t; }
 
-and continuation_expr = Apply_expr.Result_continuation.t id_or_exp
+and continuation_expr = Apply_expr.Result_continuation.t id_or_cont
 
-and exn_continuation_expr = Continuation.t id_or_exp
+and exn_continuation_expr = Continuation.t id_or_cont
 
 and apply_cont_expr =
   { k : Continuation.t;
