@@ -138,9 +138,19 @@ We plan to support the block-related primitives (\textsf{load} from a block and 
       {\letexp{(\mathsf{clo} \; \mathcal{K})}{P}{e} \step \subst{e}{x}{(\pi_1 \; P[i], P)}}
 
   \inferrule
+      [\footnotesize LetCloNamed-$\beta$]
+      {x = \mathcal{K}[i]}
+      {\letexp{(\mathsf{clo} \, \Phi\, \; \mathcal{K})}{P}{e} \step \subst{e}{x}{(\Phi, \pi_1 \; P[i], P)}}
+
+  \inferrule
       [\footnotesize LetStaticClo-$\beta$]
       {x \in \mathcal{K}^{\uparrow}}
       {\letexp{(\mathsf{clo}^{\uparrow} \; \mathcal{K}^{\uparrow})}{P}{e} \step \subst{e}{x}{(x, P)}}
+
+  \inferrule
+      [\footnotesize LetStaticCloNamed-$\beta$]
+      {x \in \mathcal{K}^{\uparrow}}
+      {\letexp{(\mathsf{clo}^{\uparrow} \, \Phi \, \; \mathcal{K}^{\uparrow})}{P}{e} \step \subst{e}{x}{(\Phi, x, P)}}
 
   \inferrule
       [\footnotesize LetCode-$\beta$]
@@ -193,18 +203,30 @@ We plan to support the block-related primitives (\textsf{load} from a block and 
         \step
       }\vspace{-1em}\\
       \letcloexp{(\mathbf{f}; \mathcal{K})}{([f_{\mathsf{fn}} \mapsto
-          \subst{\abst{\, res_k,\,exn_k,\,\args{\expr}}{e_1}}
+          \subst{\abst{\rho,\,\, res_k,\,exn_k,\,\args{\expr}}{e_1}}
                 {\pi^\rho_{\mathsf{fn} (f_{\mathsf{fn}} \rightarrow g_{\mathsf{fn}})}}
                 {g_{\mathsf{fn}}}
         ] ; P)}{e_2}\\
 
   \inferrule
-      [ClosureFnStatic]
-      {}
-      {\letstaticcloexp{([f_{\mathsf{fn}} \mapsto \mathbf{f}]; \mathcal{K})}{P}{e_2}
+      [\footnotesize Closure-$\beta$]
+      {\Phi \; \mathsf{fresh}}
+      {\letcloexp{(\mathbf{f}; \mathcal{K})}{([f_{\mathsf{fn}} \mapsto \abst{\rho, \, res_k,\,exn_k,\,\args{\expr}}{e_1}] ; P)}{e_2}
         \step
-        \letstaticcloexp{([f_{\mathsf{fn}} \mapsto \mathbf{f}]; \mathcal{K})}{\subst{P}{\mathbf{f}}{f_{\mathsf{fn}}}}{e_2}
-      }
+      }\vspace{-1em}\\
+      \letcloexp{\Phi \; (\mathbf{f}; \mathcal{K})}{([f_{\mathsf{fn}} \mapsto
+          \subst{\abst{res_k,\,exn_k,\,\args{\expr}}{e_1}}
+                {\rho}
+                {\Phi}
+        ] ; P)}{e_2}
+
+  %% \inferrule
+  %%     [ClosureFnStatic]
+  %%     {}
+  %%     {\letstaticcloexp{([f_{\mathsf{fn}} \mapsto \mathbf{f}]; \mathcal{K})}{P}{e_2}
+  %%       \step
+  %%       \letstaticcloexp{([f_{\mathsf{fn}} \mapsto \mathbf{f}]; \mathcal{K})}{\subst{P}{\mathbf{f}}{f_{\mathsf{fn}}}}{e_2}
+  %%     }
 
   \inferrule
       [\footnotesize ApplyContR]
@@ -221,7 +243,14 @@ We plan to support the block-related primitives (\textsf{load} from a block and 
       [\footnotesize ApplyCont-$\beta$]
       {}
       {\applycont{(\abst{x}{e})}{v} \step \subst{e}{x}{v}}
+\end{mathpar}
+\caption{Evaluation Rules for Flambda2 Core}
+\label{fig:reduction}
+\end{figure}
 
+\begin{figure}[h!]
+\footnotesize
+\begin{mathpar}
   \inferrule
       [\footnotesize ApplyR]
       {\args{args} \step \args{args}'}
@@ -252,7 +281,7 @@ We plan to support the block-related primitives (\textsf{load} from a block and 
 
       \overrightarrow{args} \step \overrightarrow{args}' := \forall a, a \in \overrightarrow{args}. \exists a', a \step^\ast a' \land a \in \overrightarrow{args}'
 \end{mathpar}
-\caption{Evaluation Rules for Flambda2 Core}
+\caption{Evaluation Rules for Flambda2 Core (Continued.)}
 \label{fig:reduction}
 \end{figure}
 
