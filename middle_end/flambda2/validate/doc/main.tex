@@ -187,7 +187,7 @@ We plan to support the block-related primitives (\textsf{load} from a block and 
         \letcloexp{\mathcal{K}}{\subst{P}{\pi^\rho_{\mathsf{val(v)}}}{\idexpr_v}}{e}}
 
   \inferrule
-      [ClosureFnStatic]
+      [ClosureFn]
       {K[i] = \mathbf{g} \\ P[i]  = (g_{\mathsf{fn}}, \expr_g)}
       {\letcloexp{(\mathbf{f}; \mathcal{K})}{([f_{\mathsf{fn}} \mapsto \abst{\rho, \, res_k,\,exn_k,\,\args{\expr}}{e_1}] ; P)}{e_2}
         \step
