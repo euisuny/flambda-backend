@@ -184,7 +184,7 @@ We plan to support the block-related primitives (\textsf{load} from a block and 
 
  \inferrule
      [ClosureFn]
-     {[g_{\mathsf{fn}} \mapsto \mathbf{g}] \in K \\ @g \in P}
+     {[g_{\mathsf{fn}} \mapsto \mathbf{g}] \in K \\ (g_{\mathsf{fn}}, \expr_g) \in P}
      {\letcloexp{([f_{\mathsf{fn}} \mapsto \mathbf{f}]; \mathcal{K})}{([f_{\mathsf{fn}} \mapsto \abst{\rho, \, res_k,\,exn_k,\,\args{\expr}}{e_1}] ; P)}{e_2}
        \step
      }\vspace{-1em}\\
