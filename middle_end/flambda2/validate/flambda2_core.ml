@@ -106,7 +106,6 @@ module Bound = struct
     Renaming.compose
       ~second:(Bound_parameters.renaming params1 ~guaranteed_fresh:params2)
       ~first:renaming
-
 end
 
 type core_exp =
@@ -550,42 +549,46 @@ and apply_renaming_switch {scrutinee; arms} renaming : switch_expr =
 (** Sexp-ish simple pretty-printer for [core_exp]s.
   Ignores name_stamp, compilation_unit, and debug_info for simplicity. **)
 let rec print ppf e =
-  fprintf ppf "(@[<hov 1>";
-  (match e with
+  match e with
    | Named t ->
-     fprintf ppf "named@ ";
-     print_named ppf t;
+     fprintf ppf "named@ %a"
+     print_named t
    | Let t ->
-     fprintf ppf "let@ ";
-     print_let ppf t;
+     fprintf ppf "@[<hov 1>let@ %a@]"
+     print_let t
    | Let_cont t ->
-     fprintf ppf "let_cont@ ";
-     print_let_cont ppf t;
+     fprintf ppf "@[<hov 1>let_cont@ %a@]"
+     print_let_cont t
    | Apply t ->
-     fprintf ppf "apply@ ";
-     print_apply ppf t;
+     fprintf ppf "@[<hov 1>apply@ %a@]"
+     print_apply t
    | Lambda t ->
-     fprintf ppf "λ@ ";
-     print_lambda ppf t
+     fprintf ppf "@[<hov 1>λ@ %a@]"
+     print_lambda t
    | Apply_cont t ->
-     fprintf ppf "apply_cont@ ";
-     print_apply_cont ppf t;
+     fprintf ppf "@[<hov 1>(apply_cont@ %a)@]"
+     print_apply_cont t
    | Switch t ->
-     fprintf ppf "switch@ ";
-     print_switch ppf t;
+     fprintf ppf "@[<hov 1>switch@ %a@]"
+     print_switch t
    | Invalid { message } ->
-     fprintf ppf "invalid %s" message);
-  fprintf ppf "@])";
+     fprintf ppf "@[<hov 1>invalid %s@]" message
 
-and print_lambda _ppf _t =
-  failwith "Unimplemented"
+and print_lambda ppf t =
+  Name_abstraction.pattern_match_for_printing
+    (module Bound)
+    t ~apply_renaming_to_term:apply_renaming
+    ~f:(fun bound body ->
+      fprintf ppf "%a,@ %a"
+        Bound.print bound
+        print body)
 
 and print_let ppf ({let_abst; expr_body} : let_expr) =
   Name_abstraction.pattern_match_for_printing
     (module Bound_pattern)
     let_abst ~apply_renaming_to_term:apply_renaming
     ~f:(fun bound body ->
-        fprintf ppf "(bound@ (%a),@ body@ (%a))@ in=%a"
+        fprintf ppf "(bound@ (%a).@ (%a))@ in=%a"
         print_bound_pattern bound
         print expr_body
         print body)
@@ -820,7 +823,7 @@ and print_cont ppf (k : Bound_continuation.t) =
 
 and print_recursive_let_cont ppf (k : Bound_continuations.t)
       ({continuation_map; body} : recursive_let_expr) =
-  fprintf ppf "[@ %a@ ] " Bound_continuations.print k;
+  fprintf ppf "[@ %a@ ]@ " Bound_continuations.print k;
   Name_abstraction.pattern_match_for_printing
     (module Bound_parameters) continuation_map
     ~apply_renaming_to_term:apply_renaming_cont_map
@@ -828,14 +831,14 @@ and print_recursive_let_cont ppf (k : Bound_continuations.t)
       fprintf ppf "(%a)\n" Bound_parameters.print k;
       Continuation.Map.iter (print_continuation_handler ppf) body;
     );
-  fprintf ppf "@ in\n %a" print body
+  fprintf ppf "@ in\n@ %a" print body
 
 and print_continuation_handler ppf key (t : continuation_handler) =
   Name_abstraction.pattern_match_for_printing
     (module Bound_parameters) t
     ~apply_renaming_to_term:apply_renaming
     ~f:(fun k body ->
-      fprintf ppf "%s: fun %a -> %a"
+      fprintf ppf "@[<hov 1>%s:@ fun %a@ ->@ %a@]"
         (Continuation.name key)
         Bound_parameters.print k print body)
 
@@ -844,7 +847,7 @@ and print_handler ppf (t : continuation_handler) =
     (module Bound_parameters) t
     ~apply_renaming_to_term:apply_renaming
     ~f:(fun k expr_body ->
-      fprintf ppf "(λ %a, %a)"
+      fprintf ppf "@[<hov 1>(λ@ %a,@ %a)@]"
         print_params k
         print expr_body)
 
@@ -860,16 +863,20 @@ and print_exn_continuation_expr ppf (t : exn_continuation_expr) =
 
 and print_apply ppf
       ({callee; continuation; exn_continuation; apply_args; _} : apply_expr) =
-  fprintf ppf "%a %a %a "
+  fprintf ppf "%a@ %a@ %a@ "
     print callee
     print_continuation_expr continuation
     print_exn_continuation_expr exn_continuation;
-  Format.pp_print_list ~pp_sep:Format.pp_print_space print ppf apply_args
+  fprintf ppf "(";
+  Format.pp_print_list ~pp_sep:Format.pp_print_space print ppf apply_args;
+  fprintf ppf ")"
 
 and print_apply_cont ppf ({k ; args} : apply_cont_expr) =
   fprintf ppf "%a@ "
     print_cont k;
-    Format.pp_print_list ~pp_sep:Format.pp_print_space print ppf args
+    fprintf ppf "(";
+    Format.pp_print_list ~pp_sep:Format.pp_print_space print ppf args;
+  fprintf ppf ")"
 
 and print_switch ppf ({scrutinee; arms} : switch_expr) =
   fprintf ppf "switch %a :" print scrutinee;
@@ -1242,6 +1249,9 @@ end
 module Core_lambda = struct
   module A = Name_abstraction.Make (Bound) (T0)
   type t = lambda_expr
+
+  let pattern_match = A.pattern_match
+  let create = A.create
 
   let pattern_match_pair t1 t2 ~f =
     A.pattern_match_pair t1 t2

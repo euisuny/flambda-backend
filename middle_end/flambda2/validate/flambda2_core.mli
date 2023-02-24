@@ -251,6 +251,11 @@ end
 module Core_lambda : sig
   type t = lambda_expr
 
+  val create : Bound.t -> T0.t -> t
+
+  val pattern_match :
+    t -> f:(Bound.t -> T0.t -> 'a) -> 'a
+
   val pattern_match_pair:
     t -> t ->
     f:(return_continuation:Continuation.t ->

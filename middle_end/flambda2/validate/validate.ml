@@ -669,8 +669,12 @@ and subst_pattern_static
        apply_args =
          List.map (subst_pattern_static ~bound ~let_body) apply_args;
        call_kind}
-  | Lambda _ ->
-    failwith "Unimplemented subst_pattern_static : Lambda"
+  | Lambda e ->
+    Core_lambda.pattern_match e
+      ~f:(fun b e ->
+        Lambda (Core_lambda.create
+          b
+          (subst_pattern_static ~bound ~let_body e)))
   | Invalid _ -> e
 
 (* NOTE: Be careful with dominator-style [Static] scoping.. *)
@@ -966,7 +970,11 @@ let rec normalize (env : Env.t) (e:core_exp) : core_exp =
   | Apply_cont {k ; args} ->
     (* The recursive call for [apply_cont] is done for the arguments *)
     normalize_apply_cont env k args
-  | Lambda _ -> e
+  | Lambda e ->
+    (* FIXME Weird... why should we reduce under a lambda? *)
+    Core_lambda.pattern_match e
+      ~f:(fun x e ->
+        Lambda (Core_lambda.create x (normalize env e)))
   | Switch {scrutinee; arms} -> (* TODO *)
     Switch {scrutinee = normalize env scrutinee; arms}
   | Named e -> normalize_named env e
@@ -982,30 +990,6 @@ and normalize_let env let_abst body : core_exp =
     (* [LetCode-β] Non-recursive case
        let code f (x, ρ, res_k, exn_k) = e1 in e2 ⟶ e2 [f \ λ (x, ρ, res_k, exn_k). e1] *)
     subst_pattern ~bound:x ~let_body:e1 e2
-  | Named (Static_consts _) ->
-    (* [LetCode-β] Recursive case
-       Static variables may bind mutually recursive objects
-       (e.g. a (mutually recursive) list of code blocks and a set of closure
-       definition that indicates the closure of each code block).
-
-       To resolve the set of closures, we do a two-stage substitution:
-
-       First, we copy in a the content of the let-bound static code blocks
-       into the set of closures definition.
-
-       (Normalization for let-static declarations)
-       [LetStatic-β]
-       let code rec f1 (x) = body ... and set_of_clo K = closures ->
-       let code rec f1 (x) = body ... and set_of_clo K = closures[f1\body]
-
-       Then, we perform a pointwise [Let-β] (per usual) over the list of bound
-       variables. *)
-
-    (* [LetStatic-β] *)
-    (* let e1 = normalize_let_static ~bound:x ~static_consts:(a :: l)
-     * in *)
-    (* [Let-β] *)
-    subst_pattern ~bound:x ~let_body:e1 e2
   | _ ->
       (* [LetL]
                       e1 ⟶ e1'
@@ -1015,20 +999,6 @@ and normalize_let env let_abst body : core_exp =
       (* [Let-β]
          let x = v in e1 ⟶ e2 [x\v] *)
       subst_pattern ~bound:x ~let_body:e1 e2
-
-(* (* FIXME : This is buggy *)
- * and normalize_let_static ~bound ~static_consts =
- *   List.fold_left
- *   (fun acc (id, const) ->
- *       match acc, const, id with
- *       | Named acc,
- *         Static_const (Static_set_of_closures _),
- *         Bound_static.Pattern.Set_of_closures set ->
- *         subst_bound_set_of_closures set ~let_body:(Named (Static_consts [const])) acc
- *       | _ -> acc)
- *   (Named (Static_consts static_consts))
- *   (List.combine (Bound_pattern.must_be_static bound |> Bound_static.to_list)
- *       static_consts) *)
 
 and normalize_let_cont _env (e:let_cont_expr) : core_exp =
   match e with
@@ -1080,6 +1050,33 @@ and normalize_apply _env callee continuation exn_continuation apply_args call_ki
     in
     subst_params (Bound_for_function.params slot_bound) exp
       (List.map (normalize (Env.create ())) apply_args)
+  | Lambda exp ->
+    let bound, exp =
+      Core_lambda.pattern_match exp ~f:(fun x y -> x,y)
+    in
+    let renaming = Renaming.empty
+    in
+    let renaming =
+      (match continuation with
+       | Cont_id (Apply_expr.Result_continuation.Return continuation) ->
+         Renaming.add_continuation renaming
+           (bound.return_continuation)
+           continuation
+       | _ -> renaming)
+    in
+    let renaming =
+      (match exn_continuation with
+       | Cont_id exn_continuation ->
+         Renaming.add_continuation renaming
+           (bound.exn_continuation)
+           exn_continuation
+       | _ -> renaming)
+    in
+    let exp =
+      apply_renaming exp renaming
+    in
+    subst_params (bound.params) exp
+      (List.map (normalize (Env.create ())) apply_args)
   | _ ->
     Apply {callee;continuation;
            exn_continuation;apply_args;call_kind}
@@ -1119,8 +1116,9 @@ and normalize_static_const_or_code env (const_or_code : static_const_or_code)
 and normalize_static_const_group env (consts : static_const_group) : core_exp =
   Named (Static_consts (List.map (normalize_static_const_or_code env) consts))
 
-(* N.B. This normalization is rather inefficient; it goes through three passes of
-  the value and function expressions *)
+(* N.B. This normalization is rather inefficient;
+   Right now (for the sake of clarity) it goes through three passes of the
+   value and function expressions *)
 and normalize_set_of_closures env {function_decls; value_slots; alloc_mode}
   : set_of_closures =
   let value_slots =
@@ -1128,7 +1126,9 @@ and normalize_set_of_closures env {function_decls; value_slots; alloc_mode}
       (fun (val_expr, kind) -> (normalize_value_expr env val_expr, kind))
       value_slots
   in
-  (* substituting in value slots for [Project_value_slots] *)
+  (* [ClosureVal] and [ClosureFn]
+     substituting in value slots for [Project_value_slots] and
+     substituting in function slots for [Project_function_slots] *)
   let in_order =
     Function_slot.Lmap.map
       (fun x ->
@@ -1139,7 +1139,8 @@ and normalize_set_of_closures env {function_decls; value_slots; alloc_mode}
                code
               {function_decls;value_slots;alloc_mode}
            in
-           Exp (Named (Static_consts [Code params_and_body]))
+           Exp params_and_body (* FIXME: Might want to put [Lambda] as a [Static_const] *)
+             (* (Named (Static_consts [Code params_and_body])) *)
          | _ -> x)
       function_decls.in_order
   in
@@ -1161,13 +1162,18 @@ and normalize_set_of_closures env {function_decls; value_slots; alloc_mode}
     we eliminate the projection. *)
 and subst_my_closure
     (fn_expr : function_params_and_body)
-    (clo : set_of_closures) : function_params_and_body =
-  let param, body =
-    Core_function_params_and_body.pattern_match ~f:(fun x y -> x, y) fn_expr
-  in
-  let body = subst_my_closure_body clo body
-  in
-  Core_function_params_and_body.create param body
+    (clo : set_of_closures) : core_exp =
+  Core_function_params_and_body.pattern_match fn_expr
+    ~f:(fun bff e ->
+      Lambda (
+        Core_lambda.create
+          (Bound.create
+            ~return_continuation:(Bound_for_function.return_continuation bff)
+            ~exn_continuation:(Bound_for_function.exn_continuation bff)
+            ~params:(Bound_for_function.params bff))
+          (subst_my_closure_body clo e)
+      )
+    )
 
 and subst_my_closure_body (clo: set_of_closures) (e : core_exp) : core_exp =
   match e with
@@ -1215,6 +1221,7 @@ and subst_my_closure_body (clo: set_of_closures) (e : core_exp) : core_exp =
         arms = Targetint_31_63.Map.map (subst_my_closure_body clo) arms; }
   | Invalid _ -> e
 
+(* [ClosureVal] and [ClosureFn] normalization *)
 and subst_my_closure_body_named
     ({function_decls=_;value_slots;alloc_mode=_}: set_of_closures) (e : named)
   : core_exp =
