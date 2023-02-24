@@ -45,7 +45,7 @@ let check_alpha_equivalence file1 file2 : unit =
   Compilation_unit.set_current (Some comp_unit);
 
   Format.fprintf Format.std_formatter
-    "..............................................................................@. ";
+   "..............................................................................@.";
   let fl_output = parse_flambda (cwd ^ test_dir ^ file1) in
   let core_output = flambda_unit_to_core fl_output in
 
@@ -145,7 +145,7 @@ let normalize_term file : unit =
     "@..............................[α-equivalent?:%s]............................."
     (alpha_eq |> Equiv.eq_string |> String.uppercase_ascii);
   Format.fprintf Format.std_formatter
-    "@.==============================================================================@.";
+    "@.==============================================================================@. ";
   ()
 
 (** Top-level driver for testing **)
@@ -210,9 +210,20 @@ let () =
   (* simplify_term "apply_orig.fl";
    * normalize_term "apply_orig.fl"; *)
 
+  (* simplify_term "noinline.fl";
+   * normalize_term "noinline.fl"; *)
+
   (* ---------- NEXT --------- *)
+  (* [Length] *)
+
+  simplify_term "size.fl";
+  normalize_term "size.fl";
+
+  (* simplify_term "length.fl";
+   * normalize_term "length.fl"; *)
+
   (* [Recursive] *)
 
-  simplify_term "rec.fl";
-  normalize_term "rec.fl";
+  (* simplify_term "rec.fl";
+   * normalize_term "rec.fl"; *)
   ()
