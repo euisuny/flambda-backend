@@ -74,11 +74,14 @@
     %
     \expr ::=~& \named \sep \letexp{\var}{\expr_1}{\expr_2} \sep \letcloexp{\mathcal{K}}{\setofclo}{\expr}\\
     & \sep \letcodeexp{\codeid}{\code}{\expr} \sep \letstaticcloexp{\mathcal{K}}{\setofclo}{\expr} \\
-    & \sep \letblockexp{\blockpat}{\block}{\expr} \sep \letcont{\expr_1}{k}{x}{\expr_2} \\
+    & \sep \letblockexp{\blockpat}{\block}{\expr} \sep \letcont{\expr_1}{k}{\args{\expr}}{\expr_2} \\
     & \sep \apply{\callid}{\expr_{\rho}}{res_k}{exn_k}{\args{\expr}} \sep \applycont{\expr_1}{\args{\expr_2}} \\
+    & \sep \abst{(res_k,\, exn_k,\, \args{\expr})}{\expr_b}\\
     & \sep \switch{\expr_1}{\arms} \sep \invalid \\
     %
-    x_k ::=~& \contid{k} \sep \abst{x}{\expr} \\
+    \code ::=~& \abst{(\rho,\, res_k,\,exn_k\, \args{\expr})}{\expr_b} \\
+    %
+    x_k ::=~& \contid{k} \sep \abst{\args{\expr}}{\expr_b} \\
     %
     P ::=~& \{ \mathsf{fns} : (\mathit{slot}^{f} \ast \, \idexpr ) \; \mathit{map} ; \;
     \mathsf{vals} : (\mathit{slot}^{v} \ast \simpleexpr) \; \mathit{map} \}\\
@@ -127,13 +130,13 @@ We plan to support the block-related primitives (\textsf{load} from a block and 
 
   \inferrule
       [\footnotesize LetClo-$\beta$]
-      {x = X[i]}
-      {\letexp{(\mathsf{clo} \; X)}{K}{e} \step \subst{e}{x}{(\pi_1 \; K[i], K)}}
+      {x = \mathcal{K}[i]}
+      {\letexp{(\mathsf{clo} \; \mathcal{K})}{P}{e} \step \subst{e}{x}{(\pi_1 \; P[i], P)}}
 
   \inferrule
       [\footnotesize LetStaticClo-$\beta$]
-      {x \in X^{\uparrow}}
-      {\letexp{(\mathsf{clo} \; X^{\uparrow})}{K}{e} \step \subst{e}{x}{(x, K)}}
+      {x \in \mathcal{K}^{\uparrow}}
+      {\letexp{(\mathsf{clo} \; \mathcal{K}^{\uparrow})}{P}{e} \step \subst{e}{x}{(x, P)}}
 
   \inferrule
       [\footnotesize LetCode-$\beta$]
@@ -173,6 +176,23 @@ We plan to support the block-related primitives (\textsf{load} from a block and 
       {}
       {\letcont{e_1}{k}{\args{args}}{e_2} \step \subst{e_1}{k}{\abst{\args{args}}{e_2}}}
 
+  \inferrule
+      [\footnotesize ClosureVal]
+      {}
+      {\letcloexp{(v_{\mathsf{val}} ; \mathcal{K})}{(\idexpr_v; P)}{e} \step
+        \letcloexp{\mathcal{K}}{\subst{P}{\pi^\rho_{\mathsf{val(v)}}}{\idexpr_v}}{e}}
+
+ \inferrule
+     [ClosureFn]
+     {[g_{\mathsf{fn}} \mapsto \mathbf{g}] \in K \\ @g \in P}
+     {\letcloexp{([f_{\mathsf{fn}} \mapsto \mathbf{f}]; \mathcal{K})}{([f_{\mathsf{fn}} \mapsto \abst{\rho, \, res_k,\,exn_k,\,\args{\expr}}{e_1}] ; P)}{e_2}
+       \step
+     }\vspace{-1em}\\
+     \letcloexp{([f_{\mathsf{fn}} \mapsto \mathbf{f}]; \mathcal{K})}{([f_{\mathsf{fn}} \mapsto
+         \subst{\abst{\, res_k,\,exn_k,\,\args{\expr}}{e_1}}
+               {\pi^\rho_{\mathsf{fn} (f \rightarrow g)}}
+               {\mathbf{g}}
+       ] ; P)}{e_2}\\
 
   \inferrule
       [\footnotesize ApplyContR]
