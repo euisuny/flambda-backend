@@ -73,7 +73,7 @@
     \named ::=~& \simple \sep \prim \sep P \sep \staticconsts \sep \recinfo \\
     %
     \expr ::=~& \named \sep \letexp{\var}{\expr_1}{\expr_2} \sep \letcloexp{\mathcal{K}}{\setofclo}{\expr}\\
-    & \sep \letcodeexp{\codeid}{\code}{\expr} \sep \letstaticcloexp{\mathcal{K}}{\setofclo}{\expr} \\
+    & \sep \letcodeexp{\codeid}{\code}{\expr} \sep \letstaticcloexp{\mathcal{K}^{\uparrow}}{\setofclo}{\expr} \\
     & \sep \letblockexp{\blockpat}{\block}{\expr} \sep \letcont{\expr_1}{k}{\args{\expr}}{\expr_2} \\
     & \sep \apply{\callid}{\expr_{\rho}}{res_k}{exn_k}{\args{\expr}} \sep \applycont{\expr_1}{\args{\expr_2}} \\
     & \sep \abst{(res_k,\, exn_k,\, \args{\expr})}{\expr_b}\\
@@ -82,6 +82,10 @@
     \code ::=~& \abst{(\rho,\, res_k,\,exn_k\, \args{\expr})}{\expr_b} \\
     %
     x_k ::=~& \contid{k} \sep \abst{\args{\expr}}{\expr_b} \\
+    %
+    \mathcal{K} ::=~& \var \; list \\
+    %
+    \mathcal{K}^{\uparrow} ::=~& (\mathit{slot}^{f} \ast \symb) \; \mathit{map} \\
     %
     P ::=~& \{ \mathsf{fns} : (\mathit{slot}^{f} \ast \, \idexpr ) \; \mathit{map} ; \;
     \mathsf{vals} : (\mathit{slot}^{v} \ast \simpleexpr) \; \mathit{map} \}\\
@@ -136,7 +140,7 @@ We plan to support the block-related primitives (\textsf{load} from a block and 
   \inferrule
       [\footnotesize LetStaticClo-$\beta$]
       {x \in \mathcal{K}^{\uparrow}}
-      {\letexp{(\mathsf{clo} \; \mathcal{K}^{\uparrow})}{P}{e} \step \subst{e}{x}{(x, P)}}
+      {\letexp{(\mathsf{clo}^{\uparrow} \; \mathcal{K}^{\uparrow})}{P}{e} \step \subst{e}{x}{(x, P)}}
 
   \inferrule
       [\footnotesize LetCode-$\beta$]
@@ -179,20 +183,28 @@ We plan to support the block-related primitives (\textsf{load} from a block and 
   \inferrule
       [\footnotesize ClosureVal]
       {}
-      {\letcloexp{(v_{\mathsf{val}} ; \mathcal{K})}{(\idexpr_v; P)}{e} \step
+      {\letcloexp{\mathcal{K}}{([v_{\mathsf{val}} \mapsto \idexpr_v]; P)}{e} \step
         \letcloexp{\mathcal{K}}{\subst{P}{\pi^\rho_{\mathsf{val(v)}}}{\idexpr_v}}{e}}
 
- \inferrule
-     [ClosureFn]
-     {[g_{\mathsf{fn}} \mapsto \mathbf{g}] \in K \\ (g_{\mathsf{fn}}, \expr_g) \in P}
-     {\letcloexp{([f_{\mathsf{fn}} \mapsto \mathbf{f}]; \mathcal{K})}{([f_{\mathsf{fn}} \mapsto \abst{\rho, \, res_k,\,exn_k,\,\args{\expr}}{e_1}] ; P)}{e_2}
-       \step
-     }\vspace{-1em}\\
-     \letcloexp{([f_{\mathsf{fn}} \mapsto \mathbf{f}]; \mathcal{K})}{([f_{\mathsf{fn}} \mapsto
-         \subst{\abst{\, res_k,\,exn_k,\,\args{\expr}}{e_1}}
-               {\pi^\rho_{\mathsf{fn} (f \rightarrow g)}}
-               {\mathbf{g}}
-       ] ; P)}{e_2}\\
+  \inferrule
+      [ClosureFnStatic]
+      {K[i] = \mathbf{g} \\ P[i]  = (g_{\mathsf{fn}}, \expr_g)}
+      {\letcloexp{(\mathbf{f}; \mathcal{K})}{([f_{\mathsf{fn}} \mapsto \abst{\rho, \, res_k,\,exn_k,\,\args{\expr}}{e_1}] ; P)}{e_2}
+        \step
+      }\vspace{-1em}\\
+      \letcloexp{(\mathbf{f}; \mathcal{K})}{([f_{\mathsf{fn}} \mapsto
+          \subst{\abst{\, res_k,\,exn_k,\,\args{\expr}}{e_1}}
+                {\pi^\rho_{\mathsf{fn} (f_{\mathsf{fn}} \rightarrow g_{\mathsf{fn}})}}
+                {g_{\mathsf{fn}}}
+        ] ; P)}{e_2}\\
+
+  \inferrule
+      [ClosureFnStatic]
+      {}
+      {\letstaticcloexp{([f_{\mathsf{fn}} \mapsto \mathbf{f}]; \mathcal{K})}{P}{e_2}
+        \step
+        \letstaticcloexp{([f_{\mathsf{fn}} \mapsto \mathbf{f}]; \mathcal{K})}{\subst{P}{\mathbf{f}}{f_{\mathsf{fn}}}}{e_2}
+      }
 
   \inferrule
       [\footnotesize ApplyContR]
@@ -223,10 +235,10 @@ We plan to support the block-related primitives (\textsf{load} from a block and 
   \inferrule
       [\footnotesize Apply-$\beta$]
       {}
-      {\apply{\direct \; (\lambda P \; k_r \; k_e \; x.e)}{P'}{res_k}{exn_k}{\args{v}}
+      {\apply{\direct \; \abst{(\rho, \, res_k,\, exn_k,\, \args{\expr})}{\expr_f}}{\rho'}{res_k'}{exn_k'}{\args{v}}
        \step
-       \subst{e}{P}{P'}\substchain{k_r}{res_k}\substchain{k_e}{exn_k}\substchain{x}{\args{v}}
-      }
+      }\vspace{-1em}\\
+      \subst{\expr_f}{\rho}{\rho'}\substchain{res_k}{res_k'}\substchain{exn_k}{exn_k'}\substchain{\args{\expr}}{\args{v}}\\
 
   \inferrule
       [\footnotesize Switch]
