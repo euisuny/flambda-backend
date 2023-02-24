@@ -6,14 +6,120 @@ let fprintf = Format.fprintf
    (2) Ignore [Num_occurrences] (which is used for making inlining decisions)
    (3) Ignored traps for now *)
 
+module Bound = struct
+  type t =
+    { return_continuation: Bound_continuation.t;
+      exn_continuation: Bound_continuation.t;
+      params: Bound_parameters.t }
+
+  let create ~return_continuation ~exn_continuation ~params =
+    Bound_parameters.check_no_duplicates params;
+    { return_continuation;
+      exn_continuation;
+      params;
+    }
+
+  let free_names
+        { return_continuation;
+          exn_continuation;
+          params;
+        } =
+    (* See [bound_continuations.ml] for why [add_traps] is [true]. *)
+    let free_names =
+      Name_occurrences.add_continuation Name_occurrences.empty return_continuation
+        ~has_traps:true
+    in
+    let free_names =
+      Name_occurrences.add_continuation free_names exn_continuation
+        ~has_traps:true
+    in
+    let free_names =
+      Name_occurrences.union free_names (Bound_parameters.free_names params)
+    in
+    free_names
+
+  let apply_renaming
+        { return_continuation;
+          exn_continuation;
+          params} renaming =
+    let return_continuation =
+      Renaming.apply_continuation renaming return_continuation
+    in
+    let exn_continuation =
+      Renaming.apply_continuation renaming exn_continuation
+    in
+    let params = Bound_parameters.apply_renaming params renaming in
+    { return_continuation;
+      exn_continuation;
+      params;
+    }
+
+  let ids_for_export
+        { return_continuation;
+          exn_continuation;
+          params;
+        } =
+    let ids =
+      Ids_for_export.add_continuation Ids_for_export.empty return_continuation
+    in
+    let ids = Ids_for_export.add_continuation ids exn_continuation in
+    Ids_for_export.union ids (Bound_parameters.ids_for_export params)
+
+  let[@ocamlformat "disable"] print ppf
+       { return_continuation; exn_continuation; params; } =
+    Format.fprintf ppf "@[<hov 1>(\
+                        @[<hov 1>(return_continuation@ %a)@]@ \
+                        @[<hov 1>(exn_continuation@ %a)@]@ \
+                        @[<hov 1>(params@ %a)@])@]"
+      Continuation.print return_continuation
+      Continuation.print exn_continuation
+      Bound_parameters.print params
+
+  let rename
+        { return_continuation;
+          exn_continuation;
+          params;
+        } =
+    { return_continuation = Continuation.rename return_continuation;
+      exn_continuation = Continuation.rename exn_continuation;
+      params = Bound_parameters.rename params;
+    }
+
+  let renaming
+      { return_continuation = return_continuation1;
+        exn_continuation = exn_continuation1;
+        params = params1;
+      }
+      ~guaranteed_fresh:
+        { return_continuation = return_continuation2;
+          exn_continuation = exn_continuation2;
+          params = params2;
+        } =
+    let renaming =
+      Renaming.add_fresh_continuation Renaming.empty return_continuation1
+        ~guaranteed_fresh:return_continuation2
+    in
+    let renaming =
+      Renaming.add_fresh_continuation renaming exn_continuation1
+        ~guaranteed_fresh:exn_continuation2
+    in
+    Renaming.compose
+      ~second:(Bound_parameters.renaming params1 ~guaranteed_fresh:params2)
+      ~first:renaming
+
+end
+
 type core_exp =
   | Named of named
   | Let of let_expr
   | Let_cont of let_cont_expr
   | Apply of apply_expr
   | Apply_cont of apply_cont_expr
+  | Lambda of lambda_expr
   | Switch of switch_expr
   | Invalid of { message : string }
+
+and lambda_expr = (Bound.t, core_exp) Name_abstraction.t
 
 and 'a id_or_exp =
   | Id of 'a
@@ -176,8 +282,13 @@ let rec apply_renaming t renaming : core_exp =
   | Let_cont t -> Let_cont (apply_renaming_let_cont t renaming)
   | Apply t -> Apply (apply_renaming_apply t renaming)
   | Apply_cont t -> Apply_cont (apply_renaming_apply_cont t renaming)
+  | Lambda t -> Lambda (apply_renaming_lambda t renaming)
   | Switch t -> Switch (apply_renaming_switch t renaming)
   | Invalid t -> Invalid t
+
+and apply_renaming_lambda t renaming : lambda_expr =
+  Name_abstraction.apply_renaming (module Bound) t renaming
+    ~apply_renaming_to_term:apply_renaming
 
 (* renaming for [Let] *)
 and apply_renaming_let { let_abst; expr_body } renaming : let_expr =
@@ -453,6 +564,9 @@ let rec print ppf e =
    | Apply t ->
      fprintf ppf "apply@ ";
      print_apply ppf t;
+   | Lambda t ->
+     fprintf ppf "λ@ ";
+     print_lambda ppf t
    | Apply_cont t ->
      fprintf ppf "apply_cont@ ";
      print_apply_cont ppf t;
@@ -462,6 +576,9 @@ let rec print ppf e =
    | Invalid { message } ->
      fprintf ppf "invalid %s" message);
   fprintf ppf "@])";
+
+and print_lambda _ppf _t =
+  failwith "Unimplemented"
 
 and print_let ppf ({let_abst; expr_body} : let_expr) =
   Name_abstraction.pattern_match_for_printing
@@ -771,6 +888,7 @@ let rec ids_for_export (t : core_exp) =
   | Let_cont t -> ids_for_export_let_cont t
   | Apply t -> ids_for_export_apply t
   | Apply_cont t -> ids_for_export_apply_cont t
+  | Lambda t -> ids_for_export_lambda t
   | Switch t -> ids_for_export_switch t
   | Invalid _ -> Ids_for_export.empty
 
@@ -965,6 +1083,10 @@ and ids_for_export_apply_cont { k; args } =
     (Ids_for_export.add_continuation Ids_for_export.empty k)
     args
 
+and ids_for_export_lambda (t : lambda_expr) =
+  Name_abstraction.ids_for_export
+    (module Bound) t ~ids_for_export_of_term:ids_for_export
+
 and ids_for_export_switch { scrutinee; arms } =
   let scrutinee_ids = ids_for_export scrutinee in
   Targetint_31_63.Map.fold
@@ -1115,4 +1237,17 @@ module Core_function_params_and_body = struct
                 ~my_closure:(Bound_for_function.my_closure bound_for_function)
                 ~my_region:(Bound_for_function.my_region bound_for_function)
                 ~my_depth:(Bound_for_function.my_depth bound_for_function))
+end
+
+module Core_lambda = struct
+  module A = Name_abstraction.Make (Bound) (T0)
+  type t = lambda_expr
+
+  let pattern_match_pair t1 t2 ~f =
+    A.pattern_match_pair t1 t2
+      ~f:(fun
+           bound body1 body2
+           -> f ~return_continuation:(bound.return_continuation)
+                ~exn_continuation:(bound.exn_continuation)
+                (bound.params) body1 body2)
 end

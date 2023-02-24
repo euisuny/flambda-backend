@@ -75,6 +75,8 @@ and subst_pattern_set_of_closures
      Apply_cont
        { k = k;
          args = List.map (subst_pattern_set_of_closures ~bound ~let_body) args }
+  | Lambda _ ->
+    failwith "Unimplemented subst_pattern_set_of_closures: Lambda"
   | Switch _ ->
       failwith "Unimplemented subst_pattern_set_of_closures: Switch"
   | Invalid _ -> e
@@ -295,6 +297,8 @@ and subst_pattern_singleton
      Apply_cont
        { k = k;
          args = List.map (subst_pattern_singleton ~bound ~let_body) args }
+   | Lambda _ ->
+     failwith "Unimplemented subst_letcont: Lambda"
    | Switch {scrutinee; arms} ->
      Switch
        { scrutinee = subst_pattern_singleton ~bound ~let_body scrutinee;
@@ -665,6 +669,8 @@ and subst_pattern_static
        apply_args =
          List.map (subst_pattern_static ~bound ~let_body) apply_args;
        call_kind}
+  | Lambda _ ->
+    failwith "Unimplemented subst_pattern_static : Lambda"
   | Invalid _ -> e
 
 (* NOTE: Be careful with dominator-style [Static] scoping.. *)
@@ -729,6 +735,8 @@ let rec subst_params
       {k = k;
        args = List.map (fun x ->
          subst_params params x args) args'}
+  | Lambda _ ->
+    failwith "Unimplemented subst_params: Lambda"
   | Let_cont (Non_recursive {handler; body}) ->
     Let_cont
       (Non_recursive
@@ -813,6 +821,8 @@ let rec subst_cont (cont_e1: core_exp) (k: Bound_continuation.t)
     else
       Apply_cont
         {k = cont; args = List.map (fun x -> subst_cont x k args cont_e2) concrete_args}
+  | Lambda _ ->
+    failwith "Unimplemented subst_cont: Lambda"
   | Switch {scrutinee; arms} ->
     Switch
       {scrutinee = subst_cont scrutinee k args cont_e2;
@@ -956,6 +966,7 @@ let rec normalize (env : Env.t) (e:core_exp) : core_exp =
   | Apply_cont {k ; args} ->
     (* The recursive call for [apply_cont] is done for the arguments *)
     normalize_apply_cont env k args
+  | Lambda _ -> e
   | Switch {scrutinee; arms} -> (* TODO *)
     Switch {scrutinee = normalize env scrutinee; arms}
   | Named e -> normalize_named env e
@@ -1196,6 +1207,8 @@ and subst_my_closure_body (clo: set_of_closures) (e : core_exp) : core_exp =
     Apply_cont
       { k = k;
         args = List.map (subst_my_closure_body clo) args }
+  | Lambda _ ->
+    failwith "Unimplemented_subst_my_closure_body: Lambda"
   | Switch {scrutinee; arms} ->
     Switch
       { scrutinee = subst_my_closure_body clo scrutinee;

@@ -159,9 +159,10 @@ let rec equiv (env:Env.t) e1 e2 : eq =
   | Let_cont e1, Let_cont e2 -> equiv_let_cont env e1 e2
   | Apply e1, Apply e2 -> equiv_apply env e1 e2
   | Apply_cont e1, Apply_cont e2 -> equiv_apply_cont env e1 e2
+  | Lambda e1, Lambda e2 -> equiv_lambda env e1 e2
   | Switch e1, Switch e2 -> equiv_switch env e1 e2
   | Invalid _, Invalid _ -> true
-  | (Named _ | Let _ | Let_cont _ | Apply _ | Apply_cont _ | Switch _ | Invalid _), _ ->
+  | (Named _ | Let _ | Let_cont _ | Apply _ | Apply_cont _ | Switch _ | Invalid _ | Lambda _), _ ->
     false
 
 (* [let_expr] *)
@@ -491,6 +492,11 @@ and equiv_cont _env (e1 : Continuation.t) (e2 : Continuation.t) : eq =
   | Return, Return
   | Define_root_symbol, Define_root_symbol -> Continuation.equal e1 e2
   | (Normal_or_exn | Return | Define_root_symbol | Toplevel_return), _ -> false
+
+and equiv_lambda env (e1 : lambda_expr) (e2 : lambda_expr) : eq =
+  Core_lambda.pattern_match_pair e1 e2
+    ~f:(fun ~return_continuation:_ ~exn_continuation:_ _params e1 e2 ->
+      equiv env e1 e2)
 
 (* [switch] *)
 and equiv_switch env
