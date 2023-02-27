@@ -1,5 +1,5 @@
 module Pattern : sig
-  type t = private
+  type t =
     | Code of Code_id.t
     | Set_of_closures of Bound_var.t
     | Block_like of Symbol.t

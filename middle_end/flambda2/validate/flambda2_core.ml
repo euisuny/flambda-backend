@@ -1261,6 +1261,12 @@ and core_set_of_closures f arg {function_decls; value_slots; alloc_mode}
   in
   let function_decls = function_decl_create in_order
   in
+  let value_slots =
+    Value_slot.Map.map (fun (x, kind) ->
+      match x with
+      | Id v -> (Exp (f arg v), kind)
+      | Exp e -> (Exp (core_fmap f arg e), kind)) value_slots
+  in
   {function_decls; value_slots; alloc_mode}
 
 and core_fmap_named (f : 'a -> Simple.t -> core_exp) arg (e : named)

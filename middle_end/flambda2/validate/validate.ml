@@ -16,552 +16,85 @@ let _std_print =
 
 (* [Let-β]
       e[bound\let_body] *)
-let rec subst_pattern ~(bound : Bound_pattern.t) ~(let_body : core_exp) (e : core_exp)
+let rec subst_pattern ~(bound : Bound_for_let.t) ~(let_body : core_exp) (e : core_exp)
   : core_exp =
   match bound with
   | Singleton bound ->
-    subst_pattern_singleton ~bound ~let_body e
-  | Set_of_closures bound ->
-    subst_pattern_set_of_closures ~bound ~let_body e
+    core_fmap
+      (fun (bound, let_body) s ->
+        let bound = Simple.var (Bound_var.var bound) in
+        if (Simple.equal s bound) then let_body else e) (bound, let_body) e
   | Static bound ->
-    subst_pattern_static_list ~bound ~let_body e
-
-and subst_pattern_set_of_closures
-      ~(bound : Bound_var.t list) ~(let_body : core_exp) (e : core_exp) : core_exp =
-  match e with
-  | Named e -> subst_pattern_set_of_closures_named ~bound ~let_body e
-  | Let {let_abst; expr_body} ->
-     Core_let.pattern_match {let_abst; expr_body}
-       ~f:(fun ~x ~e1 ~e2 ->
-          Core_let.create
-            ~x
-            ~e1:(subst_pattern_set_of_closures ~bound ~let_body e1)
-            ~e2:(subst_pattern_set_of_closures ~bound ~let_body e2))
-  | Let_cont (Non_recursive {handler; body}) ->
-    let handler =
-      Core_continuation_handler.pattern_match handler
-        (fun param exp ->
-           Core_continuation_handler.create param
-             (subst_pattern_set_of_closures ~bound ~let_body exp))
-    in
-    let body =
-      Core_letcont_body.pattern_match body
-        (fun cont exp ->
-           Core_letcont_body.create cont
-             (subst_pattern_set_of_closures ~bound ~let_body exp))
-    in
-    Let_cont (Non_recursive {handler; body})
-  | Let_cont (Recursive _) ->
-      failwith "Unimplemented subst_pattern_set_of_closures: Let_cont recursive case"
-  | Apply {callee; continuation; exn_continuation; apply_args; call_kind} ->
-    Apply
-      {callee = subst_pattern_set_of_closures ~bound ~let_body callee;
-       continuation; exn_continuation;
-       apply_args =
-         List.map (subst_pattern_set_of_closures ~bound ~let_body) apply_args;
-       call_kind}
-  | Apply_cont {k;args} ->
-     Apply_cont
-       { k = k;
-         args = List.map (subst_pattern_set_of_closures ~bound ~let_body) args }
-  | Lambda _ ->
-    failwith "Unimplemented subst_pattern_set_of_closures: Lambda"
-  | Switch _ ->
-      failwith "Unimplemented subst_pattern_set_of_closures: Switch"
-  | Invalid _ -> e
-
-and subst_pattern_set_of_closures_named
-      ~(bound : Bound_var.t list) ~(let_body : core_exp) (e : named) : core_exp =
-  match e with
-  | Simple v ->
-    let opt_var =
-      List.mapi (fun i x ->
-        if Simple.same (Simple.var (Bound_var.var x)) v then Some i else None) bound
-      |> List.filter Option.is_some
-    in
-    (match opt_var with
-    | Some i :: _ ->
-       (match let_body with
-        | Named (Set_of_closures soc) ->
-          let decls =
-            soc.function_decls.in_order |> Function_slot.Lmap.bindings
-          in
-          let (slot, _) = List.nth decls i
-          in
-          Named (Closure_expr (slot, soc))
-       | _ -> failwith "Expected set of closures")
-    | _ -> Named e)
-  | Prim (Unary (e, arg)) ->
-    let arg = subst_pattern_set_of_closures ~bound ~let_body arg
-    in
-    Named (Prim (Unary (e, arg)))
-  | Prim (Binary (e, arg1, arg2)) ->
-    let arg1 = subst_pattern_set_of_closures ~bound ~let_body arg1
-    in
-    let arg2 = subst_pattern_set_of_closures ~bound ~let_body arg2
-    in
-    Named (Prim (Binary (e, arg1, arg2)))
-  | Prim (Ternary (e, arg1, arg2, arg3)) ->
-    let arg1 = subst_pattern_set_of_closures ~bound ~let_body arg1
-    in
-    let arg2 = subst_pattern_set_of_closures ~bound ~let_body arg2
-    in
-    let arg3 = subst_pattern_set_of_closures ~bound ~let_body arg3
-    in
-    Named (Prim (Ternary (e, arg1, arg2, arg3)))
-  | Prim (Variadic (e, args)) ->
-    let args =
-      List.map (subst_pattern_set_of_closures ~bound ~let_body) args
-    in
-    Named (Prim (Variadic (e, args)))
-  | Set_of_closures {function_decls; value_slots; alloc_mode} ->
-    let value_slots =
-      List.fold_left (fun value_slots b ->
-        Value_slot.Map.map
-          (fun (value, k) ->
-            match value with
-            | Id simple ->
-              let bound = Simple.var (Bound_var.var b) in
-              if (Simple.equal simple bound)
-              then
-               (Exp let_body, k)
-              else (Id simple, k)
-            | Exp exp ->
-              (Exp
-                 (subst_pattern ~bound:(Bound_pattern.set_of_closures bound)
-                    ~let_body exp), k)
-          ) value_slots) value_slots bound
-    in
-    Named (Set_of_closures {function_decls; value_slots; alloc_mode})
-  | Closure_expr
-      (slot, {function_decls; value_slots; alloc_mode}) ->
-    let value_slots =
-      List.fold_left (fun value_slots b ->
-        Value_slot.Map.map
-          (fun (value, k) ->
-             match value with
-             | Id simple ->
-               let bound = Simple.var (Bound_var.var b) in
-               if (Simple.equal simple bound)
-               then (Exp let_body, k)
-               else (Id simple, k)
-             | Exp exp ->
-               (Exp
-                  (subst_pattern ~bound:(Bound_pattern.set_of_closures bound)
-                     ~let_body exp), k)
-          ) value_slots) value_slots bound
-    in
-    Named (Closure_expr (slot, {function_decls; value_slots; alloc_mode}))
-  | Static_consts [Static_const (Block (tag, mut, list))] ->
-    let list =
-      List.map (subst_pattern_set_of_closures ~bound ~let_body) list in
-    Named (Static_consts [Static_const (Block (tag, mut, list))])
-  | Static_consts _ ->
-      failwith "Unimplemented subst_pattern_set_of_closures: Named Sc"
-  | Rec_info _ ->
-    failwith "Unimplemented subst_pattern_set_of_closures: Named Ri"
-  | _ ->
-    failwith "Unimplemenetd subst_pattern_set_of_closures_named"
-
-and subst_pattern_primitive
-      ~(bound : Bound_var.t) ~(let_body : core_exp) (e : primitive) : core_exp =
-  match e with
-  | Nullary _ -> Named (Prim e)
-  | Unary (e, a) ->
-    Named
-      (Prim (Unary
-               (e,
-                subst_pattern ~bound:(Bound_pattern.singleton bound) ~let_body a)))
-  | Binary (e, a1, a2) ->
-    Named
-      (Prim (Binary
-               (e,
-                subst_pattern ~bound:(Bound_pattern.singleton bound) ~let_body a1,
-                subst_pattern ~bound:(Bound_pattern.singleton bound) ~let_body a2)))
-  | Ternary (e, a1, a2, a3) ->
-    Named
-      (Prim (Ternary
-               (e,
-                subst_pattern ~bound:(Bound_pattern.singleton bound) ~let_body a1,
-                subst_pattern ~bound:(Bound_pattern.singleton bound) ~let_body a2,
-                subst_pattern ~bound:(Bound_pattern.singleton bound) ~let_body a3)))
-  | Variadic (e, args) ->
-    let args =
-      List.map
-        (subst_pattern ~bound:(Bound_pattern.singleton bound) ~let_body)
-        args
-    in
-    Named (Prim (Variadic (e, args)))
-
-(* IY: What do coercions do?
-   Has to do with inlining, ignore for now *)
-and _simple_to_field_of_static_block (x : Simple.t) (dbg : Debuginfo.t)
-      : Field_of_static_block.t =
-  Simple.pattern_match' x
-   ~var:(fun x ~coercion:_ -> Field_of_static_block.Dynamically_computed (x, dbg))
-   ~symbol:(fun x ~coercion:_ -> Field_of_static_block.Symbol x)
-   ~const:(fun x ->
-      match Int_ids.Const.descr x with
-      | Tagged_immediate x -> Field_of_static_block.Tagged_immediate x
-      | _ -> failwith "Non-tagged immediates unsupported")
-
-and subst_pattern_singleton
-      ~(bound : Bound_var.t) ~(let_body : core_exp) (e : core_exp) : core_exp =
-  (match e with
-   | Named (Simple s) ->
-     let bound = Simple.var (Bound_var.var bound) in
-     if (Simple.equal s bound) then let_body else e
-   | Named (Prim p) ->
-     subst_pattern_primitive ~bound ~let_body p
-   | Named (Static_consts [Static_const (Block (tag, mut, list))]) ->
-      let list =
-        List.map
-          (fun x ->
-             subst_pattern_singleton ~bound ~let_body x) list
-     in
-     Named (Static_consts [Static_const (Block (tag, mut, list))])
-   | Named (Set_of_closures {function_decls; value_slots; alloc_mode}) ->
-     let value_slots =
-       Value_slot.Map.map
-         (fun (value, k) ->
-            match value with
-            | Id simple ->
-              let bound = Simple.var (Bound_var.var bound) in
-              if (Simple.equal simple bound)
-              then (Exp let_body, k)
-              else (Id simple, k)
-            | Exp exp ->
-              (Exp (subst_pattern_singleton ~bound ~let_body exp), k)
-         ) value_slots
-     in
-     Named (Set_of_closures {function_decls; value_slots; alloc_mode})
-   | Named (Closure_expr (slot, {function_decls; value_slots; alloc_mode})) ->
-     let value_slots =
-       Value_slot.Map.map
-         (fun (value, k) ->
-            match value with
-            | Id simple ->
-              let bound = Simple.var (Bound_var.var bound) in
-              if (Simple.equal simple bound)
-              then (Exp let_body, k)
-              else (Id simple, k)
-            | Exp exp ->
-              (Exp (subst_pattern_singleton ~bound ~let_body exp), k)
-         ) value_slots
-     in
-     Named (Closure_expr (slot, {function_decls; value_slots; alloc_mode}))
-   | Named (Static_consts _) ->
-     failwith "Unimplemented_subst_static_consts"
-   | Named (Rec_info _) -> e
-   | Let {let_abst; expr_body} ->
-     Core_let.pattern_match {let_abst; expr_body}
-       ~f:(fun ~x ~e1 ~e2 ->
-          Core_let.create
-            ~x
-            ~e1:(subst_pattern_singleton ~bound ~let_body e1)
-            ~e2:(subst_pattern_singleton ~bound ~let_body e2))
-   | Let_cont (Non_recursive {handler;body}) ->
-     Let_cont
-       (Non_recursive
-          { handler =
-              Core_continuation_handler.pattern_match handler
-                (fun param exp ->
-                   Core_continuation_handler.create
-                     param (subst_pattern_singleton ~bound ~let_body exp));
-            body =
-              Core_letcont_body.pattern_match body
-                (fun cont exp ->
-                   Core_letcont_body.create
-                     cont (subst_pattern_singleton ~bound ~let_body exp))})
-   | Let_cont _ ->
-     failwith "Unimplemented_subst_letcont recursive case"
-   | Apply {callee; continuation; exn_continuation; apply_args; call_kind} ->
-     Apply
-       {callee = subst_pattern_singleton ~bound ~let_body callee;
-        continuation; exn_continuation;
-        apply_args =
-          List.map (subst_pattern_singleton ~bound ~let_body) apply_args;
-        call_kind}
-   | Apply_cont {k; args} ->
-     Apply_cont
-       { k = k;
-         args = List.map (subst_pattern_singleton ~bound ~let_body) args }
-   | Lambda _ ->
-     failwith "Unimplemented subst_letcont: Lambda"
-   | Switch {scrutinee; arms} ->
-     Switch
-       { scrutinee = subst_pattern_singleton ~bound ~let_body scrutinee;
-         arms = Targetint_31_63.Map.map (subst_pattern_singleton ~bound ~let_body) arms;}
-   | Invalid _ -> e)
-
-and subst_block_like
-      ~(bound : Symbol.t) ~(let_body : core_exp) (e : named) : core_exp =
-  match e with
-  | Simple v ->
-    if Simple.equal v (Simple.symbol bound) then let_body else Named e
-  | Prim (Nullary e) -> Named (Prim (Nullary e))
-  | Prim (Unary (e, arg1)) ->
-    let arg1 =
-      subst_pattern_static ~bound:(Bound_static.Pattern.block_like bound) ~let_body arg1
-    in
-    Named (Prim (Unary (e, arg1)))
-  | Prim (Binary (e, arg1, arg2)) ->
-    let arg1 =
-      subst_pattern_static ~bound:(Bound_static.Pattern.block_like bound) ~let_body arg1
-    in
-    let arg2 =
-      subst_pattern_static ~bound:(Bound_static.Pattern.block_like bound) ~let_body arg2
-    in
-    Named (Prim (Binary (e, arg1, arg2)))
-  | Prim (Ternary (e, arg1, arg2, arg3)) ->
-    let arg1 =
-      subst_pattern_static ~bound:(Bound_static.Pattern.block_like bound) ~let_body arg1
-    in
-    let arg2 =
-      subst_pattern_static ~bound:(Bound_static.Pattern.block_like bound) ~let_body arg2
-    in
-    let arg3 =
-      subst_pattern_static ~bound:(Bound_static.Pattern.block_like bound) ~let_body arg3
-    in
-    Named (Prim (Ternary (e, arg1, arg2, arg3)))
-  | Prim (Variadic (e, args)) ->
-    let args =
-      List.map (subst_pattern_static ~bound:(Bound_static.Pattern.block_like bound) ~let_body) args
-    in
-    Named (Prim (Variadic (e, args)))
-  | Static_consts l ->
-    subst_block_like_static_const_group ~bound ~let_body l
-  | Closure_expr _ ->
-    Named e (* NEXT *)
-  | Set_of_closures _ ->
-    Named e (* NEXT *)
-  | Rec_info _ ->
-    failwith "Unimplemented_block_like"
-
-and subst_block_like_static_const_group
-      ~(bound: Symbol.t) ~(let_body : core_exp) (e : static_const_group) : core_exp =
-  Named (Static_consts
-        (List.map (subst_block_like_static_const_or_code ~bound ~let_body) e))
-
-and subst_block_like_static_const_or_code
-      ~(bound: Symbol.t) ~(let_body : core_exp) (e : static_const_or_code) : static_const_or_code =
-  match e with
-  | Static_const const -> Static_const (subst_block_like_static_const ~bound ~let_body const)
-  | (Code _ | Deleted_code) -> e
-
-and subst_block_like_static_const
-      ~(bound: Symbol.t) ~(let_body : core_exp) (e : static_const) : static_const =
-  match e with
-  | Block (tag, mut, args) ->
-    let args =
-      List.map
-        (subst_pattern_static ~bound:(Bound_static.Pattern.block_like bound) ~let_body)
-        args
-    in
-    Block (tag, mut, args)
-  | _ -> e (* NEXT *)
-
-(* [Set of closures]
-
-   Given the code for its functions and closure variables, the set of closures
-    keeps track of the mapping between them.
-
-   i.e. it is the code generated by
-    [let f = closure f_0 @f] where [@f] is the function slot and [f_0] refers
-    to the code *)
-and subst_bound_set_of_closures (bound : Symbol.t Function_slot.Lmap.t) ~let_body
-      (e : named) =
-  match e with
-  | Simple v ->
     (match let_body with
-     | Named (Static_consts consts) ->
-       (* Assumption : there is at most one [set_of_closures] definition *)
-       let set =
-         List.find_opt
-          (fun x ->
-              match x with
-              | Static_const (Static_set_of_closures _) -> true
-              | _ -> false) consts
-       in
-       (match set with
-        | Some (Static_const (Static_set_of_closures set)) ->
-          (let bound = Function_slot.Lmap.bindings bound
-           in
-           (* try to find if any of the symbols being bound is the same as the variable v *)
-           let bound_closure =
-             List.find_opt (fun (_, x) ->
-               Simple.same v (Simple.symbol x)) bound
-           in
-           (match bound_closure with
-            | None -> Named e
-            | Some (k, _) -> Named (Closure_expr (k, set))
-           ))
-        | Some _ -> failwith "Cannot be reached"
-        | None -> Named e)
-     | _ -> Named e
-    )
-  | Prim (Nullary e) -> Named (Prim (Nullary e))
-  | Prim (Unary (e, arg1)) ->
-    let arg1 =
-      subst_pattern_static
-        ~bound:(Bound_static.Pattern.set_of_closures bound) ~let_body arg1
-    in
-    Named (Prim (Unary (e, arg1)))
-  | Prim (Binary (e, arg1, arg2)) ->
-    let arg1 =
-      subst_pattern_static
-        ~bound:(Bound_static.Pattern.set_of_closures bound) ~let_body arg1
-    in
-    let arg2 =
-      subst_pattern_static
-        ~bound:(Bound_static.Pattern.set_of_closures bound) ~let_body arg2
-    in
-    Named (Prim (Binary (e, arg1, arg2)))
-  | Prim (Ternary (e, arg1, arg2, arg3)) ->
-    let arg1 =
-      subst_pattern_static
-        ~bound:(Bound_static.Pattern.set_of_closures bound) ~let_body arg1
-    in
-    let arg2 =
-      subst_pattern_static
-        ~bound:(Bound_static.Pattern.set_of_closures bound) ~let_body arg2
-    in
-    let arg3 =
-      subst_pattern_static ~bound:(Bound_static.Pattern.set_of_closures bound) ~let_body arg3
-    in
-    Named (Prim (Ternary (e, arg1, arg2, arg3)))
-  | Prim (Variadic (e, args)) ->
-    let args =
-      List.map
-        (subst_pattern_static ~bound:(Bound_static.Pattern.set_of_closures bound) ~let_body) args
-    in
-    Named (Prim (Variadic (e, args)))
-  | Static_consts e ->
-    subst_bound_set_of_closures_static_const_group ~bound ~let_body e
-  | Closure_expr _ ->
-    Named e (* NEXT *)
-  | Set_of_closures _ ->
-    failwith "Unimplemented_set_of_closures"
-  | Rec_info _ ->
-    failwith "Unimplemented_block_like"
+     | Named (Static_consts list) ->
+       List.fold_left
+         (fun acc (bound, let_body) -> subst_static ~bound ~let_body acc)
+         e
+         (List.combine (Bound_codelike.to_list bound) list)
+     | _ -> failwith "Expected static constants")
 
-and subst_bound_set_of_closures_static_const_group
-      ~bound ~(let_body : core_exp) (e : static_const_group) : core_exp =
-  Named (Static_consts
-           (List.map (subst_bound_set_of_closures_static_const_or_code ~bound ~let_body) e))
+and subst_static ~(bound : Bound_codelike.Pattern.t) ~(let_body : static_const_or_code)
+      (e : core_exp) : core_exp =
+  match bound with
+  | Code id ->
+    (match e with
+    | Named e -> subst_code_id id ~let_body e
+    | _ -> e)
+  | Block_like sym ->
+    core_fmap
+      (fun let_body s ->
+         if (Simple.same (Simple.symbol sym) s) then
+           (Named (Static_consts [let_body])) else e)
+      let_body e
+  | Set_of_closures v ->
+    core_fmap
+      (fun let_body s ->
+         if (Simple.same (Simple.var (Bound_var.var v)) s) then
+           (Named (Static_consts [let_body])) else e)
+      let_body e
 
-and subst_bound_set_of_closures_static_const_or_code
-      ~bound ~(let_body : core_exp) (e : static_const_or_code) : static_const_or_code =
-  match e with
-  | Static_const const ->
-    Static_const (subst_bound_set_of_closures_static_const ~bound ~let_body const)
-  | Code params_and_body ->
-    Code
-      (Core_function_params_and_body.pattern_match
-         params_and_body
-         ~f:(fun
-            params body ->
-            Core_function_params_and_body.create
-              params
-              (subst_pattern_static
-                 ~bound:(Bound_static.Pattern.set_of_closures bound)
-                 ~let_body body)))
-  | Deleted_code -> e
-
-and subst_bound_set_of_closures_static_const
-      ~bound ~(let_body : core_exp) (e : static_const) : static_const =
-  match e with
-  | Block (tag, mut, args) ->
-    let args =
-      List.map
-        (subst_pattern_static ~bound:(Bound_static.Pattern.set_of_closures bound) ~let_body)
-        args
-    in
-    Block (tag, mut, args)
-  | Static_set_of_closures {function_decls;value_slots;alloc_mode}->
-    (let in_order : function_expr Function_slot.Lmap.t =
-       function_decls.in_order |>
-       Function_slot.Lmap.map
-         (fun x ->
-            match x with
-            | Id code_id -> Id code_id
-            | Exp e ->
-              Exp (subst_pattern_static
-                     ~bound:(Bound_static.Pattern.set_of_closures bound)
-                     ~let_body e))
-     in
-     let function_decls =
-       { funs = Function_slot.Map.of_list (Function_slot.Lmap.bindings in_order);
-         in_order }
-     in
-     (Static_set_of_closures {function_decls; value_slots; alloc_mode}))
-    (* let function_decls
-     * failwith "Unimplemented static set of closures" *)
-  | _ -> e (* NEXT *)
-
-and subst_code_id_set_of_closures (bound : Code_id.t) ~(let_body : core_exp)
-      {function_decls; value_slots; alloc_mode}
-  : set_of_closures =
-  let in_order : function_expr Function_slot.Lmap.t =
-    function_decls.in_order |>
-      Function_slot.Lmap.map
-        (fun x ->
-            match x with
-            | Id code_id ->
-              if (Code_id.compare code_id bound = 0)
-              then Exp let_body
-              else Id code_id
-            | Exp e ->
-              Exp (subst_pattern_static ~bound:(Bound_static.Pattern.code bound)
-                    ~let_body e))
-  in
-  let function_decls =
-    { funs = Function_slot.Map.of_list (Function_slot.Lmap.bindings in_order);
-      in_order}
-  in
-  {function_decls; value_slots; alloc_mode}
-
-and subst_code_id (bound : Code_id.t) ~(let_body : core_exp) (e : named) : core_exp =
+and subst_code_id (bound : Code_id.t) ~(let_body : static_const_or_code) (e : named) : core_exp =
   match e with
   | Simple _ -> Named e
   | Prim (Nullary e) -> Named (Prim (Nullary e))
   | Prim (Unary (e, arg1)) ->
     let arg1 =
-      subst_pattern_static
-        ~bound:(Bound_static.Pattern.code bound) ~let_body arg1
+      subst_static
+        ~bound:(Bound_codelike.Pattern.code bound) ~let_body arg1
     in
     Named (Prim (Unary (e, arg1)))
   | Prim (Binary (e, arg1, arg2)) ->
     let arg1 =
-      subst_pattern_static
-        ~bound:(Bound_static.Pattern.code bound) ~let_body arg1
+      subst_static
+        ~bound:(Bound_codelike.Pattern.code bound) ~let_body arg1
     in
     let arg2 =
-      subst_pattern_static
-        ~bound:(Bound_static.Pattern.code bound) ~let_body arg2
+      subst_static
+        ~bound:(Bound_codelike.Pattern.code bound) ~let_body arg2
     in
     Named (Prim (Binary (e, arg1, arg2)))
   | Prim (Ternary (e, arg1, arg2, arg3)) ->
     let arg1 =
-      subst_pattern_static
-        ~bound:(Bound_static.Pattern.code bound) ~let_body arg1
+      subst_static
+        ~bound:(Bound_codelike.Pattern.code bound) ~let_body arg1
     in
     let arg2 =
-      subst_pattern_static
-        ~bound:(Bound_static.Pattern.code bound) ~let_body arg2
+      subst_static
+        ~bound:(Bound_codelike.Pattern.code bound) ~let_body arg2
     in
     let arg3 =
-      subst_pattern_static ~bound:(Bound_static.Pattern.code bound) ~let_body arg3
+      subst_static ~bound:(Bound_codelike.Pattern.code bound) ~let_body arg3
     in
     Named (Prim (Ternary (e, arg1, arg2, arg3)))
   | Prim (Variadic (e, args)) ->
     let args =
       List.map
-        (subst_pattern_static ~bound:(Bound_static.Pattern.code bound) ~let_body) args
+        (subst_static ~bound:(Bound_codelike.Pattern.code bound) ~let_body) args
     in
     Named (Prim (Variadic (e, args)))
-  | Closure_expr (slot, set) ->
-    Named (Closure_expr (slot, subst_code_id_set_of_closures bound ~let_body set))
+  | Slot _ -> failwith "Unimplemented"
+  | Closure_expr (phi, slot, set) ->
+    Named (Closure_expr (phi, slot, subst_code_id_set_of_closures bound ~let_body set))
   | Set_of_closures set ->
     let set = subst_code_id_set_of_closures bound ~let_body set
     in
@@ -569,7 +102,7 @@ and subst_code_id (bound : Code_id.t) ~(let_body : core_exp) (e : named) : core_
   | Static_consts [Static_const (Block (tag, immutable, exps))] ->
     let exps =
       List.map
-        (subst_pattern_static ~bound:(Bound_static.Pattern.code bound) ~let_body) exps
+        (subst_static ~bound:(Bound_codelike.Pattern.code bound) ~let_body) exps
     in
     Named (Static_consts [Static_const (Block (tag, immutable, exps))])
   | Static_consts consts ->
@@ -588,10 +121,10 @@ and subst_code_id (bound : Code_id.t) ~(let_body : core_exp) (e : named) : core_
                     match x with
                     | Id code_id ->
                       if (Code_id.compare code_id bound = 0)
-                      then Exp let_body
+                      then Exp (Named (Static_consts [let_body]))
                       else Id code_id
                     | Exp e ->
-                      Exp (subst_pattern_static ~bound:(Bound_static.Pattern.code bound)
+                      Exp (subst_static ~bound:(Bound_codelike.Pattern.code bound)
                              ~let_body e))
              in
              let function_decls =
@@ -606,155 +139,41 @@ and subst_code_id (bound : Code_id.t) ~(let_body : core_exp) (e : named) : core_
   | Rec_info _ ->
     failwith "Unimplemented_subst_code_id"
 
-and subst_pattern_static
-      ~(bound : Bound_static.Pattern.t) ~(let_body : core_exp) (e : core_exp) : core_exp =
-  match e with
-  | Apply_cont {k ; args} ->
-    Apply_cont
-      {k = k;
-       args = List.map (subst_pattern_static ~bound ~let_body) args}
-  | Let {let_abst; expr_body} ->
-    Core_let.pattern_match {let_abst; expr_body}
-      ~f:(fun ~x ~e1 ~e2 ->
-        Core_let.create
-          ~x
-          ~e1:(subst_pattern_static ~bound ~let_body e1)
-          ~e2:(subst_pattern_static ~bound ~let_body e2))
-  | Switch {scrutinee; arms} ->
-    Switch
-      {scrutinee = subst_pattern_static ~bound ~let_body scrutinee;
-        arms = Targetint_31_63.Map.map
-                 (subst_pattern_static ~bound ~let_body) arms}
-  | Named named ->
-    (match bound with
-     | Block_like bound ->
-       subst_block_like ~bound ~let_body named
-     | Set_of_closures set ->
-       subst_bound_set_of_closures set ~let_body named
-     | Code id ->
-       subst_code_id id ~let_body named)
-  | Let_cont e ->
-    (match e with
-     | Non_recursive {handler; body} ->
-       Let_cont
-         (Non_recursive
-            { handler =
-                Core_continuation_handler.pattern_match handler
-                  (fun param exp ->
-                      Core_continuation_handler.create
-                        param (subst_pattern_static ~bound ~let_body exp));
-              body =
-                Core_letcont_body.pattern_match body
-                  (fun cont exp ->
-                     Core_letcont_body.create
-                       cont (subst_pattern_static ~bound ~let_body exp))})
-     | Recursive _ ->
-       failwith "Unimplemented_static_clo_recursive"
-    )
-  | Apply {callee; continuation; exn_continuation; apply_args; call_kind} ->
-    Apply
-      {callee = subst_pattern_static ~bound ~let_body callee;
-       continuation; exn_continuation;
-       apply_args =
-         List.map (subst_pattern_static ~bound ~let_body) apply_args;
-       call_kind}
-  | Lambda e ->
-    Core_lambda.pattern_match e
-      ~f:(fun b e ->
-        Lambda (Core_lambda.create
-          b
-          (subst_pattern_static ~bound ~let_body e)))
-  | Invalid _ -> e
-
-(* NOTE: Be careful with dominator-style [Static] scoping.. *)
-and subst_pattern_static_list ~(bound : Bound_static.t) ~let_body e : core_exp =
-  let rec subst_pattern_static_list_ s e =
-    (match s with
-     | [] -> e
-     | hd :: tl ->
-       subst_pattern_static_list_ tl
-         (subst_pattern_static ~bound:hd ~let_body e)) in
-  subst_pattern_static_list_ (Bound_static.to_list bound) e
+and subst_code_id_set_of_closures (bound : Code_id.t) ~let_body
+      {function_decls; value_slots; alloc_mode}
+  : set_of_closures =
+  let in_order : function_expr Function_slot.Lmap.t =
+    function_decls.in_order |>
+    Function_slot.Lmap.map
+      (fun x ->
+         match x with
+         | Id code_id ->
+           if (Code_id.compare code_id bound = 0)
+           then Exp (Named (Static_consts [let_body]))
+           else Id code_id
+         | Exp e ->
+           Exp (subst_static ~bound:(Bound_codelike.Pattern.code bound)
+                  ~let_body e))
+  in
+  let function_decls =
+    { funs = Function_slot.Map.of_list (Function_slot.Lmap.bindings in_order);
+      in_order}
+  in
+  {function_decls; value_slots; alloc_mode}
 
 (* ∀ p i, p ∈ params -> params[i] = p -> e [p \ args[i]] *)
 (* [Bound_parameters] are [Variable]s *)
-let rec subst_params
+let subst_params
   (params : Bound_parameters.t) (e : core_exp) (args : core_exp list) =
   let param_list =
     Bound_parameters.to_list params |> List.map Bound_parameter.simple
   in
   let param_args = List.combine param_list args in
-  match e with
-  | Named (Simple s) ->
-    (match List.assoc_opt s param_args with
-    | Some arg_v -> arg_v
-    | None -> e)
-  | Named (Prim (Unary (e, arg))) ->
-    let arg = subst_params params arg args
-    in
-    Named (Prim (Unary (e, arg)))
-  | Named (Prim (Binary (e, arg1, arg2))) ->
-    let arg1 = subst_params params arg1 args
-    in
-    let arg2 = subst_params params arg2 args
-    in
-    Named (Prim (Binary (e, arg1, arg2)))
-  | Named (Prim (Ternary (e, arg1, arg2, arg3))) ->
-    let arg1 = subst_params params arg1 args
-    in
-    let arg2 = subst_params params arg2 args
-    in
-    let arg3 = subst_params params arg3 args
-    in
-    Named (Prim (Ternary (e, arg1, arg2, arg3)))
-  | Named (Prim (Variadic (e, args))) ->
-    let args = List.map (fun x -> subst_params params x args) args
-    in
-    Named (Prim (Variadic (e, args)))
-  | Named (Prim (Nullary _)) -> e
-  | Named (Closure_expr _) -> e
-    (* failwith "Unimplemented_param_named_clo_expr" *)
-  | Named (Set_of_closures _) ->
-    failwith "Unimplemented_param_named_clo"
-  | Named (Static_consts _ | Rec_info _) -> e
-  | Let e ->
-    Core_let.pattern_match e
-      ~f:(fun ~x ~e1 ~e2 ->
-        Core_let.create ~x
-          ~e1:(subst_params params e1 args)
-          ~e2:(subst_params params e2 args))
-  | Apply_cont {k ; args =  args'} ->
-    Apply_cont
-      {k = k;
-       args = List.map (fun x ->
-         subst_params params x args) args'}
-  | Lambda _ ->
-    failwith "Unimplemented subst_params: Lambda"
-  | Let_cont (Non_recursive {handler; body}) ->
-    Let_cont
-      (Non_recursive
-         { handler =
-             Core_continuation_handler.pattern_match handler
-               (fun param exp ->
-                  Core_continuation_handler.create
-                    param (subst_params params exp args));
-           body =
-             Core_letcont_body.pattern_match body
-               (fun cont exp ->
-                  Core_letcont_body.create
-                    cont (subst_params params exp args))})
-  | Let_cont (Recursive _) ->
-    failwith "Unimplemented_param_letcont recursive"
-  | Apply {callee; continuation; exn_continuation; apply_args; call_kind} ->
-    Apply
-      {callee = subst_params params callee args;
-       continuation; exn_continuation;
-       apply_args =
-         List.map (fun exp -> subst_params params exp args) apply_args;
-       call_kind}
-  | Switch _ ->
-    failwith "Unimplemented_param_switch"
-  | Invalid _ -> e
+  core_fmap
+    (fun () s ->
+      match List.assoc_opt s param_args with
+      | Some arg_v -> arg_v
+      | None -> Named (Simple s)) () e
 
 (* [LetCont-β] *)
 let rec subst_cont (cont_e1: core_exp) (k: Bound_continuation.t)
@@ -887,8 +306,7 @@ let eval_prim_binary
           | None -> Named (Prim (Binary (v, arg1, arg2))))
        else
          Named (Prim (Binary (v, arg1, arg2)))
-     | _, _ ->
-       failwith "Unimplemented immutable block_load")
+     | _, _ -> Named (Prim (Binary (v, arg1, arg2))))
   | Block_load (Naked_floats _, (Immutable | Immutable_unique)) ->
     failwith "Unimplemented immutable block load: naked_floats"
   | Block_load (_kind, _Mutable) ->
@@ -950,7 +368,6 @@ let rec normalize (e:core_exp) : core_exp =
   match e with
   | Let { let_abst; expr_body } ->
     normalize_let let_abst expr_body
-    |> normalize
   | Let_cont e ->
     normalize_let_cont e
     |> normalize
@@ -1243,10 +660,11 @@ and normalize_value_expr (val_expr : value_expr) : value_expr =
 and normalize_named (body : named) : core_exp =
   match body with
   | Simple _ (* A [Simple] is a register-sized value *)
+  | Slot _
   | Rec_info _ (* Information about inlining recursive calls, an integer variable *) ->
     Named (body)
-  | Closure_expr (slot, set) ->
-    Named (Closure_expr (slot, normalize_set_of_closures set))
+  | Closure_expr (phi, slot, set) ->
+    Named (Closure_expr (phi, slot, normalize_set_of_closures set))
   | Set_of_closures set -> (* Map of [Code_id]s and [Simple]s corresponding to
                          function and value slots*)
     Named (Set_of_closures (normalize_set_of_closures set))
