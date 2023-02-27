@@ -130,8 +130,8 @@ let normalize_term file : unit =
   Format.fprintf Format.std_formatter
     "------------------------------------------------------------------------------@.";
 
-  let src_core = src_core |> normalize (Env.create ())in
-  let tgt_core = tgt_core |> normalize (Env.create ())in
+  let src_core = src_core |> normalize in
+  let tgt_core = tgt_core |> normalize in
 
   let alpha_eq = Equiv.core_eq src_core tgt_core in
 

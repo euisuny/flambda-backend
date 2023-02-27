@@ -33,12 +33,7 @@
    The [compare] function takes as assumption that the output of the
    simplifier has not changed and shows a syntactic equality up to
    alpha-equivalence. **)
-module Env : sig
-  type t
-  val create: unit -> t
-end
 
-
-val normalize : Env.t -> Flambda2_core.core_exp -> Flambda2_core.core_exp
+val normalize : Flambda2_core.core_exp -> Flambda2_core.core_exp
 
 val validate : cmx_loader:Flambda_cmx.loader -> round:int -> Flambda_unit.t -> bool

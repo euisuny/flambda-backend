@@ -7,16 +7,6 @@ module P = Flambda_primitive
 let _std_print =
   Format.fprintf Format.std_formatter "@. TERM:%a@." print
 
-module Env = struct
-  type t =
-    { mutable _values : (Simple.t * Flambda_kind.With_subkind.t) Value_slot.Map.t;
-      mutable _functions : function_expr Function_slot.Map.t }
-
-  let create () =
-    { _values = Value_slot.Map.empty;
-      _functions = Function_slot.Map.empty }
-end
-
 (** Normalization
 
     - CBV-style reduction for [let] and [letcont] expressions
@@ -835,7 +825,7 @@ let rec subst_cont (cont_e1: core_exp) (k: Bound_continuation.t)
 let eval_prim_nullary (_v : P.nullary_primitive) : named =
   failwith "eval_prim_nullary"
 
-let eval_prim_unary _env (v : P.unary_primitive) (_arg : core_exp) : named =
+let eval_prim_unary (v : P.unary_primitive) (_arg : core_exp) : named =
   match v with
   | Project_value_slot _ -> (Prim (Unary (v, _arg))) (* TODO *)
   | Untag_immediate ->
@@ -948,38 +938,38 @@ let eval_prim_variadic (v : P.variadic_primitive) (args : core_exp list) : named
   | Make_array _ ->
     failwith "eval_prim_variadic_make_array_unspported"
 
-let eval_prim (env : Env.t) (v : primitive) : core_exp =
+let eval_prim (v : primitive) : core_exp =
   match v with
   | Nullary v -> Named (eval_prim_nullary v)
-  | Unary (v, arg) -> Named (eval_prim_unary env v arg)
+  | Unary (v, arg) -> Named (eval_prim_unary v arg)
   | Binary (v, arg1, arg2) -> eval_prim_binary v arg1 arg2
   | Ternary (v, arg1, arg2, arg3) -> Named (eval_prim_ternary v arg1 arg2 arg3)
   | Variadic (v, args) -> Named (eval_prim_variadic v args)
 
-let rec normalize (env : Env.t) (e:core_exp) : core_exp =
+let rec normalize (e:core_exp) : core_exp =
   match e with
   | Let { let_abst; expr_body } ->
-    normalize_let env let_abst expr_body
-    |> normalize env
+    normalize_let let_abst expr_body
+    |> normalize
   | Let_cont e ->
-    normalize_let_cont env e
-    |> normalize env
+    normalize_let_cont e
+    |> normalize
   | Apply {callee; continuation; exn_continuation; apply_args; call_kind} ->
-    normalize_apply env callee continuation exn_continuation apply_args call_kind
+    normalize_apply callee continuation exn_continuation apply_args call_kind
   | Apply_cont {k ; args} ->
     (* The recursive call for [apply_cont] is done for the arguments *)
-    normalize_apply_cont env k args
+    normalize_apply_cont k args
   | Lambda e ->
     (* FIXME Weird... why should we reduce under a lambda? *)
     Core_lambda.pattern_match e
       ~f:(fun x e ->
-        Lambda (Core_lambda.create x (normalize env e)))
+        Lambda (Core_lambda.create x (normalize e)))
   | Switch {scrutinee; arms} -> (* TODO *)
-    Switch {scrutinee = normalize env scrutinee; arms}
-  | Named e -> normalize_named env e
+    Switch {scrutinee = normalize scrutinee; arms}
+  | Named e -> normalize_named e
   | Invalid _ -> e
 
-and normalize_let env let_abst body : core_exp =
+and normalize_let let_abst body : core_exp =
   let x, e1, e2 =
     Core_let.pattern_match {let_abst; expr_body = body}
       ~f:(fun ~x ~e1 ~e2 -> (x, e1, e2))
@@ -994,12 +984,12 @@ and normalize_let env let_abst body : core_exp =
                       e1 ⟶ e1'
         -------------------------------------
          let x = e1 in e2 ⟶ let x = e1' in e2 *)
-      let e1 = normalize env e1 in
+      let e1 = normalize e1 in
       (* [Let-β]
          let x = v in e1 ⟶ e2 [x\v] *)
       subst_pattern ~bound:x ~let_body:e1 e2
 
-and normalize_let_cont _env (e:let_cont_expr) : core_exp =
+and normalize_let_cont (e:let_cont_expr) : core_exp =
   match e with
   | Non_recursive {handler; body} ->
     let args, e2 =
@@ -1018,7 +1008,7 @@ and normalize_let_cont _env (e:let_cont_expr) : core_exp =
 
 (* TODO: substitute in continuation and exn_continuations (if it has in-lined
           handlers) *)
-and normalize_apply _env callee continuation exn_continuation apply_args call_kind
+and normalize_apply callee continuation exn_continuation apply_args call_kind
   : core_exp =
   match callee with
   | Named (Static_consts [Code code]) ->
@@ -1048,7 +1038,7 @@ and normalize_apply _env callee continuation exn_continuation apply_args call_ki
       apply_renaming slot_body renaming
     in
     subst_params (Bound_for_function.params slot_bound) exp
-      (List.map (normalize (Env.create ())) apply_args)
+      (List.map normalize apply_args)
   | Lambda exp ->
     let bound, exp =
       Core_lambda.pattern_match exp ~f:(fun x y -> x,y)
@@ -1075,29 +1065,29 @@ and normalize_apply _env callee continuation exn_continuation apply_args call_ki
       apply_renaming exp renaming
     in
     subst_params (bound.params) exp
-      (List.map (normalize (Env.create ())) apply_args)
+      (List.map normalize apply_args)
   | _ ->
     Apply {callee;continuation;
            exn_continuation;apply_args;call_kind}
 
-and normalize_apply_cont env k args : core_exp =
+and normalize_apply_cont k args : core_exp =
   (* [ApplyCont]
             args ⟶ args'
       --------------------------
           k args ⟶ k args'       *)
-  Apply_cont {k = k; args = List.map (normalize env) args}
+  Apply_cont {k = k; args = List.map normalize args}
 
-and normalize_static_const env (const : static_const) : static_const =
+and normalize_static_const (const : static_const) : static_const =
   match const with
   | Static_set_of_closures set ->
-    Static_set_of_closures (normalize_set_of_closures env set)
+    Static_set_of_closures (normalize_set_of_closures set)
   | Block (tag, mut, list) ->
-    Block (tag, mut, List.map (normalize env) list)
+    Block (tag, mut, List.map normalize list)
   | (Boxed_float _ | Boxed_int32 _ | Boxed_int64 _ | Boxed_nativeint _
     | Immutable_float_block _ | Immutable_float_array _ | Immutable_value_array _
     | Empty_array | Mutable_string _ | Immutable_string _) -> const (* CHECK *)
 
-and normalize_static_const_or_code env (const_or_code : static_const_or_code)
+and normalize_static_const_or_code (const_or_code : static_const_or_code)
   : static_const_or_code =
   match const_or_code with
   | Code code ->
@@ -1106,23 +1096,23 @@ and normalize_static_const_or_code env (const_or_code : static_const_or_code)
         code  ~f:(fun x y -> x, y)
     in
     let params_and_body =
-      Core_function_params_and_body.create param (normalize env body)
+      Core_function_params_and_body.create param (normalize body)
     in
     Code params_and_body
-  | Static_const const -> Static_const (normalize_static_const env const)
+  | Static_const const -> Static_const (normalize_static_const const)
   | Deleted_code -> Deleted_code
 
-and normalize_static_const_group env (consts : static_const_group) : core_exp =
-  Named (Static_consts (List.map (normalize_static_const_or_code env) consts))
+and normalize_static_const_group (consts : static_const_group) : core_exp =
+  Named (Static_consts (List.map normalize_static_const_or_code consts))
 
 (* N.B. This normalization is rather inefficient;
    Right now (for the sake of clarity) it goes through three passes of the
    value and function expressions *)
-and normalize_set_of_closures env {function_decls; value_slots; alloc_mode}
+and normalize_set_of_closures {function_decls; value_slots; alloc_mode}
   : set_of_closures =
   let value_slots =
     Value_slot.Map.map
-      (fun (val_expr, kind) -> (normalize_value_expr env val_expr, kind))
+      (fun (val_expr, kind) -> (normalize_value_expr val_expr, kind))
       value_slots
   in
   (* [ClosureVal] and [ClosureFn]
@@ -1146,7 +1136,7 @@ and normalize_set_of_closures env {function_decls; value_slots; alloc_mode}
   (* normalize function slots
      NOTE : This might need to change when we're dealing with effectful functions*)
   let in_order =
-    Function_slot.Lmap.map (normalize_function_expr env) in_order
+    Function_slot.Lmap.map normalize_function_expr in_order
   in
   { function_decls =
       { funs =
@@ -1238,31 +1228,31 @@ and subst_my_closure_body_named
      | _ -> Named e)
   | _ -> Named e
 
-and normalize_function_expr env (fun_expr : function_expr) : function_expr =
+and normalize_function_expr (fun_expr : function_expr) : function_expr =
   match fun_expr with
   | Id _ -> fun_expr
-  | Exp exp -> Exp (normalize env exp)
+  | Exp exp -> Exp (normalize exp)
 
-and normalize_value_expr env (val_expr : value_expr) : value_expr =
+and normalize_value_expr (val_expr : value_expr) : value_expr =
   match val_expr with
   | Id _ -> val_expr
-  | Exp exp -> Exp (normalize env exp)
+  | Exp exp -> Exp (normalize exp)
 
 (* This is a "normalization" of [named] expression, in quotations because there
   is some simple evaluation that occurs for primitive arithmetic expressions *)
-and normalize_named env (body : named) : core_exp =
+and normalize_named (body : named) : core_exp =
   match body with
   | Simple _ (* A [Simple] is a register-sized value *)
   | Rec_info _ (* Information about inlining recursive calls, an integer variable *) ->
     Named (body)
   | Closure_expr (slot, set) ->
-    Named (Closure_expr (slot, normalize_set_of_closures env set))
+    Named (Closure_expr (slot, normalize_set_of_closures set))
   | Set_of_closures set -> (* Map of [Code_id]s and [Simple]s corresponding to
                          function and value slots*)
-    Named (Set_of_closures (normalize_set_of_closures env set))
+    Named (Set_of_closures (normalize_set_of_closures set))
   | Static_consts consts -> (* [Static_consts] are statically-allocated values *)
-    normalize_static_const_group env consts
-  | Prim v -> eval_prim env v
+    normalize_static_const_group consts
+  | Prim v -> eval_prim v
 
 let simulation_relation src tgt =
   let {Simplify.unit = tgt; _} = tgt in
