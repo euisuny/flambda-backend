@@ -8,7 +8,6 @@ let _std_print =
   Format.fprintf Format.std_formatter "@. TERM:%a@." print
 
 module Env = struct
-
   type t =
     { mutable _values : (Simple.t * Flambda_kind.With_subkind.t) Value_slot.Map.t;
       mutable _functions : function_expr Function_slot.Map.t }
@@ -1167,7 +1166,7 @@ and subst_my_closure
     ~f:(fun bff e ->
       Lambda (
         Core_lambda.create
-          (Bound.create
+          (Bound_for_lambda.create
             ~return_continuation:(Bound_for_function.return_continuation bff)
             ~exn_continuation:(Bound_for_function.exn_continuation bff)
             ~params:(Bound_for_function.params bff))

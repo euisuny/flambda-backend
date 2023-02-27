@@ -5,21 +5,6 @@ module P = Flambda_primitive
    (2) Ignore [Num_occurrences] (which is used for making inlining decisions)
    (3) Ignored traps for now *)
 
-module Bound : sig
-  type t =
-    { return_continuation: Bound_continuation.t;
-      exn_continuation: Bound_continuation.t;
-      params: Bound_parameters.t }
-
-  val create :
-    return_continuation:Continuation.t ->
-    exn_continuation:Continuation.t ->
-    params:Bound_parameters.t ->
-    t
-
-  include Bindable.S with type t := t
-end
-
 type core_exp =
   | Named of named
   | Let of let_expr
@@ -30,7 +15,7 @@ type core_exp =
   | Switch of switch_expr
   | Invalid of { message : string }
 
-and lambda_expr = (Bound.t, core_exp) Name_abstraction.t
+and lambda_expr = (Bound_for_lambda.t, core_exp) Name_abstraction.t
 
 and 'a id_or_exp =
   | Id of 'a
@@ -251,10 +236,10 @@ end
 module Core_lambda : sig
   type t = lambda_expr
 
-  val create : Bound.t -> T0.t -> t
+  val create : Bound_for_lambda.t -> T0.t -> t
 
   val pattern_match :
-    t -> f:(Bound.t -> T0.t -> 'a) -> 'a
+    t -> f:(Bound_for_lambda.t -> T0.t -> 'a) -> 'a
 
   val pattern_match_pair:
     t -> t ->
