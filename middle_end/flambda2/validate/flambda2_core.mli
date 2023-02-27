@@ -36,10 +36,15 @@ and let_expr =
 and named =
   | Simple of Simple.t
   | Prim of primitive
-  | Closure_expr of (Function_slot.t * set_of_closures)
+  | Slot of (Variable.t * slot)
+  | Closure_expr of (Variable.t * Function_slot.t * set_of_closures)
   | Set_of_closures of set_of_closures
   | Static_consts of static_const_group
   | Rec_info of Rec_info_expr.t
+
+and slot =
+  | Function_slot of Function_slot.t
+  | Value_slot of Value_slot.t
 
 and set_of_closures =
   { function_decls : function_declarations;
@@ -176,7 +181,7 @@ module Core_let : sig
 
   val pattern_match_pair :
     t -> t -> (Bound_for_let.t -> core_exp -> core_exp -> 'a) ->
-    (Bound_statics.t -> Bound_statics.t -> core_exp -> core_exp -> 'a) ->
+    (Bound_codelike.t -> Bound_codelike.t -> core_exp -> core_exp -> 'a) ->
     ('a, Pattern_match_pair_error.t) Result.t
 end
 
@@ -203,6 +208,10 @@ module Core_recursive : sig
   type t = (Bound_continuations.t, recursive_let_expr) Name_abstraction.t
 
   val create : Bound_continuations.t -> recursive_let_expr -> t
+
+  val pattern_match :
+    t ->
+    f:(Bound_continuations.t -> recursive_let_expr -> 'a) -> 'a
 
   val pattern_match_pair :
     t -> t ->
@@ -251,10 +260,16 @@ end
 module Core_continuation_map : sig
   type t = (Bound_parameters.t, continuation_handler_map) Name_abstraction.t
   val create : Bound_parameters.t -> continuation_handler_map -> t
+  val pattern_match :
+    t -> f:(Bound_parameters.t -> continuation_handler_map -> 'a) -> 'a
 end
 
 val print : Format.formatter -> core_exp -> unit
-val print_static_pattern : Format.formatter -> Bound_statics.Pattern.t -> unit
+val print_static_pattern : Format.formatter -> Bound_codelike.Pattern.t -> unit
 val print_bound_pattern : Format.formatter -> Bound_for_let.t -> unit
 
 val apply_renaming : core_exp -> Renaming.t -> core_exp
+
+val function_decl_create : function_expr Function_slot.Lmap.t -> function_declarations
+
+val core_fmap : ('a -> Simple.t -> core_exp) -> 'a -> core_exp -> core_exp
