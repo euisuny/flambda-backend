@@ -1,9 +1,12 @@
 module Pattern : sig
   type t = private
     | Code of Code_id.t
+    | Set_of_closures of Bound_var.t
     | Block_like of Symbol.t
 
   val code : Code_id.t -> t
+
+  val set_of_closures : Bound_var.t -> t
 
   val block_like : Symbol.t -> t
 

@@ -1,6 +1,6 @@
 type t =
   | Singleton of Bound_var.t
-  | Static of Bound_statics.t
+  | Static of Bound_codelike.t
 
 let [@ocamlformat "disable"] print ppf t =
   match t with
@@ -9,14 +9,14 @@ let [@ocamlformat "disable"] print ppf t =
     Format.fprintf ppf "@[<hov 1>\
         @[(bound_static@ %a)@]\
         )@]"
-      Bound_statics.print bound_static
+      Bound_codelike.print bound_static
 
 let free_names t =
   match t with
   | Singleton bound_var ->
     Name_occurrences.singleton_variable (Bound_var.var bound_var)
       Name_mode.normal
-  | Static bound_static -> Bound_statics.free_names bound_static
+  | Static bound_static -> Bound_codelike.free_names bound_static
 
 let apply_renaming t renaming =
   match t with
@@ -24,13 +24,13 @@ let apply_renaming t renaming =
     let bound_var' = Bound_var.apply_renaming bound_var renaming in
     if bound_var == bound_var' then t else Singleton bound_var'
   | Static bound_static ->
-    let bound_static' = Bound_statics.apply_renaming bound_static renaming in
+    let bound_static' = Bound_codelike.apply_renaming bound_static renaming in
     if bound_static == bound_static' then t else Static bound_static'
 
 let ids_for_export t =
   match t with
   | Singleton bound_var -> Bound_var.ids_for_export bound_var
-  | Static bound_static -> Bound_statics.ids_for_export bound_static
+  | Static bound_static -> Bound_codelike.ids_for_export bound_static
 
 let rename t =
   match t with
@@ -71,8 +71,8 @@ let fold_all_bound_names t ~init ~var ~symbol ~code_id =
   | Static bound_static ->
     Code_id.Set.fold
       (fun cid acc -> code_id acc cid)
-      (Bound_statics.code_being_defined bound_static)
+      (Bound_codelike.code_being_defined bound_static)
       init
     |> Symbol.Set.fold
          (fun s acc -> symbol acc s)
-         (Bound_statics.symbols_being_defined bound_static)
+         (Bound_codelike.symbols_being_defined bound_static)

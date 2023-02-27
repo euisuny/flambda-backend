@@ -3,7 +3,7 @@ type t =
 | Singleton of Bound_var.t
     (** The binding of a single variable, which is statically scoped. This
 case is not used for sets of closures. *)
-| Static of Bound_statics.t
+| Static of Bound_codelike.t
     (** The binding of symbols and code IDs to statically-allocated constants
     and pieces of code. The scoping of the symbols and code IDs follows
     the dominator tree, not syntactic scope. *)
