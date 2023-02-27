@@ -130,15 +130,6 @@ let zip_sort_fold l1 l2 ~compare ~f ~acc =
   let l2 = List.sort compare l2 in
   zip_fold l1 l2 ~f ~acc
 
-let equiv_function_slot env
-  (slot1 : Function_slot.t) (slot2 : Function_slot.t) : eq =
-  match Env.find_function_slot env slot1 with
-  | Some slot -> Function_slot.equal slot slot2
-  | None ->
-    match Env.find_function_slot_rev env slot2 with
-    | Some _ -> false
-    | None -> Env.add_function_slot env slot1 slot2; true
-
 let equiv_code_ids env id1 id2 =
   let id1 = subst_code_id env id1 in
   Code_id.equal id1 id2
@@ -230,32 +221,26 @@ and equiv_block env (tag1, mut1, fields1) (tag2, mut2, fields2) =
      true)
 
 and equiv_bound_static env static1 static2 : eq =
-  let static1 = Bound_static.to_list static1 in
-  let static2 = Bound_static.to_list static2 in
+  let static1 = Bound_codelike.to_list static1 in
+  let static2 = Bound_codelike.to_list static2 in
   List.combine static1 static2 |>
   List.fold_left (fun x (e1, e2) -> x && equiv_pattern env e1 e2) true
 
 (* Compare equal patterns and add variables to environment *)
 and equiv_pattern env
-      (pat1 : Bound_static.Pattern.t) (pat2 : Bound_static.Pattern.t) : eq =
+      (pat1 : Bound_codelike.Pattern.t) (pat2 : Bound_codelike.Pattern.t) : eq =
   match pat1, pat2 with
   | Code id1, Code id2 ->
     Env.add_code_id env id1 id2; true
   | Block_like sym1, Block_like sym2 ->
     Env.add_symbol env sym1 sym2; true
   | Set_of_closures clo1, Set_of_closures clo2 ->
-    let closure_bindings env (slot1, symbol1) (slot2, symbol2) : eq =
-      Env.add_symbol env symbol1 symbol2;
-      let _ = subst_function_slot env slot1 in
-      equiv_function_slots env slot1 slot2
-    in
-    let clo1 = Function_slot.Lmap.bindings clo1 in
-    let clo2 = Function_slot.Lmap.bindings clo2 in
-    List.combine clo1 clo2 |>
-    List.fold_left (fun x (e1, e2) -> x && closure_bindings env e1 e2) true
+    equiv_simple env
+      (Simple.var (Bound_var.var clo1)) (Simple.var (Bound_var.var clo2))
   | (Code _ | Block_like _ | Set_of_closures _), _ -> false
 
 and equiv_function_slots env slot1 slot2 =
+  let _ =  subst_function_slot env slot1 in
   match Env.find_function_slot env slot1 with
   | Some function_slot ->
     Function_slot.equal function_slot slot2
@@ -312,7 +297,7 @@ and equiv_set_of_closures env
       (function_slots_and_fun_decls_by_code_id set2)
       ~f:(fun acc ((_, (slot1, decl1)), (_, (slot2, decl2))) ->
         acc &&
-        equiv_function_slot env slot1 slot2 &&
+        equiv_function_slots env slot1 slot2 &&
         equiv_function_decl env decl1 decl2)
       ~acc: true
   in
@@ -324,8 +309,15 @@ and equiv_named env named1 named2 : eq =
     equiv_simple env simple1 simple2
   | Prim prim1, Prim prim2 ->
     equiv_primitives env prim1 prim2
-  | Closure_expr (slot1, set1), Closure_expr (slot2, set2) ->
-    equiv_function_slot env slot1 slot2 &&
+  | Slot (var1, Function_slot slot1), Slot (var2, Function_slot slot2) ->
+    equiv_simple env (Simple.var var1) (Simple.var var2) &&
+    equiv_function_slots env slot1 slot2
+  | Slot (var1, Value_slot slot1), Slot (var2, Value_slot slot2) ->
+    equiv_simple env (Simple.var var1) (Simple.var var2) &&
+    equiv_value_slots env slot1 slot2
+  | Closure_expr (phi1, slot1, set1), Closure_expr (phi2, slot2, set2) ->
+    equiv_simple env (Simple.var phi1) (Simple.var phi2) &&
+    equiv_function_slots env slot1 slot2 &&
     equiv_set_of_closures env set1 set2
   | Set_of_closures set1, Set_of_closures set2 ->
     equiv_set_of_closures env set1 set2
@@ -334,7 +326,8 @@ and equiv_named env named1 named2 : eq =
   | Static_consts const1, Static_consts const2 ->
     (List.combine const1 const2 |>
      List.fold_left (fun x (e1, e2) -> x && equiv_static_consts env e1 e2) true)
-  | (Simple _ | Prim _ | Set_of_closures _ | Rec_info _ | Static_consts _ | Closure_expr _), _ ->
+  | (Simple _ | Prim _ | Slot _ | Set_of_closures _ | Rec_info _
+    | Static_consts _ | Closure_expr _), _ ->
     false
 
 and equiv_simple env simple1 simple2 : eq =
