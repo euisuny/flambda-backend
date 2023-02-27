@@ -30,7 +30,7 @@ and 'a id_or_cont =
    [fun x -> e2] = let_abst
    [e1] = body **)
 and let_expr =
-  { let_abst : (Bound_pattern.t, core_exp) Name_abstraction.t;
+  { let_abst : (Bound_for_let.t, core_exp) Name_abstraction.t;
     expr_body : core_exp; }
 
 and named =
@@ -163,7 +163,7 @@ module RecursiveLetExpr : sig
 end
 
 module Core_let : sig
-  val create : x:Bound_pattern.t -> e1:core_exp -> e2 :core_exp -> core_exp
+  val create : x:Bound_for_let.t -> e1:core_exp -> e2 :core_exp -> core_exp
 
   type t = let_expr
 
@@ -172,11 +172,11 @@ module Core_let : sig
   end
 
   val pattern_match :
-    let_expr -> f:(x:Bound_pattern.t -> e1:core_exp -> e2:core_exp -> 'a) -> 'a
+    let_expr -> f:(x:Bound_for_let.t -> e1:core_exp -> e2:core_exp -> 'a) -> 'a
 
   val pattern_match_pair :
-    t -> t -> (Bound_pattern.t -> core_exp -> core_exp -> 'a) ->
-    (Bound_static.t -> Bound_static.t -> core_exp -> core_exp -> 'a) ->
+    t -> t -> (Bound_for_let.t -> core_exp -> core_exp -> 'a) ->
+    (Bound_statics.t -> Bound_statics.t -> core_exp -> core_exp -> 'a) ->
     ('a, Pattern_match_pair_error.t) Result.t
 end
 
@@ -254,7 +254,7 @@ module Core_continuation_map : sig
 end
 
 val print : Format.formatter -> core_exp -> unit
-val print_static_pattern : Format.formatter -> Bound_static.Pattern.t -> unit
-val print_bound_pattern : Format.formatter -> Bound_pattern.t -> unit
+val print_static_pattern : Format.formatter -> Bound_statics.Pattern.t -> unit
+val print_bound_pattern : Format.formatter -> Bound_for_let.t -> unit
 
 val apply_renaming : core_exp -> Renaming.t -> core_exp
