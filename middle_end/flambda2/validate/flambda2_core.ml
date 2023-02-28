@@ -1139,6 +1139,9 @@ module Core_lambda = struct
   let pattern_match = A.pattern_match
   let create = A.create
 
+  let name t =
+    pattern_match t ~f:(fun x _ -> x.name)
+
   let apply_renaming = apply_renaming_lambda
   let ids_for_export = ids_for_export_lambda
 
@@ -1159,6 +1162,8 @@ module Core_function_params_and_body = struct
   let my_closure t = A.pattern_match t ~f:(fun param _ -> param)
 
   let lambda_expr t = A.pattern_match t ~f:(fun _ body -> body)
+
+  let name t = lambda_expr t |> Core_lambda.name
 
   let pattern_match = A.pattern_match
 

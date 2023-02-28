@@ -859,7 +859,6 @@ let rec normalize (e:core_exp) : core_exp =
     (* The recursive call for [apply_cont] is done for the arguments *)
     normalize_apply_cont k args
   | Lambda e ->
-    (* FIXME Weird... why should we reduce under a lambda? *)
     Core_lambda.pattern_match e
       ~f:(fun x e ->
         Lambda (Core_lambda.create x (normalize e)))
@@ -990,7 +989,7 @@ and normalize_apply_cont k args : core_exp =
           k args ⟶ k args'       *)
   Apply_cont {k = k; args = List.map normalize args}
 
-and normalize_static_const phi (const : static_const) : static_const =
+and normalize_static_const (phi : Bound_for_let.t) (const : static_const) : static_const =
   match const with
   | Static_set_of_closures set ->
     Static_set_of_closures (normalize_set_of_closures phi set)
@@ -1000,7 +999,7 @@ and normalize_static_const phi (const : static_const) : static_const =
     | Immutable_float_block _ | Immutable_float_array _ | Immutable_value_array _
     | Empty_array | Mutable_string _ | Immutable_string _) -> const (* CHECK *)
 
-and normalize_static_const_or_code phi (const_or_code : static_const_or_code)
+and normalize_static_const_or_code (phi : Bound_for_let.t) (const_or_code : static_const_or_code)
   : static_const_or_code =
   match const_or_code with
   | Code code ->
@@ -1017,8 +1016,62 @@ and normalize_static_const_or_code phi (const_or_code : static_const_or_code)
   | Static_const const -> Static_const (normalize_static_const phi const)
   | Deleted_code -> Deleted_code
 
-and normalize_static_const_group phi (consts : static_const_group) : core_exp =
-  Named (Static_consts (List.map (normalize_static_const_or_code phi) consts))
+and normalize_static_const_group (phi : Bound_codelike.Pattern.t list) (consts : static_const_group) : core_exp =
+  let is_static_set_of_closures =
+    (fun e ->
+     match e with
+     | Static_const (Static_set_of_closures _) -> true
+     | _ -> false)
+  in
+  let is_code =
+    (fun e ->
+       match e with
+       | Code _ -> true
+       | _ -> false)
+  in
+  let consts = List.combine phi consts
+  in
+  let set_of_closures, static_consts =
+    List.partition (fun (_, x) -> is_static_set_of_closures x) consts
+  in
+  let code, static_consts =
+    List.partition (fun (_, x) -> is_code x) static_consts
+  in
+  let process_set_of_closures (set : set_of_closures) =
+    List.fold_left
+      (fun acc (id, x) ->
+         match x with
+         | Code x ->
+           let code_id : Code_id.t =
+             (match id with
+              | Bound_codelike.Pattern.Code id -> id
+              | _ -> failwith "Expected code id")
+           in
+           let code =
+             subst_code_id_set_of_closures code_id
+               ~let_body:(Named (Static_consts [Code x])) acc
+           in
+           code
+         | _ -> failwith "Expected code bound") set code
+  in
+  let set_of_closures =
+    List.map
+      (fun (phi, x) ->
+         match x with
+         | Static_const (Static_set_of_closures x) ->
+           let phi = Bound_for_let.Static (Bound_codelike.create [phi])
+           in
+           Static_const (Static_set_of_closures (process_set_of_closures x |>
+                                                 normalize_set_of_closures phi))
+         | _ -> failwith "Expected set of closures") set_of_closures
+  in
+  let static_consts =
+    List.map (fun (_, x) -> normalize_static_const_or_code
+                              (Bound_for_let.Static (Bound_codelike.create phi)) x) static_consts
+  in
+  let consts = set_of_closures @ static_consts
+  in
+  Named (Static_consts consts)
 
 (* N.B. This normalization is rather inefficient;
    Right now (for the sake of clarity) it goes through three passes of the
@@ -1071,15 +1124,21 @@ and subst_my_closure (phi : Bound_for_let.t)
         ~f:(fun bff e ->
           Lambda
             (Core_lambda.pattern_match e
-              ~f:(fun bound body ->
-                let renaming =
-                  Renaming.add_variable (Renaming.empty) (Bound_var.var bff) phi
-                in
-                let body = apply_renaming body renaming
-                in
+               ~f:(fun bound body ->
+                 (* Note: Can't use [Renaming] because it is bidirectional:
+                    we only want to substitute in one direction here, namely
+                    if we see any occurrence of a [my_closure], substitute in
+                    the closure [phi] variable. *)
+                 let body =
+                   core_fmap
+                     (fun _ simple  ->
+                        if (Simple.same (Simple.var (Bound_var.var bff)) simple)
+                        then (Named (Simple (Simple.var phi)))
+                        else (Named (Simple simple))) () body
+                 in
                 Core_lambda.create bound
                   (subst_my_closure_body clo body)))))
-  | _ -> failwith "Expected bound variable for phi"
+  | _ -> Named (Static_consts [Code fn_expr])
 
 (* N.B. [PROJECTION REDUCTION]
     When we substitute in a set of closures for primitives,
@@ -1177,7 +1236,11 @@ and normalize_named (var: Bound_for_let.t) (body : named) : core_exp =
                          function and value slots*)
     Named (Set_of_closures (normalize_set_of_closures var set))
   | Static_consts consts -> (* [Static_consts] are statically-allocated values *)
-    normalize_static_const_group var consts
+    (match var with
+     | Static var ->
+       let bound_vars = Bound_codelike.to_list var in
+       normalize_static_const_group bound_vars consts
+     | _ -> failwith "Expected bound static variables")
   | Prim v -> eval_prim v
 
 let simulation_relation src tgt =

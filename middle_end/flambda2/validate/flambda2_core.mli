@@ -227,6 +227,8 @@ module Core_lambda : sig
 
   val create : Bound_for_lambda.t -> T0.t -> t
 
+  val name : t -> Code_id.t
+
   val pattern_match :
     t -> f:(Bound_for_lambda.t -> T0.t -> 'a) -> 'a
 
@@ -243,6 +245,8 @@ module Core_function_params_and_body : sig
   val create : Bound_var.t -> Core_lambda.t -> t
 
   val my_closure : t -> Bound_var.t
+
+  val name : t -> Code_id.t
 
   val lambda_expr : t -> Core_lambda.t
 

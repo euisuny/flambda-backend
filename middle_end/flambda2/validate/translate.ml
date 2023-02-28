@@ -33,9 +33,11 @@ let subst_var_slot
 let subst_static_slot_helper
       (sym : Symbol.t) (phi : Bound_var.t) (slot : slot) (e2 : core_exp) =
   core_fmap
-    (fun (sym, phi, slot) v ->
+    (fun (sym, phi, _) v ->
        if (Simple.same (Simple.symbol sym) v) then
-         Named (Slot (Bound_var.var phi, slot))
+         (* TODO: Either representation could make sense here *)
+         (* Named (Slot (Bound_var.var phi, slot)) *)
+         Named (Simple (Simple.var (Bound_var.var phi)))
        else Named (Simple v)) (sym, phi, slot) e2
 
 let subst_static_slot
@@ -81,7 +83,7 @@ let bound_pattern_to_core (t : Bound_pattern.t) (e1 : core_exp) (e2 : core_exp) 
       List.fold_left
         (fun (pat_acc1, acc1, acc2) x ->
            let pat, e1, e2 = bound_static_to_core x acc1 acc2 in
-           (pat :: pat_acc1, e1, e2))
+           (pat_acc1 @ [pat], e1, e2))
         ([], e1, e2)
         (Bound_static.to_list s)
     in
