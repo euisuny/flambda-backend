@@ -774,12 +774,13 @@ and print_exn_continuation_expr ppf (t : exn_continuation_expr) =
     (print_handler ppf)
 
 and print_apply ppf
-      ({callee; continuation; exn_continuation; apply_args; _} : apply_expr) =
-  fprintf ppf "%a@ %a@ %a@ "
+      ({callee; continuation; exn_continuation; apply_args; call_kind} : apply_expr) =
+  fprintf ppf "(kind:%a)@ (callee:%a)@ (ret:%a)@ (exn:%a)@ "
+    Call_kind.print call_kind
     print callee
     print_continuation_expr continuation
     print_exn_continuation_expr exn_continuation;
-  fprintf ppf "(";
+  fprintf ppf "(args:";
   Format.pp_print_list ~pp_sep:Format.pp_print_space print ppf apply_args;
   fprintf ppf ")"
 
