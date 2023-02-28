@@ -208,9 +208,7 @@ and equiv_code env code1 code2 =
          _params
          ~body1
          ~body2
-         ~my_closure:_
-         ~my_region:_
-         ~my_depth:_ ->
+         ~my_closure:_ ->
          equiv env body1 body2)
 
 and equiv_block env (tag1, mut1, fields1) (tag2, mut2, fields2) =

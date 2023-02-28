@@ -199,7 +199,10 @@ and subst_singleton_set_of_closures_static_const_or_code ~bound ~clo
               params body ->
               Core_function_params_and_body.create
                 params
-                (subst_singleton_set_of_closures ~bound ~clo body)))
+                (Core_lambda.pattern_match body
+                   ~f:(fun bound body ->
+                     Core_lambda.create bound
+                       (subst_singleton_set_of_closures ~bound:params ~clo body)))))
   | Deleted_code -> e
   | Static_const const ->
     Static_const (match const with
@@ -419,12 +422,16 @@ and subst_bound_set_of_closures_static_const_or_code
       (Core_function_params_and_body.pattern_match
          params_and_body
          ~f:(fun
-            params body ->
-            Core_function_params_and_body.create
-              params
-              (subst_pattern_static
-                 ~bound:(Bound_codelike.Pattern.set_of_closures bound)
-                 ~let_body body)))
+              params body ->
+              Core_function_params_and_body.create
+                params
+                (Core_lambda.pattern_match body
+                   ~f:(fun bound body ->
+                     Core_lambda.create bound
+                       (subst_pattern_static
+                          ~bound:(Bound_codelike.Pattern.set_of_closures params)
+                          ~let_body body
+                       )))))
   | Deleted_code -> e
 
 and subst_bound_set_of_closures_static_const
@@ -904,9 +911,19 @@ and normalize_apply callee continuation exn_continuation apply_args call_kind
   : core_exp =
   match callee with
   | Named (Static_consts [Code code]) ->
-    let slot_bound, slot_body =
+    let _, lambda_expr =
       Core_function_params_and_body.pattern_match
-        code  ~f:(fun bff t -> bff, t)
+        code  ~f:(fun phi t -> phi, t)
+    in
+    let bound, body =
+      Core_lambda.pattern_match lambda_expr
+        ~f:(fun b body -> b, body)
+    in
+    let return_continuation2 = bound.return_continuation
+    in
+    let exn_continuation2 = bound.exn_continuation
+    in
+    let params = bound.params
     in
     let renaming = Renaming.empty
     in
@@ -914,22 +931,22 @@ and normalize_apply callee continuation exn_continuation apply_args call_kind
       (match continuation with
       | Cont_id (Apply_expr.Result_continuation.Return continuation) ->
           Renaming.add_continuation renaming
-            (Bound_for_function.return_continuation slot_bound)
+            return_continuation2
             continuation
       | _ -> renaming)
     in
     let renaming =
       (match exn_continuation with
-       | Cont_id exn_continuation ->
+       | Cont_id continuation ->
          Renaming.add_continuation renaming
-           (Bound_for_function.exn_continuation slot_bound)
-           exn_continuation
+           exn_continuation2
+           continuation
        | _ -> renaming)
     in
     let exp =
-      apply_renaming slot_body renaming
+      apply_renaming body renaming
     in
-    subst_params (Bound_for_function.params slot_bound) exp
+    subst_params params exp
       (List.map normalize apply_args)
   | Lambda exp ->
     let bound, exp =
@@ -983,12 +1000,14 @@ and normalize_static_const_or_code (const_or_code : static_const_or_code)
   : static_const_or_code =
   match const_or_code with
   | Code code ->
-    let (param, body) =
+    let (param, (bound, body)) =
       Core_function_params_and_body.pattern_match
-        code  ~f:(fun x y -> x, y)
+        code  ~f:(fun x y -> x,
+                             Core_lambda.pattern_match y ~f:(fun b body -> b, body))
     in
     let params_and_body =
-      Core_function_params_and_body.create param (normalize body)
+      Core_function_params_and_body.create param
+        (Core_lambda.create bound (normalize body))
     in
     Code params_and_body
   | Static_const const -> Static_const (normalize_static_const const)
@@ -1045,16 +1064,12 @@ and subst_my_closure
     (fn_expr : function_params_and_body)
     (clo : set_of_closures) : core_exp =
   Core_function_params_and_body.pattern_match fn_expr
-    ~f:(fun bff e ->
-      Lambda (
-        Core_lambda.create
-          (Bound_for_lambda.create
-            ~return_continuation:(Bound_for_function.return_continuation bff)
-            ~exn_continuation:(Bound_for_function.exn_continuation bff)
-            ~params:(Bound_for_function.params bff))
-          (subst_my_closure_body clo e)
-      )
-    )
+    ~f:(fun _ e ->
+      Lambda
+        (Core_lambda.pattern_match e
+        ~f:(fun bound body ->
+          Core_lambda.create bound
+          (subst_my_closure_body clo body))))
 
 and subst_my_closure_body (clo: set_of_closures) (e : core_exp) : core_exp =
   match e with
