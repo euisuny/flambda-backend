@@ -1180,6 +1180,9 @@ let function_decl_create (in_order : function_expr Function_slot.Lmap.t) =
   { funs = Function_slot.Map.of_list (Function_slot.Lmap.bindings in_order);
     in_order }
 
+let _std_print =
+  Format.fprintf Format.std_formatter "@. TERM:%a@." print
+
 let rec core_fmap (f : 'a -> Simple.t -> core_exp) (arg : 'a) (e : core_exp) : core_exp =
   match e with
   | Named e -> core_fmap_named f arg e
