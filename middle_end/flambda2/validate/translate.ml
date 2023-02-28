@@ -42,46 +42,50 @@ let subst_static_slot
       (bound : Symbol.t Function_slot.Lmap.t) (phi : Bound_var.t) (e2 : core_exp) =
   let bound = Function_slot.Lmap.bindings bound
   in
-  List.fold_left
+  let e2 = List.fold_left
     (fun acc (slot, sym) ->
        subst_static_slot_helper sym phi (Function_slot slot) acc)
     e2
     bound
+  in
+  e2
 
-let bound_static_to_core (t : Bound_static.Pattern.t) (e2 : core_exp) :
-  Bound_codelike.Pattern.t * core_exp =
+let bound_static_to_core (t : Bound_static.Pattern.t) (e1 : core_exp) (e2 : core_exp) :
+  Bound_codelike.Pattern.t * core_exp * core_exp =
   match t with
   | Set_of_closures bound ->
     let phi = Bound_var.create (Variable.create "ϕ") Name_mode.normal
     in
     (* Substitute in new variable *)
-    let e2 = subst_static_slot bound phi e2
+    let exp1 = subst_static_slot bound phi e1
     in
-    (Bound_codelike.Pattern.set_of_closures phi, e2)
-  | Code v -> (Bound_codelike.Pattern.code v, e2)
-  | Block_like v -> (Bound_codelike.Pattern.block_like v, e2)
+    let exp2 = subst_static_slot bound phi e2
+    in
+    (Bound_codelike.Pattern.set_of_closures phi, exp1, exp2)
+  | Code v -> (Bound_codelike.Pattern.code v, e1, e2)
+  | Block_like v -> (Bound_codelike.Pattern.block_like v, e1, e2)
 
 let bound_pattern_to_core (t : Bound_pattern.t) (e1 : core_exp) (e2 : core_exp) :
-  Bound_for_let.t * core_exp =
+  Bound_for_let.t * core_exp * core_exp =
   match t with
-  | Singleton v -> (Singleton v, e2)
+  | Singleton v -> (Singleton v, e1, e2)
   | Set_of_closures vars ->
     let phi = Bound_var.create (Variable.create "ϕ") Name_mode.normal
     in
     (* Substitute in new variable *)
     let e2 = subst_var_slot vars phi e1 e2
     in
-    (Singleton phi, e2)
+    (Singleton phi, e1, e2)
   | Static s ->
-    let static, e2 =
+    let static, e1, e2 =
       List.fold_left
-        (fun (pat_acc1, acc2) x ->
-           let pat, x = bound_static_to_core x acc2 in
-           (pat :: pat_acc1, x))
-        ([], e2)
+        (fun (pat_acc1, acc1, acc2) x ->
+           let pat, e1, e2 = bound_static_to_core x acc1 acc2 in
+           (pat :: pat_acc1, e1, e2))
+        ([], e1, e2)
         (Bound_static.to_list s)
     in
-    (Static (Bound_codelike.create static), e2)
+    (Static (Bound_codelike.create static), e1, e2)
 
 let rec flambda_expr_to_core (e: expr) : core_exp =
   let e = Expr.descr e in
@@ -100,7 +104,7 @@ and let_to_core (e : Let_expr.t) : core_exp =
   in
   let e1 = Let_expr.defining_expr e |> named_to_core var
   in
-  let x, e2 = bound_pattern_to_core var e1 (flambda_expr_to_core body)
+  let x, e1, e2 = bound_pattern_to_core var e1 (flambda_expr_to_core body)
   in
   Core_let.create ~x ~e1 ~e2
 
@@ -219,7 +223,6 @@ and function_params_and_body_to_core (var : Bound_static.Pattern.t)
                 (Bound_for_function.params bound))
            (flambda_expr_to_core body))
     )
-
 
 and let_cont_to_core (e : Let_cont_expr.t) : core_exp =
   match e with
