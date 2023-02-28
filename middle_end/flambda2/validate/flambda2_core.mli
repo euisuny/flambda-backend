@@ -66,8 +66,9 @@ and primitive =
   | Ternary of P.ternary_primitive * core_exp * core_exp * core_exp
   | Variadic of P.variadic_primitive * core_exp list
 
+(* Named lambda expression that has an additional closure parameter *)
 and function_params_and_body =
-  (Bound_for_function.t, core_exp) Name_abstraction.t
+  (Bound_var.t, lambda_expr) Name_abstraction.t
 
 and static_const_or_code =
   | Code of function_params_and_body
@@ -220,27 +221,6 @@ module Core_recursive : sig
      core_exp -> continuation_handler_map -> continuation_handler_map -> 'a) -> 'a
 end
 
-module Core_function_params_and_body : sig
-  type t = (Bound_for_function.t, T0.t) Name_abstraction.t
-
-  val create : Bound_for_function.t -> T0.t -> t
-
-  val function_param : t -> Bound_for_function.t
-
-  val function_body : t -> T0.t
-
-  val pattern_match :
-    t -> f:(Bound_for_function.t -> T0.t -> 'a) -> 'a
-
-  val pattern_match_pair :
-    t -> t -> f:(
-      return_continuation:Continuation.t ->
-      exn_continuation:Continuation.t ->
-      Bound_parameters.t ->
-      body1:core_exp -> body2:core_exp ->
-      my_closure:Variable.t -> my_region:Variable.t -> my_depth:Variable.t -> 'a)
-    -> 'a
-end
 
 module Core_lambda : sig
   type t = lambda_expr
@@ -255,6 +235,28 @@ module Core_lambda : sig
     f:(return_continuation:Continuation.t ->
        exn_continuation:Continuation.t ->
        Bound_parameters.t -> core_exp -> core_exp -> 'a) -> 'a
+end
+
+module Core_function_params_and_body : sig
+  type t = (Bound_var.t, Core_lambda.t) Name_abstraction.t
+
+  val create : Bound_var.t -> Core_lambda.t -> t
+
+  val my_closure : t -> Bound_var.t
+
+  val lambda_expr : t -> Core_lambda.t
+
+  val pattern_match :
+    t -> f:(Bound_var.t -> Core_lambda.t -> 'a) -> 'a
+
+  val pattern_match_pair :
+    t -> t -> f:(
+      return_continuation:Continuation.t ->
+      exn_continuation:Continuation.t ->
+      Bound_parameters.t ->
+      body1:core_exp -> body2:core_exp ->
+      my_closure:Bound_var.t -> 'a)
+    -> 'a
 end
 
 module Core_continuation_map : sig
