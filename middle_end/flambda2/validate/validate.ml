@@ -1044,7 +1044,6 @@ and normalize_set_of_closures (phi : Bound_for_let.t) {function_decls; value_slo
               {function_decls;value_slots;alloc_mode}
            in
            Exp params_and_body (* FIXME: Might want to put [Lambda] as a [Static_const] *)
-             (* (Named (Static_consts [Code params_and_body])) *)
          | _ -> x)
       function_decls.in_order
   in
@@ -1137,14 +1136,18 @@ and subst_my_closure_body_named
     ({function_decls=_;value_slots;alloc_mode=_}: set_of_closures) (e : named)
   : core_exp =
   match e with
-  | Prim
-      (Unary (Project_value_slot slot, _arg)) ->
+  | Prim (Unary (Project_value_slot slot, _arg)) ->
     (match Value_slot.Map.find_opt slot.value_slot value_slots with
+     | Some (Exp (Named (Closure_expr (_, _, clo))), _) ->
+       let fun_decls = clo.function_decls.in_order
+       in
+       (match Function_slot.Lmap.get_singleton fun_decls with
+        | Some (_, Exp e) -> e
+        | _ -> Named e)
      | Some (Exp (Named (Set_of_closures clo)), _) ->
        let fun_decls = clo.function_decls.in_order
        in
        (match Function_slot.Lmap.get_singleton fun_decls with
-        (* TODO: Is it necessary to rename my_closure? *)
         | Some (_, Exp e) -> e
         | _ -> Named e)
      | _ -> Named e)
