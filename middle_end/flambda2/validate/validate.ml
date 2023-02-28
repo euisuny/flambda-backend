@@ -865,7 +865,7 @@ let rec normalize (e:core_exp) : core_exp =
         Lambda (Core_lambda.create x (normalize e)))
   | Switch {scrutinee; arms} -> (* TODO *)
     Switch {scrutinee = normalize scrutinee; arms}
-  | Named e -> normalize_named e
+  | Named _
   | Invalid _ -> e
 
 and normalize_let let_abst body : core_exp =
@@ -883,7 +883,11 @@ and normalize_let let_abst body : core_exp =
                       e1 ⟶ e1'
         -------------------------------------
          let x = e1 in e2 ⟶ let x = e1' in e2 *)
-      let e1 = normalize e1 in
+      let e1 =
+        (match e1 with
+        | Named e -> normalize_named x e
+        | _ -> normalize e1)
+      in
       (* [Let-β]
          let x = v in e1 ⟶ e2 [x\v] *)
       subst_pattern ~bound:x ~let_body:e1 e2
@@ -986,17 +990,17 @@ and normalize_apply_cont k args : core_exp =
           k args ⟶ k args'       *)
   Apply_cont {k = k; args = List.map normalize args}
 
-and normalize_static_const (const : static_const) : static_const =
+and normalize_static_const phi (const : static_const) : static_const =
   match const with
   | Static_set_of_closures set ->
-    Static_set_of_closures (normalize_set_of_closures set)
+    Static_set_of_closures (normalize_set_of_closures phi set)
   | Block (tag, mut, list) ->
     Block (tag, mut, List.map normalize list)
   | (Boxed_float _ | Boxed_int32 _ | Boxed_int64 _ | Boxed_nativeint _
     | Immutable_float_block _ | Immutable_float_array _ | Immutable_value_array _
     | Empty_array | Mutable_string _ | Immutable_string _) -> const (* CHECK *)
 
-and normalize_static_const_or_code (const_or_code : static_const_or_code)
+and normalize_static_const_or_code phi (const_or_code : static_const_or_code)
   : static_const_or_code =
   match const_or_code with
   | Code code ->
@@ -1010,16 +1014,16 @@ and normalize_static_const_or_code (const_or_code : static_const_or_code)
         (Core_lambda.create bound (normalize body))
     in
     Code params_and_body
-  | Static_const const -> Static_const (normalize_static_const const)
+  | Static_const const -> Static_const (normalize_static_const phi const)
   | Deleted_code -> Deleted_code
 
-and normalize_static_const_group (consts : static_const_group) : core_exp =
-  Named (Static_consts (List.map normalize_static_const_or_code consts))
+and normalize_static_const_group phi (consts : static_const_group) : core_exp =
+  Named (Static_consts (List.map (normalize_static_const_or_code phi) consts))
 
 (* N.B. This normalization is rather inefficient;
    Right now (for the sake of clarity) it goes through three passes of the
    value and function expressions *)
-and normalize_set_of_closures {function_decls; value_slots; alloc_mode}
+and normalize_set_of_closures (phi : Bound_for_let.t) {function_decls; value_slots; alloc_mode}
   : set_of_closures =
   let value_slots =
     Value_slot.Map.map
@@ -1035,7 +1039,7 @@ and normalize_set_of_closures {function_decls; value_slots; alloc_mode}
          match x with
          | Exp (Named (Static_consts [Code code]))->
            let params_and_body =
-             subst_my_closure
+             subst_my_closure phi
                code
               {function_decls;value_slots;alloc_mode}
            in
@@ -1056,21 +1060,32 @@ and normalize_set_of_closures {function_decls; value_slots; alloc_mode}
   ; value_slots = Value_slot.Map.empty
   ; alloc_mode = alloc_mode }
 
+and subst_my_closure (phi : Bound_for_let.t)
+      (fn_expr : function_params_and_body)
+      (clo : set_of_closures) : core_exp =
+  match phi with
+  | Singleton var
+  | Static [Set_of_closures var] ->
+    (let phi = Bound_var.var var
+     in
+      Core_function_params_and_body.pattern_match fn_expr
+        ~f:(fun bff e ->
+          Lambda
+            (Core_lambda.pattern_match e
+              ~f:(fun bound body ->
+                let renaming =
+                  Renaming.add_variable (Renaming.empty) (Bound_var.var bff) phi
+                in
+                let body = apply_renaming body renaming
+                in
+                Core_lambda.create bound
+                  (subst_my_closure_body clo body)))))
+  | _ -> failwith "Expected bound variable for phi"
+
 (* N.B. [PROJECTION REDUCTION]
     When we substitute in a set of closures for primitives,
     (Here is where the `Projection` primitives occur),
     we eliminate the projection. *)
-and subst_my_closure
-    (fn_expr : function_params_and_body)
-    (clo : set_of_closures) : core_exp =
-  Core_function_params_and_body.pattern_match fn_expr
-    ~f:(fun _ e ->
-      Lambda
-        (Core_lambda.pattern_match e
-        ~f:(fun bound body ->
-          Core_lambda.create bound
-          (subst_my_closure_body clo body))))
-
 and subst_my_closure_body (clo: set_of_closures) (e : core_exp) : core_exp =
   match e with
   | Named e ->
@@ -1147,19 +1162,19 @@ and normalize_value_expr (val_expr : value_expr) : value_expr =
 
 (* This is a "normalization" of [named] expression, in quotations because there
   is some simple evaluation that occurs for primitive arithmetic expressions *)
-and normalize_named (body : named) : core_exp =
+and normalize_named (var: Bound_for_let.t) (body : named) : core_exp =
   match body with
   | Simple _ (* A [Simple] is a register-sized value *)
   | Slot _
   | Rec_info _ (* Information about inlining recursive calls, an integer variable *) ->
     Named (body)
   | Closure_expr (phi, slot, set) ->
-    Named (Closure_expr (phi, slot, normalize_set_of_closures set))
+    Named (Closure_expr (phi, slot, normalize_set_of_closures var set))
   | Set_of_closures set -> (* Map of [Code_id]s and [Simple]s corresponding to
                          function and value slots*)
-    Named (Set_of_closures (normalize_set_of_closures set))
+    Named (Set_of_closures (normalize_set_of_closures var set))
   | Static_consts consts -> (* [Static_consts] are statically-allocated values *)
-    normalize_static_const_group consts
+    normalize_static_const_group var consts
   | Prim v -> eval_prim v
 
 let simulation_relation src tgt =
