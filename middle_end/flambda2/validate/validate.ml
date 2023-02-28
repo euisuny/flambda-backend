@@ -1133,6 +1133,8 @@ and subst_my_closure (phi : Bound_for_let.t)
                    core_fmap
                      (fun _ simple  ->
                         if (Simple.same (Simple.var (Bound_var.var bff)) simple)
+                        (* FIXME: Here, we should substitute in a pair: The [Phi] node and
+                           the [Slot] name corresponding to the function slot. *)
                         then (Named (Simple (Simple.var phi)))
                         else (Named (Simple simple))) () body
                  in

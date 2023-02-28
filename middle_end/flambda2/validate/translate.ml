@@ -33,11 +33,9 @@ let subst_var_slot
 let subst_static_slot_helper
       (sym : Symbol.t) (phi : Bound_var.t) (slot : slot) (e2 : core_exp) =
   core_fmap
-    (fun (sym, phi, _) v ->
+    (fun (sym, phi, slot) v ->
        if (Simple.same (Simple.symbol sym) v) then
-         (* TODO: Either representation could make sense here *)
-         (* Named (Slot (Bound_var.var phi, slot)) *)
-         Named (Simple (Simple.var (Bound_var.var phi)))
+         Named (Slot (Bound_var.var phi, slot))
        else Named (Simple v)) (sym, phi, slot) e2
 
 let subst_static_slot
