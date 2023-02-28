@@ -89,7 +89,6 @@ let simplify_term file : unit =
     "---------------------------↓↓--[simplify]--↓↓-------------------------------@.";
   Format.fprintf Format.std_formatter "%a@.@." Flambda_unit.print simplify_result;
 
-
   let src_core = flambda_unit_to_core fl_output in
   let tgt_core = flambda_unit_to_core simplify_result in
 
@@ -130,8 +129,8 @@ let normalize_term file : unit =
   Format.fprintf Format.std_formatter
     "------------------------------------------------------------------------------@.";
 
-  (* let src_core = src_core |> normalize in
-   * let tgt_core = tgt_core |> normalize in *)
+  let src_core = src_core |> normalize in
+  let tgt_core = tgt_core |> normalize in
 
   let alpha_eq = Equiv.core_eq src_core tgt_core in
 

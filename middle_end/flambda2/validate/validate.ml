@@ -1087,12 +1087,12 @@ and normalize_set_of_closures (phi : Bound_for_let.t) {function_decls; value_slo
      substituting in value slots for [Project_value_slots] and
      substituting in function slots for [Project_function_slots] *)
   let in_order =
-    Function_slot.Lmap.map
-      (fun x ->
+    Function_slot.Lmap.mapi
+      (fun slot x ->
          match x with
          | Exp (Named (Static_consts [Code code]))->
            let params_and_body =
-             subst_my_closure phi
+             subst_my_closure phi slot
                code
               {function_decls;value_slots;alloc_mode}
            in
@@ -1112,7 +1112,7 @@ and normalize_set_of_closures (phi : Bound_for_let.t) {function_decls; value_slo
   ; value_slots = Value_slot.Map.empty
   ; alloc_mode = alloc_mode }
 
-and subst_my_closure (phi : Bound_for_let.t)
+and subst_my_closure (phi : Bound_for_let.t) (slot : Function_slot.t)
       (fn_expr : function_params_and_body)
       (clo : set_of_closures) : core_exp =
   match phi with
@@ -1133,9 +1133,7 @@ and subst_my_closure (phi : Bound_for_let.t)
                    core_fmap
                      (fun _ simple  ->
                         if (Simple.same (Simple.var (Bound_var.var bff)) simple)
-                        (* FIXME: Here, we should substitute in a pair: The [Phi] node and
-                           the [Slot] name corresponding to the function slot. *)
-                        then (Named (Simple (Simple.var phi)))
+                        then Named (Slot (phi, Function_slot slot))
                         else (Named (Simple simple))) () body
                  in
                 Core_lambda.create bound
