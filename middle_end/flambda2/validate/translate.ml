@@ -213,8 +213,8 @@ and function_params_and_body_to_core (var : Bound_static.Pattern.t)
       Core_function_params_and_body.create
         (Bound_var.create my_closure Name_mode.normal)
         (Core_lambda.create
+           name
            (Bound_for_lambda.create
-              ~name
               ~return_continuation:
                 (Bound_for_function.return_continuation bound)
               ~exn_continuation:

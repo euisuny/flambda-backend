@@ -16,7 +16,8 @@ type core_exp =
   | Switch of switch_expr
   | Invalid of { message : string }
 
-and lambda_expr = (Bound_for_lambda.t, core_exp) Name_abstraction.t
+and lambda_expr =
+  Code_id.t * ((Bound_for_lambda.t, core_exp) Name_abstraction.t)
 
 and 'a id_or_exp =
   | Id of 'a
@@ -188,9 +189,9 @@ let rec apply_renaming t renaming : core_exp =
   | Switch t -> Switch (apply_renaming_switch t renaming)
   | Invalid t -> Invalid t
 
-and apply_renaming_lambda t renaming : lambda_expr =
-  Name_abstraction.apply_renaming (module Bound_for_lambda) t renaming
-    ~apply_renaming_to_term:apply_renaming
+and apply_renaming_lambda (id, t) renaming : lambda_expr =
+  (id, Name_abstraction.apply_renaming (module Bound_for_lambda) t renaming
+    ~apply_renaming_to_term:apply_renaming)
 
 (* renaming for [Let] *)
 and apply_renaming_let { let_abst; expr_body } renaming : let_expr =
@@ -469,8 +470,9 @@ let rec print ppf e =
    | Apply t ->
      fprintf ppf "@[<hov 1>apply@ %a@]"
      print_apply t
-   | Lambda t ->
-     fprintf ppf "@[<hov 1>λ@ %a@]"
+   | Lambda (id, t) ->
+     fprintf ppf "@[<hov 1>%a:λ@ %a@]"
+     Code_id.print id
      print_lambda t
    | Apply_cont t ->
      fprintf ppf "@[<hov 1>(apply_cont@ %a)@]"
@@ -691,8 +693,9 @@ and print_function_params_and_body ppf (t:function_params_and_body) =
   Name_abstraction.pattern_match_for_printing
     (module Bound_var) t
     ~apply_renaming_to_term:apply_renaming_lambda
-    ~f:(fun t expr ->
-      fprintf ppf "λ my_closure: %a, %a"
+    ~f:(fun t (id, expr) ->
+      fprintf ppf "%a:λ my_closure: %a, %a"
+        Code_id.print id
         Variable.print (Bound_var.var t)
         print_lambda expr)
 
@@ -1004,9 +1007,10 @@ and ids_for_export_apply_cont { k; args } =
     (Ids_for_export.add_continuation Ids_for_export.empty k)
     args
 
-and ids_for_export_lambda (t : lambda_expr) =
-  Name_abstraction.ids_for_export
-    (module Bound_for_lambda) t ~ids_for_export_of_term:ids_for_export
+and ids_for_export_lambda (id, t) =
+  Ids_for_export.add_code_id
+    (Name_abstraction.ids_for_export
+     (module Bound_for_lambda) t ~ids_for_export_of_term:ids_for_export) id
 
 and ids_for_export_switch { scrutinee; arms } =
   let scrutinee_ids = ids_for_export scrutinee in
@@ -1136,20 +1140,20 @@ module Core_lambda = struct
   module A = Name_abstraction.Make (Bound_for_lambda) (T0)
   type t = lambda_expr
 
-  let pattern_match = A.pattern_match
-  let create = A.create
+  let name (id, _) = id
+  let pattern_match (id, x) ~f =
+    A.pattern_match x ~f:(fun b e -> f id b e)
 
-  let name t =
-    pattern_match t ~f:(fun x _ -> x.name)
+  let create id b e = (id, A.create b e)
 
   let apply_renaming = apply_renaming_lambda
   let ids_for_export = ids_for_export_lambda
 
-  let pattern_match_pair t1 t2 ~f =
+  let pattern_match_pair (id1, t1) (id2, t2) ~f =
     A.pattern_match_pair t1 t2
       ~f:(fun
            bound body1 body2
-           -> f ~return_continuation:(bound.return_continuation)
+           -> f id1 id2 ~return_continuation:(bound.return_continuation)
                 ~exn_continuation:(bound.exn_continuation)
                 (bound.params) body1 body2)
 end
@@ -1157,13 +1161,14 @@ end
 module Core_function_params_and_body = struct
   module A = Name_abstraction.Make (Bound_var) (Core_lambda)
   type t = (Bound_var.t, Core_lambda.t) Name_abstraction.t
+
   let create = A.create
+
+  let name t = A.pattern_match t ~f:(fun _ body -> Core_lambda.name body)
 
   let my_closure t = A.pattern_match t ~f:(fun param _ -> param)
 
   let lambda_expr t = A.pattern_match t ~f:(fun _ body -> body)
-
-  let name t = lambda_expr t |> Core_lambda.name
 
   let pattern_match = A.pattern_match
 
@@ -1171,8 +1176,9 @@ module Core_function_params_and_body = struct
     A.pattern_match_pair t1 t2
       ~f:(fun my_closure body1 body2 ->
         Core_lambda.pattern_match_pair body1 body2
-          ~f:(fun ~return_continuation ~exn_continuation params body1 body2 ->
-            f ~return_continuation ~exn_continuation params ~body1 ~body2
+          ~f:(fun id1 id2
+               ~return_continuation ~exn_continuation params body1 body2 ->
+            f id1 id2 ~return_continuation ~exn_continuation params ~body1 ~body2
               ~my_closure))
 end
 
@@ -1249,8 +1255,8 @@ let rec core_fmap
        args = List.map (core_fmap f arg) args}
   | Lambda e ->
     Core_lambda.pattern_match e
-      ~f:(fun b e ->
-        Lambda (Core_lambda.create b (core_fmap f arg e)))
+      ~f:(fun id b e ->
+        Lambda (Core_lambda.create id b (core_fmap f arg e)))
   | Switch {scrutinee; arms} ->
     Switch
       {scrutinee = core_fmap f arg scrutinee;
@@ -1313,8 +1319,8 @@ and core_fmap_static_const_or_code f arg (e : static_const_or_code) =
               Core_function_params_and_body.create
                 params
                 (Core_lambda.pattern_match body
-                   ~f:(fun bound body ->
-                     Core_lambda.create bound (core_fmap f arg body)))))
+                   ~f:(fun id bound body ->
+                     Core_lambda.create id bound (core_fmap f arg body)))))
   | Deleted_code -> e
   | Static_const const ->
     Static_const (core_fmap_static_const f arg const)

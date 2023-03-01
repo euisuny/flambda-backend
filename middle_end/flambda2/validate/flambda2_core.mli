@@ -15,7 +15,8 @@ type core_exp =
   | Switch of switch_expr
   | Invalid of { message : string }
 
-and lambda_expr = (Bound_for_lambda.t, core_exp) Name_abstraction.t
+and lambda_expr =
+  Code_id.t * (Bound_for_lambda.t, core_exp) Name_abstraction.t
 
 and 'a id_or_exp =
   | Id of 'a
@@ -221,20 +222,20 @@ module Core_recursive : sig
      core_exp -> continuation_handler_map -> continuation_handler_map -> 'a) -> 'a
 end
 
-
 module Core_lambda : sig
   type t = lambda_expr
 
-  val create : Bound_for_lambda.t -> T0.t -> t
+  val create : Code_id.t -> Bound_for_lambda.t -> T0.t -> t
 
   val name : t -> Code_id.t
 
   val pattern_match :
-    t -> f:(Bound_for_lambda.t -> T0.t -> 'a) -> 'a
+    t -> f:(Code_id.t -> Bound_for_lambda.t -> T0.t -> 'a) -> 'a
 
   val pattern_match_pair:
     t -> t ->
-    f:(return_continuation:Continuation.t ->
+    f:(Code_id.t -> Code_id.t ->
+       return_continuation:Continuation.t ->
        exn_continuation:Continuation.t ->
        Bound_parameters.t -> core_exp -> core_exp -> 'a) -> 'a
 end
@@ -255,6 +256,7 @@ module Core_function_params_and_body : sig
 
   val pattern_match_pair :
     t -> t -> f:(
+      Code_id.t -> Code_id.t ->
       return_continuation:Continuation.t ->
       exn_continuation:Continuation.t ->
       Bound_parameters.t ->
