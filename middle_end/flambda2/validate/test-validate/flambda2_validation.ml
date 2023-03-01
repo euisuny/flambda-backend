@@ -45,7 +45,7 @@ let check_alpha_equivalence file1 file2 : unit =
   Compilation_unit.set_current (Some comp_unit);
 
   Format.fprintf Format.std_formatter
-   "..............................................................................@.";
+   "..............................................................................@. ";
   let fl_output = parse_flambda (cwd ^ test_dir ^ file1) in
   let core_output = flambda_unit_to_core fl_output in
 
@@ -238,9 +238,12 @@ let () =
   (* ------------- TODO --------------- *)
 
   (* 2. test11 :
-     [Sets of closures that are mutually recursive to each other] *)
-  simplify_term "tests11.fl";
-  normalize_term "tests11.fl";
+     [Sets of closures that are mutually recursive to each other]
+     [Indirect calls] *)
+  simplify_term "tests11_simple.fl";
+  normalize_term "tests11_simple.fl";
+  (* simplify_term "tests11.fl";
+   * normalize_term "tests11.fl"; *)
 
   (* 3. [LetCont : Recursive case] *)
 
