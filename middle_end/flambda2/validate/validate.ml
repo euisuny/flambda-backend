@@ -1228,6 +1228,12 @@ and subst_my_closure_body_named
         | Some (_, Exp e) -> e
         | _ -> Named e)
      | _ -> Named e)
+  | Prim (Unary (Project_function_slot {move_from ; move_to},
+                 Named (Slot (phi, Function_slot slot)))) ->
+    if (move_from = slot) then
+      Named (Slot (phi, Function_slot move_to))
+    else
+      Named e
   | _ -> Named e
 
 and normalize_function_expr (fun_expr : function_expr) : function_expr =
