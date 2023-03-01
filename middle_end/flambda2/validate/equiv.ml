@@ -86,7 +86,7 @@ let subst_function_expr env (fn_expr : function_expr) =
   | Id id -> Id (subst_code_id env id)
   | Exp _ -> fn_expr
 
-let subst_code_id (env : Env.t) code_id =
+let _subst_code_id (env : Env.t) code_id =
   Env.find_code_id env code_id |> Option.value ~default:code_id
 
 (** Equality between two programs given a context **)
@@ -130,9 +130,8 @@ let zip_sort_fold l1 l2 ~compare ~f ~acc =
   let l2 = List.sort compare l2 in
   zip_fold l1 l2 ~f ~acc
 
-let equiv_code_ids env id1 id2 =
-  let id1 = subst_code_id env id1 in
-  Code_id.equal id1 id2
+(* Ignore code ids and phi slots *)
+let equiv_code_ids _ _ _ = true
 
 let equiv_rec_info _env info1 info2 : eq =
   Rec_info_expr.equal info1 info2
@@ -428,7 +427,7 @@ and equiv_call_kind env (k1 : Call_kind.t) (k2 : Call_kind.t) : eq =
     Function
       { function_call =
           Direct { code_id = code_id2; return_arity = return_arity2 }; _ } ->
-    Code_id.equal code_id1 code_id2 &&
+    equiv_code_ids env code_id1 code_id2 &&
     Flambda_arity.With_subkinds.equal return_arity1 return_arity2
 
   (* Indirect OCaml function calls, with known arity  *)
@@ -492,7 +491,13 @@ and equiv_lambda env (e1 : lambda_expr) (e2 : lambda_expr) : eq =
     ~f:(fun id1 id2
          ~return_continuation:_ ~exn_continuation:_ _params e1 e2 ->
          equiv_code_ids env id1 id2 &&
-         equiv env e1 e2)
+         if equiv env e1 e2 then true
+         else
+           (Format.fprintf Format.std_formatter
+              "Let's see, these two terms are different:@ %a,@ %a"
+              print e1
+              print e2
+           ;false))
 
 (* [switch] *)
 and equiv_switch env
