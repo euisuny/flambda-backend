@@ -233,6 +233,10 @@ let () =
   (* A. More features of recursion *)
   (* 1. [Applying a mutually recursive function to concrete arguments] *)
 
+  (* some non-recursive [letcont].. *)
+  simplify_term "lengthapply.fl";
+  normalize_term "lengthapply.fl";
+
   (* 2. [LetCont : Recursive case] *)
 
   (* 3. test11 or test12 :
