@@ -194,8 +194,6 @@ let () =
   (* simplify_term "apply4.fl";
    *  normalize_term "apply4.fl"; *)
 
-  (* ------------- NEW --------------- *)
-
   (* [Application] *)
 
   (* simplify_term "apply.fl";
@@ -212,17 +210,21 @@ let () =
   (* simplify_term "noinline.fl";
    * normalize_term "noinline.fl"; *)
 
-  (* ---------- NEXT --------- *)
-  (* [Length] *)
+  (* ------------- NEW --------------- *)
 
-  simplify_term "size.fl";
-  normalize_term "size.fl";
+  (* [Recursive function] *)
+
+  (* simplify_term "size.fl";
+   * normalize_term "size.fl"; *)
+
+  (* ---------- NEXT --------- *)
+
+  (* [Mutually recursive function] *)
+
+  simplify_term "rec.fl";
+  normalize_term "rec.fl";
 
   (* simplify_term "length.fl";
    * normalize_term "length.fl"; *)
 
-  (* [Recursive] *)
-
-  (* simplify_term "rec.fl";
-   * normalize_term "rec.fl"; *)
   ()

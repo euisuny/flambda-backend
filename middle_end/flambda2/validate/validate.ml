@@ -237,15 +237,23 @@ and subst_singleton_set_of_closures_static_const_or_code ~bound ~clo
       Block (tag, mut, list)
     | _ -> const)
 
-
 and subst_static_list ~(bound : Bound_codelike.t) ~let_body e : core_exp =
-  let rec subst_static_list_ s e =
-    (match s with
-     | [] -> e
-     | hd :: tl ->
-       subst_static_list_ tl
-         (subst_pattern_static ~bound:hd ~let_body e)) in
-  subst_static_list_ (Bound_codelike.to_list bound) e
+  let rec subst_static_list_ bound body e =
+    (match bound, body with
+     | [], [] -> e
+     | hd :: tl, let_body :: body ->
+       subst_static_list_ tl body
+         (subst_pattern_static ~bound:hd ~let_body e)
+     | _, _ ->
+      failwith "Mismatched static binder and let body length")
+  in
+  match let_body with
+  | Named (Static_consts consts_list) ->
+    let (body : core_exp list) =
+      List.map (fun x -> Named (Static_consts [x])) consts_list
+    in
+    subst_static_list_ (Bound_codelike.to_list bound) body e
+  | _ -> failwith "Expected name static constants in let body"
 
 and subst_pattern_static
       ~(bound : Bound_codelike.Pattern.t) ~(let_body : core_exp) (e : core_exp) : core_exp =
@@ -461,8 +469,6 @@ and subst_bound_set_of_closures_static_const
          in_order }
      in
      (Static_set_of_closures {function_decls; value_slots; alloc_mode}))
-    (* let function_decls
-     * failwith "Unimplemented static set of closures" *)
   | _ -> e (* NEXT *)
 
 and subst_code_id_set_of_closures (bound : Code_id.t) ~(let_body : core_exp)
@@ -486,7 +492,6 @@ and subst_code_id_set_of_closures (bound : Code_id.t) ~(let_body : core_exp)
       in_order}
   in
   {function_decls; value_slots; alloc_mode}
-
 
 and subst_code_id (bound : Code_id.t) ~(let_body : core_exp) (e : named) : core_exp =
   match e with
@@ -640,7 +645,6 @@ and subst_block_like_static_const
     in
     Block (tag, mut, args)
   | _ -> e (* NEXT *)
-
 
 (* ∀ p i, p ∈ params -> params[i] = p -> e [p \ args[i]] *)
 (* [Bound_parameters] are [Variable]s *)
@@ -864,6 +868,10 @@ let rec normalize (e:core_exp) : core_exp =
         Lambda (Core_lambda.create x (normalize e)))
   | Switch {scrutinee; arms} -> (* TODO *)
     Switch {scrutinee = normalize scrutinee; arms}
+  | Named (Closure_expr (phi, slot, clo)) ->
+    let var = Bound_for_let.Singleton (Bound_var.create phi Name_mode.normal)
+    in
+    Named (Closure_expr (phi, slot, normalize_set_of_closures var clo))
   | Named _
   | Invalid _ -> e
 
@@ -882,10 +890,10 @@ and normalize_let let_abst body : core_exp =
                       e1 ⟶ e1'
         -------------------------------------
          let x = e1 in e2 ⟶ let x = e1' in e2 *)
-      let e1 =
+      let x, e1 =
         (match e1 with
         | Named e -> normalize_named x e
-        | _ -> normalize e1)
+        | _ -> x, normalize e1)
       in
       (* [Let-β]
          let x = v in e1 ⟶ e2 [x\v] *)
@@ -1016,7 +1024,8 @@ and normalize_static_const_or_code (phi : Bound_for_let.t) (const_or_code : stat
   | Static_const const -> Static_const (normalize_static_const phi const)
   | Deleted_code -> Deleted_code
 
-and normalize_static_const_group (phi : Bound_codelike.Pattern.t list) (consts : static_const_group) : core_exp =
+and normalize_static_const_group (phi : Bound_codelike.Pattern.t list) (consts : static_const_group) :
+  Bound_codelike.Pattern.t list * core_exp =
   let is_static_set_of_closures =
     (fun e ->
      match e with
@@ -1029,49 +1038,57 @@ and normalize_static_const_group (phi : Bound_codelike.Pattern.t list) (consts :
        | Code _ -> true
        | _ -> false)
   in
-  let consts = List.combine phi consts
+  let phi_consts = List.combine phi consts
   in
   let set_of_closures, static_consts =
-    List.partition (fun (_, x) -> is_static_set_of_closures x) consts
+    List.partition (fun (_, x) -> is_static_set_of_closures x) phi_consts
   in
-  let code, static_consts =
-    List.partition (fun (_, x) -> is_code x) static_consts
-  in
-  let process_set_of_closures (set : set_of_closures) =
-    List.fold_left
-      (fun acc (id, x) ->
-         match x with
-         | Code x ->
-           let code_id : Code_id.t =
-             (match id with
-              | Bound_codelike.Pattern.Code id -> id
-              | _ -> failwith "Expected code id")
-           in
-           let code =
-             subst_code_id_set_of_closures code_id
-               ~let_body:(Named (Static_consts [Code x])) acc
-           in
-           code
-         | _ -> failwith "Expected code bound") set code
-  in
-  let set_of_closures =
-    List.map
-      (fun (phi, x) ->
-         match x with
-         | Static_const (Static_set_of_closures x) ->
-           let phi = Bound_for_let.Static (Bound_codelike.create [phi])
-           in
-           Static_const (Static_set_of_closures (process_set_of_closures x |>
-                                                 normalize_set_of_closures phi))
-         | _ -> failwith "Expected set of closures") set_of_closures
-  in
-  let static_consts =
-    List.map (fun (_, x) -> normalize_static_const_or_code
-                              (Bound_for_let.Static (Bound_codelike.create phi)) x) static_consts
-  in
-  let consts = set_of_closures @ static_consts
-  in
-  Named (Static_consts consts)
+  match set_of_closures with
+  | [] -> (phi, Named (Static_consts consts))
+  | _ ->
+    (let code, static_consts =
+      List.partition (fun (_, x) -> is_code x) static_consts
+    in
+    let process_set_of_closures (set : set_of_closures) =
+      List.fold_left
+        (fun acc (id, x) ->
+          match x with
+          | Code x ->
+            let code_id : Code_id.t =
+              (match id with
+                | Bound_codelike.Pattern.Code id -> id
+                | _ -> failwith "Expected code id")
+            in
+            let code =
+              subst_code_id_set_of_closures code_id
+                ~let_body:(Named (Static_consts [Code x])) acc
+            in
+            code
+          | _ -> failwith "Expected code bound") set code
+    in
+    let set_of_closures =
+      List.map
+        (fun (phi, x) ->
+          match x with
+          | Static_const (Static_set_of_closures x) ->
+            let phi = Bound_for_let.Static (Bound_codelike.create [phi])
+            in
+            Static_const (Static_set_of_closures (process_set_of_closures x |>
+                                                  normalize_set_of_closures phi))
+          | _ -> failwith "Expected set of closures") set_of_closures
+    in
+    let static_consts =
+      List.map (fun (_, x) -> normalize_static_const_or_code
+                                (Bound_for_let.Static (Bound_codelike.create phi)) x) static_consts
+    in
+    let consts = set_of_closures @ static_consts
+    in
+    let phi =
+      List.filter
+        (fun x -> match x with
+           | Bound_codelike.Pattern.Code _ -> false | _ -> true) phi
+    in
+    (phi, Named (Static_consts consts)))
 
 (* N.B. This normalization is rather inefficient;
    Right now (for the sake of clarity) it goes through three passes of the
@@ -1101,7 +1118,8 @@ and normalize_set_of_closures (phi : Bound_for_let.t) {function_decls; value_slo
       function_decls.in_order
   in
   (* normalize function slots
-     NOTE : This might need to change when we're dealing with effectful functions*)
+     NOTE (for later):
+     This might need to change when we're dealing with effectful functions *)
   let in_order =
     Function_slot.Lmap.map normalize_function_expr in_order
   in
@@ -1224,24 +1242,27 @@ and normalize_value_expr (val_expr : value_expr) : value_expr =
 
 (* This is a "normalization" of [named] expression, in quotations because there
   is some simple evaluation that occurs for primitive arithmetic expressions *)
-and normalize_named (var: Bound_for_let.t) (body : named) : core_exp =
+and normalize_named (var: Bound_for_let.t) (body : named) : Bound_for_let.t * core_exp =
   match body with
   | Simple _ (* A [Simple] is a register-sized value *)
   | Slot _
   | Rec_info _ (* Information about inlining recursive calls, an integer variable *) ->
-    Named (body)
+    (var, Named (body))
   | Closure_expr (phi, slot, set) ->
-    Named (Closure_expr (phi, slot, normalize_set_of_closures var set))
+    (var, Named (Closure_expr (phi, slot, normalize_set_of_closures var set)))
   | Set_of_closures set -> (* Map of [Code_id]s and [Simple]s corresponding to
                          function and value slots*)
-    Named (Set_of_closures (normalize_set_of_closures var set))
+    (var, Named (Set_of_closures (normalize_set_of_closures var set)))
   | Static_consts consts -> (* [Static_consts] are statically-allocated values *)
     (match var with
      | Static var ->
-       let bound_vars = Bound_codelike.to_list var in
-       normalize_static_const_group bound_vars consts
+       let bound_vars = Bound_codelike.to_list var
+       in
+       let phi, exp = normalize_static_const_group bound_vars consts
+       in
+       (Static (Bound_codelike.create phi), exp)
      | _ -> failwith "Expected bound static variables")
-  | Prim v -> eval_prim v
+  | Prim v -> (var, eval_prim v)
 
 let simulation_relation src tgt =
   let {Simplify.unit = tgt; _} = tgt in
