@@ -228,19 +228,21 @@ let () =
   (* simplify_term "length.fl";
    * normalize_term "length.fl"; *)
 
-  (* ------------- TODO --------------- *)
-
   (* A. More features of recursion *)
   (* 1. [Applying a mutually recursive function to concrete arguments] *)
 
   (* some non-recursive [letcont].. *)
-  simplify_term "lengthapply.fl";
-  normalize_term "lengthapply.fl";
+  (* simplify_term "lengthapply.fl";
+   * normalize_term "lengthapply.fl"; *)
 
-  (* 2. [LetCont : Recursive case] *)
+  (* ------------- TODO --------------- *)
 
-  (* 3. test11 or test12 :
+  (* 2. test11 :
      [Sets of closures that are mutually recursive to each other] *)
+  simplify_term "tests11.fl";
+  normalize_term "tests11.fl";
+
+  (* 3. [LetCont : Recursive case] *)
 
   (* IY: Are there other features of mutually recursive functions that we
      might want to test? *)
