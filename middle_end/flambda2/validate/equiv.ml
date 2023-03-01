@@ -1,5 +1,11 @@
 open! Flambda2_core
 
+let unequal (e1 : core_exp) (e2 : core_exp) =
+  Format.fprintf Format.std_formatter "Unequal:@ %a <> %a@."
+    print e1
+    print e2;
+  false
+
 (** Simple program context **)
 (* LATER: Same structure used as [compare/compare.ml],
    might be useful to refactor the structure out of the file *)
@@ -103,15 +109,26 @@ let equiv_symbols env sym1 sym2 : eq =
   Symbol.equal sym1 sym2
 
 let equiv_names env name1 name2 : eq =
-  Name.pattern_match name1
-    ~var:(fun var1 ->
-      Name.pattern_match name2
-        ~var:(fun var2 -> Variable.equal var1 var2)
-        ~symbol:(fun _ -> false))
-    ~symbol:(fun symbol1 ->
-      Name.pattern_match name2
-        ~var:(fun _ -> false)
-        ~symbol:(fun symbol2 -> equiv_symbols env symbol1 symbol2))
+  let result =
+    Name.pattern_match name1
+      ~var:(fun var1 ->
+        Name.pattern_match name2
+          ~var:(fun var2 -> Variable.equal var1 var2)
+          ~symbol:(fun _ -> false))
+      ~symbol:(fun symbol1 ->
+        Name.pattern_match name2
+          ~var:(fun _ ->
+            unequal
+              (Named (Simple (Simple.name name1)))
+              (Named (Simple (Simple.name name2))))
+          ~symbol:(fun symbol2 -> equiv_symbols env symbol1 symbol2))
+  in
+  if result then result
+  else
+    (Format.fprintf Format.std_formatter "@.%a <> %a@."
+      Name.print name1
+      Name.print name2;
+     false)
 
 let equiv_value_slots env value_slot1 value_slot2 : eq =
   match Env.find_value_slot env value_slot1 with
@@ -119,8 +136,14 @@ let equiv_value_slots env value_slot1 value_slot2 : eq =
     Value_slot.equal value_slot value_slot2
   | None ->
       match Env.find_value_slot_rev env value_slot2 with
-      | Some _ -> false
-      | None -> Env.add_value_slot env value_slot1 value_slot2; false
+      | Some _ ->
+        unequal
+          (Named (Slot (Variable.create "", Value_slot value_slot1)))
+          (Named (Slot (Variable.create "", Value_slot value_slot2)))
+      | None -> Env.add_value_slot env value_slot1 value_slot2;
+        unequal
+          (Named (Slot (Variable.create "", Value_slot value_slot1)))
+          (Named (Slot (Variable.create "", Value_slot value_slot2)))
 
 let zip_fold l1 l2 ~f ~acc =
   List.combine l1 l2 |> List.fold_left f acc
@@ -130,11 +153,8 @@ let zip_sort_fold l1 l2 ~compare ~f ~acc =
   let l2 = List.sort compare l2 in
   zip_fold l1 l2 ~f ~acc
 
-(* Ignore code ids and phi slots *)
+(* Ignore code ids, phi slots, and rec info *)
 let equiv_code_ids _ _ _ = true
-
-let equiv_rec_info _env info1 info2 : eq =
-  Rec_info_expr.equal info1 info2
 
 let equiv_method_kind _env (k1 : Call_kind.Method_kind.t) (k2 : Call_kind.Method_kind.t)
   : eq =
@@ -144,6 +164,20 @@ let equiv_method_kind _env (k1 : Call_kind.Method_kind.t) (k2 : Call_kind.Method
 
 let rec equiv (env:Env.t) e1 e2 : eq =
   match e1, e2 with
+  | Named (Closure_expr (_, slot1, {function_decls;_})), Lambda _ ->
+    let e1 =
+      Function_slot.Lmap.find slot1 function_decls.in_order
+    in
+    (match e1 with
+    | Id _ -> false
+    | Exp e1 -> equiv env e1 e2)
+  | Lambda _, Named (Closure_expr (_, slot1, {function_decls;_}))  ->
+    let e2 =
+      Function_slot.Lmap.find slot1 function_decls.in_order
+    in
+    (match e2 with
+     | Id _ -> false
+     | Exp e2 -> equiv env e1 e2)
   | Named v1, Named v2 -> equiv_named env v1 v2
   | Let e1, Let e2 -> equiv_let env e1 e2
   | Let_cont e1, Let_cont e2 -> equiv_let_cont env e1 e2
@@ -152,8 +186,9 @@ let rec equiv (env:Env.t) e1 e2 : eq =
   | Lambda e1, Lambda e2 -> equiv_lambda env e1 e2
   | Switch e1, Switch e2 -> equiv_switch env e1 e2
   | Invalid _, Invalid _ -> true
-  | (Named _ | Let _ | Let_cont _ | Apply _ | Apply_cont _ | Switch _ | Invalid _ | Lambda _), _ ->
-    false
+  | (Named _ | Let _ | Let_cont _ | Apply _ | Apply_cont _ | Switch _
+    | Invalid _ | Lambda _), _ ->
+    unequal e1 e2
 
 (* [let_expr] *)
 and equiv_let env e1 e2 : eq =
@@ -164,7 +199,8 @@ and equiv_let env e1 e2 : eq =
          equiv_let_symbol_exprs env
            (bound1, e1.expr_body, let_bound1)
            (bound2, e2.expr_body, let_bound2))
-  |> function | Ok comp -> comp | Error _ -> false
+  |> function | Ok comp -> comp | Error _ ->
+    unequal (Let e1) (Let e2)
 
 and equiv_let_symbol_exprs env
       (static1, const1, body1) (static2, const2, body2) : eq =
@@ -321,14 +357,14 @@ and equiv_named env named1 named2 : eq =
     equiv_set_of_closures env set1 set2
   | Set_of_closures set1, Set_of_closures set2 ->
     equiv_set_of_closures env set1 set2
-  | Rec_info rec_info_expr1, Rec_info rec_info_expr2 ->
-    equiv_rec_info env rec_info_expr1 rec_info_expr2
+  | Rec_info _, Rec_info _ -> true
+    (* equiv_rec_info env rec_info_expr1 rec_info_expr2 *)
   | Static_consts const1, Static_consts const2 ->
     (List.combine const1 const2 |>
      List.fold_left (fun x (e1, e2) -> x && equiv_static_consts env e1 e2) true)
   | (Simple _ | Prim _ | Slot _ | Set_of_closures _ | Rec_info _
     | Static_consts _ | Closure_expr _), _ ->
-    false
+    unequal (Named named1) (Named named2)
 
 and equiv_simple env simple1 simple2 : eq =
   Simple.pattern_match simple1
@@ -366,7 +402,8 @@ and equiv_primitives env prim1 prim2 : eq =
   | Nullary Begin_region, Nullary Begin_region -> true
   | (Nullary (Invalid _) | Nullary (Optimised_out _ ) | Nullary (Probe_is_enabled _)
     | Nullary (Begin_region)
-    | Unary _ | Binary _ | Ternary _ | Variadic _), _ -> false
+    | Unary _ | Binary _ | Ternary _ | Variadic _), _ ->
+    false
 
 (* [let_cont_expr] *)
 and equiv_let_cont env let_cont1 let_cont2 : eq =
@@ -423,24 +460,19 @@ and equiv_call_kind env (k1 : Call_kind.t) (k2 : Call_kind.t) : eq =
   (* Direct OCaml function calls *)
   | Function
       { function_call =
-          Direct { code_id = code_id1; return_arity = return_arity1 }; _ },
+          Direct code_id1 ; _ },
     Function
       { function_call =
-          Direct { code_id = code_id2; return_arity = return_arity2 }; _ } ->
-    equiv_code_ids env code_id1 code_id2 &&
-    Flambda_arity.With_subkinds.equal return_arity1 return_arity2
+          Direct code_id2 ; _ } ->
+    equiv_code_ids env code_id1 code_id2
 
   (* Indirect OCaml function calls, with known arity  *)
   | Function
       { function_call =
-          Indirect_known_arity
-            { param_arity = param_arity1; return_arity = return_arity1 }; _},
+          Indirect_known_arity ; _},
     Function
       { function_call =
-          Indirect_known_arity
-            { param_arity = param_arity2; return_arity = return_arity2 }; _} ->
-    Flambda_arity.With_subkinds.equal param_arity1 param_arity2 &&
-    Flambda_arity.With_subkinds.equal return_arity1 return_arity2
+          Indirect_known_arity ; _} -> true
 
   (* Indirect OCaml function calls, with unknown arity  *)
   | Function { function_call = Indirect_unknown_arity ; _ },
@@ -454,20 +486,14 @@ and equiv_call_kind env (k1 : Call_kind.t) (k2 : Call_kind.t) : eq =
   (* C calls *)
   | C_call
       { alloc = alloc1;
-        param_arity = param_arity1;
-        return_arity = return_arity1;
         is_c_builtin = _},
     C_call
       { alloc = alloc2;
-        param_arity = param_arity2;
-        return_arity = return_arity2;
         is_c_builtin = _} ->
     Bool.equal alloc1 alloc2
-    && Flambda_arity.equal param_arity1 param_arity2
-    && Flambda_arity.equal return_arity1 return_arity2
 
   | (Function { function_call = Direct _ ; _}
-      | Function { function_call = Indirect_known_arity _ ; _}
+      | Function { function_call = Indirect_known_arity ; _}
       | Function { function_call = Indirect_unknown_arity ; _}
       | Method _ | C_call _), _ -> false
 
@@ -491,13 +517,7 @@ and equiv_lambda env (e1 : lambda_expr) (e2 : lambda_expr) : eq =
     ~f:(fun id1 id2
          ~return_continuation:_ ~exn_continuation:_ _params e1 e2 ->
          equiv_code_ids env id1 id2 &&
-         if equiv env e1 e2 then true
-         else
-           (Format.fprintf Format.std_formatter
-              "Let's see, these two terms are different:@ %a,@ %a"
-              print e1
-              print e2
-           ;false))
+         equiv env e1 e2)
 
 (* [switch] *)
 and equiv_switch env
@@ -508,4 +528,4 @@ and equiv_switch env
 
 let core_eq e1 e2 =
   try (equiv (Env.create ()) e1 e2) with
-  Invalid_argument _ -> false
+  Invalid_argument _ -> unequal e1 e2

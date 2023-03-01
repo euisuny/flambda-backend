@@ -408,8 +408,7 @@ and subst_bound_set_of_closures (bound : Bound_var.t) ~let_body
     )
   | Slot _ |  Closure_expr _ ->
     Named e (* NEXT : Substitute in the value slots *)
-  | Set_of_closures _ ->
-    failwith "Unimplemented_set_of_closures"
+  | Set_of_closures _ -> Named e
   | Rec_info _ ->
     failwith "Unimplemented_block_like"
 
@@ -918,7 +917,7 @@ and normalize_apply callee continuation exn_continuation apply_args call_kind
   | Named (Static_consts [Code code]) ->
     let _, lambda_expr =
       Core_function_params_and_body.pattern_match
-        code  ~f:(fun phi t -> phi, t)
+        code  ~f:(fun my_closure t -> my_closure, t)
     in
     let _, bound, body =
       Core_lambda.pattern_match lambda_expr
@@ -1160,7 +1159,9 @@ and subst_my_closure (phi : Bound_for_let.t) (slot : Function_slot.t)
                    core_fmap
                      (fun _ simple  ->
                         if (Simple.same (Simple.var (Bound_var.var bff)) simple)
-                        then Named (Slot (phi, Function_slot slot))
+                        then
+                          (let _ = Named (Slot (phi, Function_slot slot)) in
+                          failwith "Gotcha")
                         else (Named (Simple simple))) () body
                  in
                 Core_lambda.create id bound

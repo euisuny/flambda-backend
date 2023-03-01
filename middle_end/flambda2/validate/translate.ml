@@ -4,7 +4,7 @@ open! Flambda2_core
 module P = Flambda_primitive
 
 (** Translation from flambda2 terms to simplified core language **)
-let simple_to_core (v : Simple.t) : core_exp = Named (Simple v)
+let simple_to_core (v : Simple.t) : core_exp = Named (Simple (Simple.without_coercion v))
 
 let tagged_immediate_to_core (e : Targetint_31_63.t) : core_exp =
   Named (Simple (Simple.const (Int_ids.Const.tagged_immediate e)))
