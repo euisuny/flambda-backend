@@ -909,9 +909,7 @@ and normalize_let_cont (e:let_cont_expr) : core_exp =
     in
     (* [LetCont-β]
        e1 where k args = e2 ⟶ e1 [k \ λ args. e2] *)
-    (match e1 with
-    | Apply _ -> Let_cont (Non_recursive {handler; body})
-    | _ -> subst_cont e1 k args e2)
+    subst_cont e1 k args e2
   | Recursive _handlers -> failwith "Unimplemented_recursive"
 
 and normalize_apply callee continuation exn_continuation apply_args call_kind

@@ -497,7 +497,7 @@ and print_let ppf ({let_abst; expr_body} : let_expr) =
     (module Bound_for_let)
     let_abst ~apply_renaming_to_term:apply_renaming
     ~f:(fun bound body ->
-        fprintf ppf "(bound@ (%a).@ (%a))@ in=%a"
+        fprintf ppf "(bound@ %a)=(%a)@ in=%a"
         print_bound_pattern bound
         print expr_body
         print body)
@@ -710,7 +710,7 @@ and print_let_cont ppf (t : let_cont_expr) =
           (module Bound_parameters) handler
           ~apply_renaming_to_term:apply_renaming
           ~f:(fun k expr_body ->
-            fprintf ppf "(cont@ %a,@ param@ %a,@ body@ %a)@ in=%a"
+            fprintf ppf "(cont@ %a),@ (param@ %a),@ (body@ %a)@ in=%a"
             print_cont cont
             print_params k
             print expr_body
@@ -792,8 +792,9 @@ and print_apply_cont ppf ({k ; args} : apply_cont_expr) =
   fprintf ppf ")"
 
 and print_switch ppf ({scrutinee; arms} : switch_expr) =
-  fprintf ppf "switch %a :" print scrutinee;
-  Targetint_31_63.Map.iter (print_arm ppf) arms
+  fprintf ppf "(%a)@ with@ @[<hov 2>" print scrutinee;
+  Targetint_31_63.Map.iter (print_arm ppf) arms;
+  fprintf ppf "@]"
 
 and print_arm ppf key arm =
   fprintf ppf "| %a -> %a\n"
