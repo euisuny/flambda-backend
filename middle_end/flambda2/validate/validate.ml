@@ -244,7 +244,7 @@ and subst_static_list ~(bound : Bound_codelike.t) ~let_body e : core_exp =
        subst_static_list_ tl body
          (subst_pattern_static ~bound:hd ~let_body e)
      | _, _ ->
-      failwith "Mismatched static binder and let body length")
+      Misc.fatal_error "Mismatched static binder and let body length")
   in
   match let_body with
   | Named (Static_consts consts_list) ->
@@ -252,7 +252,7 @@ and subst_static_list ~(bound : Bound_codelike.t) ~let_body e : core_exp =
       List.map (fun x -> Named (Static_consts [x])) consts_list
     in
     subst_static_list_ (Bound_codelike.to_list bound) body e
-  | _ -> failwith "Expected name static constants in let body"
+  | _ -> Misc.fatal_error "Expected name static constants in let body"
 
 and subst_pattern_static
       ~(bound : Bound_codelike.Pattern.t) ~(let_body : core_exp) (e : core_exp) : core_exp =
@@ -339,7 +339,7 @@ and subst_bound_set_of_closures (bound : Bound_var.t) ~let_body
           if Simple.same v (Simple.var (Bound_var.var bound)) then
             Named (Static_consts [Static_const (Static_set_of_closures set)])
           else Named e
-        | Some _ -> failwith "Cannot be reached"
+        | Some _ -> Misc.fatal_error "Cannot be reached"
         | None -> Named e)
      | _ -> Named e
     )
@@ -402,7 +402,7 @@ and subst_bound_set_of_closures (bound : Bound_var.t) ~let_body
             (match bound_closure with
              | None -> Named e
              | Some (k, _) -> Named (Closure_expr (phi, k, set)))
-          | Some _ -> failwith "Cannot be reached"
+          | Some _ -> Misc.fatal_error "Cannot be reached"
           | None -> Named e)
      | _ -> Named e
     )
@@ -728,14 +728,13 @@ let rec subst_cont (cont_e1: core_exp) (k: Bound_continuation.t)
 let eval_prim_nullary (_v : P.nullary_primitive) : named =
   failwith "eval_prim_nullary"
 
-let eval_prim_unary (v : P.unary_primitive) (_arg : core_exp) : named =
+let eval_prim_unary (v : P.unary_primitive) (arg : core_exp) : named =
   match v with
-  | Project_value_slot _ -> (Prim (Unary (v, _arg))) (* TODO *)
   | Untag_immediate ->
-    (match _arg with
+    (match arg with
      | Named (Prim (Unary (Tag_immediate, Named (Prim (Unary (Is_int a, e)))))) ->
        (Prim (Unary (Is_int a, e)))
-     | _ -> (Prim (Unary (v, _arg))))
+     | _ -> (Prim (Unary (v, arg))))
   | (Get_tag | Array_length | Int_as_pointer | Boolean_not
     | Reinterpret_int64_as_float | Tag_immediate
     | Is_boxed_float | Is_flat_float_array | Begin_try_region
@@ -743,14 +742,14 @@ let eval_prim_unary (v : P.unary_primitive) (_arg : core_exp) : named =
     | Is_int _ | Bigarray_length _ | String_length _
     | Opaque_identity _ | Int_arith (_,_) | Float_arith _
     | Num_conv _ | Unbox_number _ | Box_number (_, _)
-    | Project_function_slot _ ) ->
-    (Prim (Unary (v, _arg)))
+    | Project_function_slot _ | Project_value_slot _) ->
+    (Prim (Unary (v, arg)))
 
 let simple_tagged_immediate ~(const : Simple.t) : Targetint_31_63.t option =
   let constant =
     Simple.pattern_match' const
-    ~var:(fun _ ~coercion:_ -> failwith "No variables allowed")
-    ~symbol:(fun _ ~coercion:_ -> failwith "No symbols allowed")
+    ~var:(fun _ ~coercion:_ -> Misc.fatal_error "No variables allowed")
+    ~symbol:(fun _ ~coercion:_ -> Misc.fatal_error "No symbols allowed")
     ~const:(fun t -> t)
   in
   match Int_ids.Const.descr constant with
@@ -786,7 +785,7 @@ let eval_prim_binary
           | Some i ->
             (match List.nth blocks (Targetint_31_63.to_int i) with
              | Named n -> Named n
-             | _ -> failwith "Non-name load")
+             | _ -> Misc.fatal_error "Non-name load")
           | None -> Named (Prim (Binary (v, arg1, arg2))))
        else
          Named (Prim (Binary (v, arg1, arg2)))
@@ -820,8 +819,8 @@ let eval_prim_variadic (v : P.variadic_primitive) (args : core_exp list) : named
       | Value ->
           let constant =
             Simple.pattern_match' n
-              ~var:(fun _ ~coercion:_ -> failwith "No variables allowed")
-              ~symbol:(fun _ ~coercion:_ -> failwith "No symbols allowed")
+              ~var:(fun _ ~coercion:_ -> Misc.fatal_error "No variables allowed")
+              ~symbol:(fun _ ~coercion:_ -> Misc.fatal_error "No symbols allowed")
               ~const:(fun t -> t)
           in
           (match Int_ids.Const.descr constant with
@@ -915,8 +914,6 @@ and normalize_let_cont (e:let_cont_expr) : core_exp =
     | _ -> subst_cont e1 k args e2)
   | Recursive _handlers -> failwith "Unimplemented_recursive"
 
-(* TODO: substitute in continuation and exn_continuations (if it has in-lined
-          handlers) *)
 and normalize_apply callee continuation exn_continuation apply_args call_kind
   : core_exp =
   match callee with
@@ -1056,14 +1053,14 @@ and normalize_static_const_group (phi : Bound_codelike.Pattern.t list) (consts :
             let code_id : Code_id.t =
               (match id with
                 | Bound_codelike.Pattern.Code id -> id
-                | _ -> failwith "Expected code id")
+                | _ -> Misc.fatal_error "Expected code id")
             in
             let code =
               subst_code_id_set_of_closures code_id
                 ~let_body:(Named (Static_consts [Code x])) acc
             in
             code
-          | _ -> failwith "Expected code bound") set code
+          | _ -> Misc.fatal_error "Expected code bound") set code
     in
     let set_of_closures =
       List.map
@@ -1074,7 +1071,7 @@ and normalize_static_const_group (phi : Bound_codelike.Pattern.t list) (consts :
             in
             Static_const (Static_set_of_closures (process_set_of_closures x |>
                                                   normalize_set_of_closures phi))
-          | _ -> failwith "Expected set of closures") set_of_closures
+          | _ -> Misc.fatal_error "Expected set of closures") set_of_closures
     in
     let static_consts =
       List.map (fun (_, x) -> normalize_static_const_or_code
@@ -1266,7 +1263,7 @@ and normalize_named (var: Bound_for_let.t) (body : named) : Bound_for_let.t * co
        let phi, exp = normalize_static_const_group bound_vars consts
        in
        (Static (Bound_codelike.create phi), exp)
-     | _ -> failwith "Expected bound static variables")
+     | _ -> Misc.fatal_error "Expected bound static variables")
   | Prim v -> (var, eval_prim v)
 
 let simulation_relation src tgt =

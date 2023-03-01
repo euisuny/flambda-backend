@@ -28,7 +28,7 @@ let subst_var_slot
          subst_var_slot_helper var phi (Function_slot slot) acc)
       e2
       (List.combine vars in_order)
-  | _ -> failwith "Expected set of closures"
+  | _ -> Misc.fatal_error "Expected set of closures"
 
 let subst_static_slot_helper
       (sym : Symbol.t) (phi : Bound_var.t) (slot : slot) (e2 : core_exp) =
@@ -204,7 +204,7 @@ and function_params_and_body_to_core (var : Bound_static.Pattern.t)
   let name =
     (match var with
      | Code id -> id
-     | _ -> failwith "Expected code id")
+     | _ -> Misc.fatal_error "Expected code id")
   in
   Function_params_and_body.pattern_match' t
     ~f:(fun (bound: Bound_for_function.t) ~body ->
