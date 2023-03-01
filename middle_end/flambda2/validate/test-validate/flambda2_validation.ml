@@ -219,6 +219,7 @@ let () =
 
   (* [Mutually recursive function] *)
 
+  (* Diverging mutually recursive functions *)
   (* simplify_term "rec.fl";
    * normalize_term "rec.fl"; *)
 
@@ -226,5 +227,30 @@ let () =
 
   (* simplify_term "length.fl";
    * normalize_term "length.fl"; *)
+
+  (* ------------- TODO --------------- *)
+
+  (* A. More features of recursion *)
+  (* 1. [Applying a mutually recursive function to concrete arguments] *)
+
+  (* 2. [LetCont : Recursive case] *)
+
+  (* 3. test11 or test12 :
+     [Sets of closures that are mutually recursive to each other] *)
+
+  (* IY: Are there other features of mutually recursive functions that we
+     might want to test? *)
+
+  (* B. Effects *)
+  (* [Inlining effectful functions (1) Mutable state] *)
+
+  (* (2) External calls *)
+
+  (* D. Bureaucratic tax *)
+  (* Implementing primitive evaluation (arithmetic evaluation..) *)
+
+  (* ----------------------------- *)
+
+  (* More: Stress-testing the validator *)
 
   ()
