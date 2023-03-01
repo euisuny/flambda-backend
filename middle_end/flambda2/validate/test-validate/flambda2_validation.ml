@@ -252,5 +252,6 @@ let () =
   (* ----------------------------- *)
 
   (* More: Stress-testing the validator *)
+  (* LATER: Refactor test suite into dune file *)
 
   ()
