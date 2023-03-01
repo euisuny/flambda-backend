@@ -981,8 +981,23 @@ and normalize_apply callee continuation exn_continuation apply_args call_kind
     subst_params (bound.params) exp
       (List.map normalize apply_args)
   | _ ->
+    let continuation =
+      (match continuation with
+       | Cont_id _ -> continuation
+       | Handler handler -> Handler (normalize_continuation_handler handler))
+    in
+    let exn_continuation =
+      (match exn_continuation with
+       | Cont_id _ -> exn_continuation
+       | Handler handler -> Handler (normalize_continuation_handler handler))
+    in
     Apply {callee;continuation;
            exn_continuation;apply_args;call_kind}
+
+and normalize_continuation_handler (e : continuation_handler) =
+  Core_continuation_handler.pattern_match e
+    (fun param e ->
+       Core_continuation_handler.create param (normalize e))
 
 and normalize_apply_cont k args : core_exp =
   (* [ApplyCont]
