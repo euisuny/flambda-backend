@@ -52,6 +52,8 @@ val create :
   continuation:Result_continuation.t ->
   Exn_continuation.t ->
   args:Simple.t list ->
+  args_arity:Flambda_arity.With_subkinds.t ->
+  return_arity:Flambda_arity.With_subkinds.t ->
   call_kind:Call_kind.t ->
   Debuginfo.t ->
   inlined:Inlined_attribute.t ->
@@ -74,6 +76,12 @@ val callee : t -> Simple.t
 
 (** The arguments of the function or method being applied. *)
 val args : t -> Simple.t list
+
+(** The arity of the arguments being applied. *)
+val args_arity : t -> Flambda_arity.With_subkinds.t
+
+(** The arity of the result(s) of the application. *)
+val return_arity : t -> Flambda_arity.With_subkinds.t
 
 (** Information about what kind of call is involved (direct function call,
     method call, etc). *)
@@ -103,7 +111,8 @@ val with_continuations : t -> Result_continuation.t -> Exn_continuation.t -> t
 val with_exn_continuation : t -> Exn_continuation.t -> t
 
 (** Change the arguments of an application *)
-val with_args : t -> Simple.t list -> t
+val with_args :
+  t -> Simple.t list -> args_arity:Flambda_arity.With_subkinds.t -> t
 
 (** Change the call kind of an application. *)
 val with_call_kind : t -> Call_kind.t -> t

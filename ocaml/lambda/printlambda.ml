@@ -254,8 +254,8 @@ let primitive ppf = function
         match init with
         | Heap_initialization -> "(heap-init)"
         | Root_initialization -> "(root-init)"
-        | Assignment Alloc_heap -> ""
-        | Assignment Alloc_local -> "(local)"
+        | Assignment Modify_heap -> ""
+        | Assignment Modify_maybe_stack -> "(maybe-stack)"
       in
       fprintf ppf "setfield_%s%s %i" instr init n
   | Psetfield_computed (ptr, init) ->
@@ -268,8 +268,8 @@ let primitive ppf = function
         match init with
         | Heap_initialization -> "(heap-init)"
         | Root_initialization -> "(root-init)"
-        | Assignment Alloc_heap -> ""
-        | Assignment Alloc_local -> "(local)"
+        | Assignment Modify_heap -> ""
+        | Assignment Modify_maybe_stack -> "(maybe-stack)"
       in
       fprintf ppf "setfield_%s%s_computed" instr init
   | Pfloatfield (n, sem, mode) ->
@@ -280,8 +280,8 @@ let primitive ppf = function
         match init with
         | Heap_initialization -> "(heap-init)"
         | Root_initialization -> "(root-init)"
-        | Assignment Alloc_heap -> ""
-        | Assignment Alloc_local -> "(local)"
+        | Assignment Modify_heap -> ""
+        | Assignment Modify_maybe_stack -> "(maybe-stack)"
       in
       fprintf ppf "setfloatfield%s %i" init n
   | Pduprecord (rep, size) -> fprintf ppf "duprecord %a %i" record_rep rep size
@@ -437,10 +437,10 @@ let primitive ppf = function
   | Pbswap16 -> fprintf ppf "bswap16"
   | Pbbswap(bi,m) -> print_boxed_integer "bswap" ppf bi m
   | Pint_as_pointer -> fprintf ppf "int_as_pointer"
-  | Popaque -> fprintf ppf "opaque"
+  | Popaque _ -> fprintf ppf "opaque"
   | Pprobe_is_enabled {name} -> fprintf ppf "probe_is_enabled[%s]" name
   | Pobj_dup -> fprintf ppf "obj_dup"
-  | Pobj_magic -> fprintf ppf "obj_magic"
+  | Pobj_magic _ -> fprintf ppf "obj_magic"
 
 let name_of_primitive = function
   | Pbytes_of_string -> "Pbytes_of_string"
@@ -545,10 +545,10 @@ let name_of_primitive = function
   | Pbswap16 -> "Pbswap16"
   | Pbbswap _ -> "Pbbswap"
   | Pint_as_pointer -> "Pint_as_pointer"
-  | Popaque -> "Popaque"
+  | Popaque _ -> "Popaque"
   | Pprobe_is_enabled _ -> "Pprobe_is_enabled"
   | Pobj_dup -> "Pobj_dup"
-  | Pobj_magic -> "Pobj_magic"
+  | Pobj_magic _ -> "Pobj_magic"
 
 let check_attribute ppf check =
   let check_property = function
@@ -646,7 +646,8 @@ let rec lam ppf = function
   | Lfunction{kind; params; return; body; attr; mode; region} ->
       let pr_params ppf params =
         match kind with
-        | Curried _ ->
+        | Curried {nlocal} ->
+            fprintf ppf "@ {nlocal = %d}" nlocal;
             List.iter (fun (param, k) ->
                 fprintf ppf "@ %a%a" Ident.print param layout k) params
         | Tupled ->

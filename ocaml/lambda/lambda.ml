@@ -46,6 +46,10 @@ include (struct
     | Alloc_heap
     | Alloc_local
 
+  type modify_mode =
+    | Modify_heap
+    | Modify_maybe_stack
+
   let alloc_heap = Alloc_heap
 
   let alloc_local : alloc_mode =
@@ -57,15 +61,38 @@ include (struct
     | Alloc_local, _ | _, Alloc_local -> Alloc_local
     | Alloc_heap, Alloc_heap -> Alloc_heap
 
+  let modify_heap = Modify_heap
+
+  let modify_maybe_stack : modify_mode =
+    (* CR zqian: possible to move this check to a better place? *)
+    (* idealy I don't want to do the checking here.
+       if stack allocations are disabled, then the alloc_mode which this modify_mode
+        depends on should be heap, which makes this modify_mode to be heap *)
+
+    (* one suggestion: move the check to optimize_allocation;
+      if stack_allocation not enabled, force all allocations to be heap,
+        which then propagates to all the other modes.
+       *)
+    if Config.stack_allocation then Modify_maybe_stack
+    else Modify_heap
+
 end : sig
 
   type alloc_mode = private
     | Alloc_heap
     | Alloc_local
 
+  type modify_mode = private
+    | Modify_heap
+    | Modify_maybe_stack
+
   val alloc_heap : alloc_mode
 
   val alloc_local : alloc_mode
+
+  val modify_heap : modify_mode
+
+  val modify_maybe_stack : modify_mode
 
   val join_mode : alloc_mode -> alloc_mode -> alloc_mode
 
@@ -93,7 +120,7 @@ let eq_mode a b =
   | Alloc_local, Alloc_heap -> false
 
 type initialization_or_assignment =
-  | Assignment of alloc_mode
+  | Assignment of modify_mode
   | Heap_initialization
   | Root_initialization
 
@@ -206,12 +233,12 @@ type primitive =
   (* Integer to external pointer *)
   | Pint_as_pointer
   (* Inhibition of optimisation *)
-  | Popaque
+  | Popaque of layout
   (* Statically-defined probes *)
   | Pprobe_is_enabled of { name: string }
   (* Primitives for [Obj] *)
   | Pobj_dup
-  | Pobj_magic
+  | Pobj_magic of layout
 
 and integer_comparison =
     Ceq | Cne | Clt | Cgt | Cle | Cge
@@ -1322,10 +1349,10 @@ let primitive_may_allocate : primitive -> alloc_mode option = function
   | Pbswap16 -> None
   | Pbbswap (_, m) -> Some m
   | Pint_as_pointer -> None
-  | Popaque -> None
+  | Popaque _ -> None
   | Pprobe_is_enabled _ -> None
   | Pobj_dup -> Some alloc_heap
-  | Pobj_magic -> None
+  | Pobj_magic _ -> None
 
 let constant_layout = function
   | Const_int _ | Const_char _ -> Pvalue Pintval
@@ -1340,4 +1367,77 @@ let structured_constant_layout = function
   | Const_block _ | Const_immstring _ -> Pvalue Pgenval
   | Const_float_array _ | Const_float_block _ -> Pvalue (Parrayval Pfloatarray)
 
-let primitive_result_layout (_p : primitive) = layout_top
+let primitive_result_layout (p : primitive) =
+  match p with
+  | Popaque layout | Pobj_magic layout -> layout
+  | Pbytes_to_string | Pbytes_of_string -> layout_string
+  | Pignore | Psetfield _ | Psetfield_computed _ | Psetfloatfield _ | Poffsetref _
+  | Pbytessetu | Pbytessets | Parraysetu _ | Parraysets _ | Pbigarrayset _
+  | Pbytes_set_16 _ | Pbytes_set_32 _ | Pbytes_set_64 _
+  | Pbigstring_set_16 _ | Pbigstring_set_32 _ | Pbigstring_set_64 _
+    -> layout_unit
+  | Pgetglobal _ | Psetglobal _ | Pgetpredef _ -> layout_module_field
+  | Pmakeblock _ | Pmakefloatblock _ | Pmakearray _ | Pduprecord _
+  | Pduparray _ | Pbigarraydim _ | Pobj_dup -> layout_block
+  | Pfield _ | Pfield_computed _ -> layout_field
+  | Pfloatfield _ | Pfloatofint _ | Pnegfloat _ | Pabsfloat _
+  | Paddfloat _ | Psubfloat _ | Pmulfloat _ | Pdivfloat _ -> layout_float
+  | Pccall _p ->
+      (* CR ncourant: use native_repr *)
+      layout_any_value
+  | Praise _ -> layout_bottom
+  | Psequor | Psequand | Pnot
+  | Pnegint | Paddint | Psubint | Pmulint
+  | Pdivint _ | Pmodint _
+  | Pandint | Porint | Pxorint
+  | Plslint | Plsrint | Pasrint
+  | Pintcomp _
+  | Pcompare_ints | Pcompare_floats | Pcompare_bints _
+  | Poffsetint _ | Pintoffloat | Pfloatcomp _
+  | Pstringlength | Pstringrefu | Pstringrefs
+  | Pbyteslength | Pbytesrefu | Pbytesrefs
+  | Parraylength _ | Pisint _ | Pisout | Pintofbint _
+  | Pbintcomp _
+  | Pstring_load_16 _ | Pbytes_load_16 _ | Pbigstring_load_16 _
+  | Pprobe_is_enabled _ | Pbswap16
+    -> layout_int
+  | Parrayrefu array_kind | Parrayrefs array_kind ->
+      (match array_kind with
+       | Pintarray -> layout_int
+       | Pfloatarray -> layout_float
+       | Pgenarray | Paddrarray -> layout_field)
+  | Pbintofint (bi, _) | Pcvtbint (_,bi,_)
+  | Pnegbint (bi, _) | Paddbint (bi, _) | Psubbint (bi, _)
+  | Pmulbint (bi, _) | Pdivbint {size = bi} | Pmodbint {size = bi}
+  | Pandbint (bi, _) | Porbint (bi, _) | Pxorbint (bi, _)
+  | Plslbint (bi, _) | Plsrbint (bi, _) | Pasrbint (bi, _)
+  | Pbbswap (bi, _) ->
+      layout_boxedint bi
+  | Pstring_load_32 _ | Pbytes_load_32 _ | Pbigstring_load_32 _ ->
+      layout_boxedint Pint32
+  | Pstring_load_64 _ | Pbytes_load_64 _ | Pbigstring_load_64 _ ->
+      layout_boxedint Pint64
+  | Pbigarrayref (_, _, kind, _) ->
+      begin match kind with
+      | Pbigarray_unknown -> layout_any_value
+      | Pbigarray_float32 | Pbigarray_float64 -> layout_float
+      | Pbigarray_sint8 | Pbigarray_uint8
+      | Pbigarray_sint16 | Pbigarray_uint16
+      | Pbigarray_caml_int -> layout_int
+      | Pbigarray_int32 -> layout_boxedint Pint32
+      | Pbigarray_int64 -> layout_boxedint Pint64
+      | Pbigarray_native_int -> layout_boxedint Pnativeint
+      | Pbigarray_complex32 | Pbigarray_complex64 ->
+          layout_block
+      end
+  | Pctconst (
+      Big_endian | Word_size | Int_size | Max_wosize
+      | Ostype_unix | Ostype_cygwin | Ostype_win32 | Backend_type
+    ) ->
+      (* Compile-time constants only ever return ints for now,
+         enumerate them all to be sure to modify this if it becomes wrong. *)
+      layout_int
+  | Pint_as_pointer ->
+      (* CR ncourant: use an unboxed int64 here when it exists *)
+      layout_any_value
+

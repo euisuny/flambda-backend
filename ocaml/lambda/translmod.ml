@@ -110,8 +110,7 @@ let rec apply_coercion loc strict restr arg =
       let carg = apply_coercion loc Alias cc_arg (Lvar param) in
       apply_coercion_result loc strict arg [param, Lambda.layout_module] [carg] cc_res
   | Tcoerce_primitive { pc_desc; pc_env; pc_type; pc_poly_mode } ->
-      let poly_mode = Option.map Translcore.transl_alloc_mode pc_poly_mode in
-      Translprim.transl_primitive loc pc_desc pc_env pc_type ~poly_mode None
+      Translprim.transl_primitive loc pc_desc pc_env pc_type ~poly_mode:pc_poly_mode None
   | Tcoerce_alias (env, path, cc) ->
       let lam = transl_module_path loc env path in
       name_lambda strict arg Lambda.layout_module
@@ -164,7 +163,7 @@ and wrap_id_pos_list loc id_pos_list get_field lam =
     List.fold_left (fun (lam, s) (id',pos,c) ->
       if Ident.Set.mem id' fv then
         let id'' = Ident.create_local (Ident.name id') in
-        (Llet(Alias, Lambda.layout_top, id'',
+        (Llet(Alias, Lambda.layout_module_field, id'',
              apply_coercion loc Alias c (get_field pos),lam),
          Ident.Map.add id' id'' s)
       else (lam, s))
@@ -427,7 +426,7 @@ let eval_rec_bindings bindings cont =
   | (Ignore_loc loc, None, rhs) :: rem ->
       Lsequence(Lprim(Pignore, [rhs], loc), bind_strict rem)
   | (Id id, None, rhs) :: rem ->
-      Llet(Strict, Lambda.layout_top, id, rhs, bind_strict rem)
+      Llet(Strict, Lambda.layout_module, id, rhs, bind_strict rem)
   | (_id, Some _, _rhs) :: rem ->
       bind_strict rem
   and patch_forwards = function
@@ -629,12 +628,8 @@ and transl_structure ~scopes loc fields cc rootpath final_env = function
                       match cc with
                       | Tcoerce_primitive p ->
                           let loc = of_location ~scopes p.pc_loc in
-                          let poly_mode =
-                            Option.map
-                              Translcore.transl_alloc_mode p.pc_poly_mode
-                          in
                           Translprim.transl_primitive
-                            loc p.pc_desc p.pc_env p.pc_type ~poly_mode None
+                            loc p.pc_desc p.pc_env p.pc_type ~poly_mode:p.pc_poly_mode None
                       | _ -> apply_coercion loc Strict cc (get_field pos))
                     pos_cc_list, loc)
             and id_pos_list =
@@ -1095,8 +1090,7 @@ let field_of_str loc str =
   fun (pos, cc) ->
     match cc with
     | Tcoerce_primitive { pc_desc; pc_env; pc_type; pc_poly_mode } ->
-        let poly_mode = Option.map Translcore.transl_alloc_mode pc_poly_mode in
-        Translprim.transl_primitive loc pc_desc pc_env pc_type ~poly_mode None
+        Translprim.transl_primitive loc pc_desc pc_env pc_type ~poly_mode:pc_poly_mode None
     | Tcoerce_alias (env, path, cc) ->
         let lam = transl_module_path loc env path in
         apply_coercion loc Alias cc lam
@@ -1427,13 +1421,10 @@ let transl_store_structure ~scopes glob map prims aliases str =
     List.fold_right (add_ident may_coerce) idlist subst
 
   and store_primitive (pos, prim) cont =
-    let poly_mode =
-      Option.map Translcore.transl_alloc_mode prim.pc_poly_mode
-    in
     Lsequence(Lprim(mod_setfield pos,
                     [Lprim(Pgetglobal glob, [], Loc_unknown);
                      Translprim.transl_primitive Loc_unknown
-                       prim.pc_desc prim.pc_env prim.pc_type ~poly_mode None],
+                       prim.pc_desc prim.pc_env prim.pc_type ~poly_mode:prim.pc_poly_mode None],
                     Loc_unknown),
               cont)
 
@@ -1570,7 +1561,7 @@ let toploop_getvalue id =
                   Loc_unknown);
     ap_args=[Lconst(Const_base(
       Const_string (toplevel_name id, Location.none, None)))];
-    ap_result_layout = Lambda.layout_top;
+    ap_result_layout = Lambda.layout_any_value;
     ap_region_close=Rc_normal;
     ap_mode=alloc_heap;
     ap_tailcall=Default_tailcall;
@@ -1589,7 +1580,7 @@ let toploop_setvalue id lam =
       [Lconst(Const_base(
          Const_string(toplevel_name id, Location.none, None)));
        lam];
-    ap_result_layout = Lambda.layout_top;
+    ap_result_layout = Lambda.layout_unit;
     ap_region_close=Rc_normal;
     ap_mode=alloc_heap;
     ap_tailcall=Default_tailcall;
@@ -1601,7 +1592,7 @@ let toploop_setvalue id lam =
 let toploop_setvalue_id id = toploop_setvalue id (Lvar id)
 
 let close_toplevel_term (lam, ()) =
-  Ident.Set.fold (fun id l -> Llet(Strict, Lambda.layout_top, id,
+  Ident.Set.fold (fun id l -> Llet(Strict, Lambda.layout_any_value, id,
                                   toploop_getvalue id, l))
                 (free_variables lam) lam
 
