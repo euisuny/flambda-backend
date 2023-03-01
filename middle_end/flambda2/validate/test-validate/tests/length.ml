@@ -3,4 +3,4 @@ let rec length x =
   | [] -> 0
   | a :: l -> 1 + length l
 
-let _ = length [1;2;3]
+(* let _ = length [1;2;3] *)

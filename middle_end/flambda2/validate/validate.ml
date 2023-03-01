@@ -4,8 +4,7 @@ open! Translate
 
 module P = Flambda_primitive
 
-let _std_print =
-  Format.fprintf Format.std_formatter "@. TERM:%a@." print
+let _std_print = Format.fprintf Format.std_formatter "@.TERM:%a@." print
 
 (** Normalization
 

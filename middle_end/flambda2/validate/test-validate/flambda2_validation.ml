@@ -217,12 +217,12 @@ let () =
   (* simplify_term "size.fl";
    * normalize_term "size.fl"; *)
 
-  (* ---------- NEXT --------- *)
-
   (* [Mutually recursive function] *)
 
-  simplify_term "rec.fl";
-  normalize_term "rec.fl";
+  (* simplify_term "rec.fl";
+   * normalize_term "rec.fl"; *)
+
+  (* [Using list] *)
 
   (* simplify_term "length.fl";
    * normalize_term "length.fl"; *)

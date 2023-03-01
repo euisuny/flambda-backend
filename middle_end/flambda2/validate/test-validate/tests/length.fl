@@ -1,6 +1,4 @@
-let $camlLength__const_block16 = Block 0 (3, 0) in
-let $camlLength__const_block18 = Block 0 (2, $camlLength__const_block16) in
-let $camlLength__const_block20 = Block 0 (1, $camlLength__const_block18) in
+let $camlLength__first_const17 = Block 0 () in
 let code rec size(22)
       length_0 (x)
         my_closure my_region my_depth
@@ -22,11 +20,8 @@ let code rec size(22)
            cont k (Paddint))
 in
 (let length = closure length_0 @length in
- apply direct(length_0)
-   (length : _ -> imm tagged) ($camlLength__const_block20) &length -> k1 * error
-   where k1 (sequence) =
-     let Pmakeblock = %Block 0 (length) in
-     cont k (Pmakeblock))
+ let Pmakeblock = %Block 0 (length) in
+ cont k (Pmakeblock))
   where k define_root_symbol (module_block) =
     let field_0 = %block_load tag(0) size(1) (module_block, 0) in
     let $camlLength = Block 0 (field_0) in
