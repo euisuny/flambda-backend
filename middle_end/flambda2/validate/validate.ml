@@ -6,6 +6,13 @@ module P = Flambda_primitive
 
 let _std_print = Format.fprintf Format.std_formatter "@.TERM:%a@." print
 
+(* TODO: Clean-up:
+
+   1. Refactor [core_fmap] branches and reuse them for substitution
+   functions
+
+   2. Pretty printer alignment issues *)
+
 (** Normalization
 
     - CBV-style reduction for [let] and [letcont] expressions
@@ -485,7 +492,7 @@ and subst_bound_set_of_closures_static_const
          in_order }
      in
      (Static_set_of_closures {function_decls; value_slots; alloc_mode}))
-  | _ -> e (* NEXT *)
+  | _ -> e
 
 and subst_code_id_set_of_closures (bound : Code_id.t) ~(let_body : core_exp)
       {function_decls; value_slots; alloc_mode}
@@ -653,7 +660,7 @@ and subst_block_like_static_const
         args
     in
     Block (tag, mut, args)
-  | _ -> e (* NEXT *)
+  | _ -> e
 
 (* ∀ p i, p ∈ params -> params[i] = p -> e [p \ args[i]] *)
 (* [Bound_parameters] are [Variable]s *)
