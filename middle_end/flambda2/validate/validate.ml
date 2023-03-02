@@ -57,24 +57,21 @@ and subst_singleton_set_of_closures_named ~bound ~clo (e : named) : core_exp =
   match e with
   | Simple v -> f bound v
   | Prim e -> prim_fix (subst_singleton_set_of_closures ~bound ~clo) e
-  | Closure_expr (phi, slot, clo) ->
-    let clo =
+  | Closure_expr (phi, slot, set) ->
+    let set =
       set_of_closures_fix (subst_singleton_set_of_closures ~bound ~clo)
-        f bound clo
+        f bound set
     in
-    Named (Closure_expr (phi, slot, clo))
-  | Set_of_closures clo ->
-    let clo =
+    Named (Closure_expr (phi, slot, set))
+  | Set_of_closures set ->
+    let set =
       set_of_closures_fix (subst_singleton_set_of_closures ~bound ~clo)
-        f bound clo
+        f bound set
     in
-    Named (Set_of_closures clo)
+    Named (Set_of_closures set)
   | Static_consts group ->
-    let group =
-      List.map
-        (subst_singleton_set_of_closures_static_const_or_code ~bound ~clo) group
-    in
-    Named (Static_consts group)
+    static_const_group_fix (subst_singleton_set_of_closures ~bound ~clo)
+      f bound group
   | Slot (phi, Function_slot slot) ->
     (let bound = Function_slot.Lmap.bindings clo.function_decls.in_order
     in
@@ -83,62 +80,12 @@ and subst_singleton_set_of_closures_named ~bound ~clo (e : named) : core_exp =
       List.find_opt (fun (x, _) -> x = slot) bound
     in
     (match bound_closure with
-      | None -> Named e
-      | Some (k, _) -> Named (Closure_expr (phi, k, clo))))
+     | None ->
+       Named e
+     | Some (k, _) ->
+       Named (Closure_expr (phi, k, clo))))
   | Slot _
   | Rec_info _ -> Named e
-
-and subst_singleton_set_of_closures_static_const_or_code ~bound ~clo
-      (e : static_const_or_code) =
-  match e with
-  | Code params_and_body ->
-    Code
-      (Core_function_params_and_body.pattern_match
-         params_and_body
-         ~f:(fun
-              params body ->
-              Core_function_params_and_body.create
-                params
-                (Core_lambda.pattern_match body
-                   ~f:(fun id b_id body ->
-                     Core_lambda.create id b_id
-                       (subst_singleton_set_of_closures ~bound ~clo body)))))
-  | Deleted_code -> e
-  | Static_const const ->
-    Static_const (match const with
-     | Static_set_of_closures {function_decls; value_slots; alloc_mode}->
-      let {function_decls; value_slots; alloc_mode} =
-        (let in_order =
-            Function_slot.Lmap.map (fun x ->
-              match x with
-              | Id _ -> x
-              | Exp e ->
-                Exp (subst_singleton_set_of_closures ~bound ~clo e))
-             function_decls.in_order
-          in
-          let function_decls = function_decl_create in_order
-          in
-          let value_slots =
-            Value_slot.Map.map (fun (x, kind) ->
-              match x with
-              | Id v -> (Exp (
-                if Simple.same v (Simple.var (Bound_var.var bound)) then
-                  Named (Set_of_closures clo)
-                else
-                  Named (Static_consts [e])), kind)
-              | Exp e ->
-                (Exp (subst_singleton_set_of_closures ~bound ~clo e), kind))
-              value_slots
-          in
-          {function_decls; value_slots; alloc_mode}
-        )
-      in
-      Static_set_of_closures {function_decls; value_slots; alloc_mode}
-    | Block (tag, mut, list) ->
-      let list = List.map (subst_singleton_set_of_closures ~bound ~clo) list
-      in
-      Block (tag, mut, list)
-    | _ -> const)
 
 and subst_static_list ~(bound : Bound_codelike.t) ~let_body e : core_exp =
   let rec subst_static_list_ bound body e =
