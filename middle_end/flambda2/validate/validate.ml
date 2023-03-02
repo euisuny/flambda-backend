@@ -4,10 +4,6 @@ open! Translate
 
 let _std_print = Format.fprintf Format.std_formatter "@.TERM:%a@." print
 
-(* TODO: Clean-up:
-   Refactor [core_fmap] branches and reuse them for substitution
-   functions *)
-
 (** Normalization
 
     - CBV-style reduction for [let] and [letcont] expressions
@@ -111,22 +107,18 @@ and subst_pattern_static
       ~(bound : Bound_codelike.Pattern.t) ~(let_body : core_exp) (e : core_exp)
   : core_exp =
   match e with
-  | Apply_cont {k ; args} ->
-    Apply_cont
-      {k = k;
-       args = List.map (subst_pattern_static ~bound ~let_body) args}
-  | Let {let_abst; expr_body} ->
-    Core_let.pattern_match {let_abst; expr_body}
-      ~f:(fun ~x ~e1 ~e2 ->
-        Core_let.create
-          ~x
-          ~e1:(subst_pattern_static ~bound ~let_body e1)
-          ~e2:(subst_pattern_static ~bound ~let_body e2))
-  | Switch {scrutinee; arms} ->
-    Switch
-      {scrutinee = subst_pattern_static ~bound ~let_body scrutinee;
-        arms = Targetint_31_63.Map.map
-                 (subst_pattern_static ~bound ~let_body) arms}
+  | Let e ->
+    let_fix (subst_pattern_static ~bound ~let_body) e
+  | Let_cont e ->
+    let_cont_fix (subst_pattern_static ~bound ~let_body) e
+  | Apply e ->
+    apply_fix (subst_pattern_static ~bound ~let_body) e
+  | Apply_cont e ->
+    apply_cont_fix (subst_pattern_static ~bound ~let_body) e
+  | Lambda e ->
+    lambda_fix (subst_pattern_static ~bound ~let_body) e
+  | Switch e ->
+    switch_fix (subst_pattern_static ~bound ~let_body) e
   | Named named ->
     (match bound with
      | Block_like bound ->
@@ -135,59 +127,6 @@ and subst_pattern_static
        subst_bound_set_of_closures set ~let_body named
      | Code id ->
        subst_code_id id ~let_body named)
-  | Let_cont e ->
-    (match e with
-     | Non_recursive {handler; body} ->
-       Let_cont
-         (Non_recursive
-            { handler =
-                Core_continuation_handler.pattern_match handler
-                  (fun param exp ->
-                      Core_continuation_handler.create
-                        param (subst_pattern_static ~bound ~let_body exp));
-              body =
-                Core_letcont_body.pattern_match body
-                  (fun cont exp ->
-                     Core_letcont_body.create
-                       cont (subst_pattern_static ~bound ~let_body exp))})
-     | Recursive body ->
-       (let boundr, continuation_map, body =
-          Core_recursive.pattern_match body ~f:(fun b {continuation_map; body} ->
-            b, continuation_map, body)
-        in
-        let bound_cm, continuation_map =
-          Core_continuation_map.pattern_match continuation_map
-            ~f:(fun b e -> b,e)
-        in
-        let continuation_map =
-          Continuation.Map.map
-            (fun x ->
-               Core_continuation_handler.pattern_match x
-                 (fun param exp ->
-                    Core_continuation_handler.create param
-                      (subst_pattern_static ~bound ~let_body exp))) continuation_map
-        in
-        let body = subst_pattern_static ~bound ~let_body body
-        in
-        let body =
-          Core_recursive.create boundr
-            {continuation_map = Core_continuation_map.create bound_cm continuation_map;
-             body}
-        in
-        Let_cont (Recursive body))
-    )
-  | Apply {callee; continuation; exn_continuation; apply_args} ->
-    Apply
-      {callee = subst_pattern_static ~bound ~let_body callee;
-       continuation; exn_continuation;
-       apply_args =
-         List.map (subst_pattern_static ~bound ~let_body) apply_args;}
-  | Lambda e ->
-    Core_lambda.pattern_match e
-      ~f:(fun id b e ->
-        Lambda (Core_lambda.create id
-          b
-          (subst_pattern_static ~bound ~let_body e)))
   | Invalid _ -> e
 
 (* [Set of closures]
@@ -219,44 +158,10 @@ and subst_bound_set_of_closures (bound : Bound_var.t) ~let_body
         | None -> Named e)
      | _ -> Named e
     )
-  | Prim (Nullary e) -> Named (Prim (Nullary e))
-  | Prim (Unary (e, arg1)) ->
-    let arg1 =
-      subst_pattern_static
-        ~bound:(Bound_codelike.Pattern.set_of_closures bound) ~let_body arg1
-    in
-    Named (Prim (Unary (e, arg1)))
-  | Prim (Binary (e, arg1, arg2)) ->
-    let arg1 =
-      subst_pattern_static
-        ~bound:(Bound_codelike.Pattern.set_of_closures bound) ~let_body arg1
-    in
-    let arg2 =
-      subst_pattern_static
-        ~bound:(Bound_codelike.Pattern.set_of_closures bound) ~let_body arg2
-    in
-    Named (Prim (Binary (e, arg1, arg2)))
-  | Prim (Ternary (e, arg1, arg2, arg3)) ->
-    let arg1 =
-      subst_pattern_static
-        ~bound:(Bound_codelike.Pattern.set_of_closures bound) ~let_body arg1
-    in
-    let arg2 =
-      subst_pattern_static
-        ~bound:(Bound_codelike.Pattern.set_of_closures bound) ~let_body arg2
-    in
-    let arg3 =
-      subst_pattern_static ~bound:(Bound_codelike.Pattern.set_of_closures bound)
-        ~let_body arg3
-    in
-    Named (Prim (Ternary (e, arg1, arg2, arg3)))
-  | Prim (Variadic (e, args)) ->
-    let args =
-      List.map
-        (subst_pattern_static ~bound:(Bound_codelike.Pattern.set_of_closures bound)
-           ~let_body) args
-    in
-    Named (Prim (Variadic (e, args)))
+  | Prim e ->
+    prim_fix (subst_pattern_static
+                ~bound:(Bound_codelike.Pattern.set_of_closures bound)
+                ~let_body) e
   | Static_consts e ->
     subst_bound_set_of_closures_static_const_group ~bound ~let_body e
   | Slot (phi, Function_slot slot) ->
@@ -373,42 +278,10 @@ and subst_code_id_set_of_closures (bound : Code_id.t) ~(let_body : core_exp)
 and subst_code_id (bound : Code_id.t) ~(let_body : core_exp) (e : named) : core_exp =
   match e with
   | Simple _ | Slot _ -> Named e
-  | Prim (Nullary e) -> Named (Prim (Nullary e))
-  | Prim (Unary (e, arg1)) ->
-    let arg1 =
-      subst_pattern_static
-        ~bound:(Bound_codelike.Pattern.code bound) ~let_body arg1
-    in
-    Named (Prim (Unary (e, arg1)))
-  | Prim (Binary (e, arg1, arg2)) ->
-    let arg1 =
-      subst_pattern_static
-        ~bound:(Bound_codelike.Pattern.code bound) ~let_body arg1
-    in
-    let arg2 =
-      subst_pattern_static
-        ~bound:(Bound_codelike.Pattern.code bound) ~let_body arg2
-    in
-    Named (Prim (Binary (e, arg1, arg2)))
-  | Prim (Ternary (e, arg1, arg2, arg3)) ->
-    let arg1 =
-      subst_pattern_static
-        ~bound:(Bound_codelike.Pattern.code bound) ~let_body arg1
-    in
-    let arg2 =
-      subst_pattern_static
-        ~bound:(Bound_codelike.Pattern.code bound) ~let_body arg2
-    in
-    let arg3 =
-      subst_pattern_static ~bound:(Bound_codelike.Pattern.code bound) ~let_body arg3
-    in
-    Named (Prim (Ternary (e, arg1, arg2, arg3)))
-  | Prim (Variadic (e, args)) ->
-    let args =
-      List.map
-        (subst_pattern_static ~bound:(Bound_codelike.Pattern.code bound) ~let_body) args
-    in
-    Named (Prim (Variadic (e, args)))
+  | Prim e ->
+    prim_fix
+      (subst_pattern_static
+         ~bound:(Bound_codelike.Pattern.code bound) ~let_body) e
   | Closure_expr (phi, slot, set) ->
     Named (Closure_expr (phi, slot, subst_code_id_set_of_closures bound ~let_body set))
   | Set_of_closures set ->
@@ -464,44 +337,10 @@ and subst_block_like
   match e with
   | Simple v ->
     if Simple.equal v (Simple.symbol bound) then let_body else Named e
-  | Prim (Nullary e) -> Named (Prim (Nullary e))
-  | Prim (Unary (e, arg1)) ->
-    let arg1 =
-      subst_pattern_static ~bound:(Bound_codelike.Pattern.block_like bound)
-        ~let_body arg1
-    in
-    Named (Prim (Unary (e, arg1)))
-  | Prim (Binary (e, arg1, arg2)) ->
-    let arg1 =
-      subst_pattern_static ~bound:(Bound_codelike.Pattern.block_like bound)
-        ~let_body arg1
-    in
-    let arg2 =
-      subst_pattern_static ~bound:(Bound_codelike.Pattern.block_like bound)
-        ~let_body arg2
-    in
-    Named (Prim (Binary (e, arg1, arg2)))
-  | Prim (Ternary (e, arg1, arg2, arg3)) ->
-    let arg1 =
-      subst_pattern_static ~bound:(Bound_codelike.Pattern.block_like bound)
-        ~let_body arg1
-    in
-    let arg2 =
-      subst_pattern_static ~bound:(Bound_codelike.Pattern.block_like bound)
-        ~let_body arg2
-    in
-    let arg3 =
-      subst_pattern_static ~bound:(Bound_codelike.Pattern.block_like bound)
-        ~let_body arg3
-    in
-    Named (Prim (Ternary (e, arg1, arg2, arg3)))
-  | Prim (Variadic (e, args)) ->
-    let args =
-      List.map
-        (subst_pattern_static
-           ~bound:(Bound_codelike.Pattern.block_like bound) ~let_body) args
-    in
-    Named (Prim (Variadic (e, args)))
+  | Prim e ->
+    prim_fix
+      (subst_pattern_static ~bound:(Bound_codelike.Pattern.block_like bound)
+         ~let_body) e
   | Static_consts l ->
     subst_block_like_static_const_group ~bound ~let_body l
   | Slot _ | Closure_expr _ | Set_of_closures _ | Rec_info _ -> Named e
@@ -553,75 +392,12 @@ let rec subst_cont (cont_e1: core_exp) (k: Bound_continuation.t)
     (args: Bound_parameters.t) (cont_e2: core_exp) : core_exp =
   match cont_e1 with
   | Named _ -> cont_e1
-  | Let { let_abst; expr_body } ->
-    let bound, e, body =
-      Core_let.pattern_match {let_abst; expr_body}
-        ~f:(fun ~x ~e1 ~e2 ->
-          (x, subst_cont e1 k args cont_e2,
-              subst_cont e2 k args cont_e2))
-    in
-    Core_let.create ~x:bound ~e1:e ~e2:body
-  | Let_cont (Non_recursive {handler; body})->
-    let handler =
-      Core_continuation_handler.pattern_match handler
-        (fun param exp ->
-           Core_continuation_handler.create param
-             (subst_cont exp k args cont_e2))
-    in
-    let body =
-      Core_letcont_body.pattern_match body
-        (fun cont exp ->
-           Core_letcont_body.create cont
-             (subst_cont exp k args cont_e2))
-    in
-    Let_cont (Non_recursive {handler; body})
-  | Let_cont (Recursive body) ->
-    (let bound, continuation_map, body =
-       Core_recursive.pattern_match body ~f:(fun b {continuation_map; body} ->
-         b, continuation_map, body)
-     in
-     let bound_cm, continuation_map =
-       Core_continuation_map.pattern_match continuation_map
-         ~f:(fun b e -> b,e)
-     in
-     let continuation_map =
-       Continuation.Map.map
-         (fun x ->
-            Core_continuation_handler.pattern_match x
-              (fun param exp ->
-                 Core_continuation_handler.create param
-                   (subst_cont exp k args cont_e2))) continuation_map
-     in
-     let body = subst_cont body k args cont_e2
-     in
-     let body =
-       Core_recursive.create bound
-         {continuation_map = Core_continuation_map.create bound_cm continuation_map;
-          body}
-     in
-     Let_cont (Recursive body))
-  | Apply {callee; continuation; exn_continuation; apply_args} ->
-    let continuation =
-      (match continuation with
-      | Cont_id (Return cont) ->
-        if Continuation.equal cont k
-        then Handler (Core_continuation_handler.create args cont_e2)
-        else continuation
-      | _ -> continuation)
-    in
-    let exn_continuation =
-      (match exn_continuation with
-       | Cont_id cont ->
-         if Continuation.equal cont k
-         then Handler (Core_continuation_handler.create args cont_e2)
-         else exn_continuation
-       | _ -> exn_continuation)
-    in
-    Apply
-      {callee = subst_cont callee k args cont_e2;
-       continuation; exn_continuation;
-       apply_args =
-         List.map (fun e1 -> subst_cont e1 k args cont_e2) apply_args;}
+  | Let e ->
+    let_fix (fun e -> subst_cont e k args cont_e2) e
+  | Let_cont e ->
+    let_cont_fix (fun e -> subst_cont e k args cont_e2) e
+  | Apply e ->
+    apply_fix (fun e -> subst_cont e k args cont_e2) e
   | Apply_cont {k = cont; args = concrete_args} ->
     if Continuation.equal cont k
     then subst_params args cont_e2 concrete_args
@@ -630,14 +406,9 @@ let rec subst_cont (cont_e1: core_exp) (k: Bound_continuation.t)
         {k = cont;
          args = List.map (fun x -> subst_cont x k args cont_e2) concrete_args}
   | Lambda e ->
-    Core_lambda.pattern_match e
-      ~f:(fun id b e ->
-        Lambda (Core_lambda.create id b (subst_cont e k args cont_e2)))
-  | Switch {scrutinee; arms} ->
-    Switch
-      {scrutinee = subst_cont scrutinee k args cont_e2;
-       arms =
-         Targetint_31_63.Map.map (fun x -> subst_cont x k args cont_e2) arms;}
+    lambda_fix (fun e -> subst_cont e k args cont_e2) e
+  | Switch e ->
+    switch_fix (fun e -> subst_cont e k args cont_e2) e
   | Invalid _ -> cont_e1
 
 let rec normalize (e:core_exp) : core_exp =
