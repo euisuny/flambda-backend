@@ -1185,34 +1185,31 @@ let function_decl_create (in_order : function_expr Function_slot.Lmap.t) =
 let _std_print =
   Format.fprintf Format.std_formatter "@. TERM:%a@." print
 
-let rec core_fmap
-          (f : 'a -> Simple.t -> core_exp)
-          (arg : 'a) (e : core_exp) : core_exp =
+(* Fixpoint combinator for core expressions *)
+let let_fix (f : core_exp -> core_exp) {let_abst; expr_body} =
+  Core_let.pattern_match {let_abst; expr_body}
+    ~f:(fun ~x ~e1 ~e2 ->
+      Core_let.create
+        ~x
+        ~e1:(f e1)
+        ~e2:(f e2))
+
+let let_cont_fix (f : core_exp -> core_exp) (e : let_cont_expr) =
   match e with
-  | Named e -> core_fmap_named f arg e
-  | Let {let_abst; expr_body} ->
-    Core_let.pattern_match {let_abst; expr_body}
-      ~f:(fun ~x ~e1 ~e2 ->
-        Core_let.create
-          ~x
-          ~e1:(core_fmap f arg e1)
-          ~e2:(core_fmap f arg e2))
-  | Let_cont (Non_recursive {handler; body}) ->
-    (let handler =
+  | Non_recursive {handler; body} ->
+    let handler =
       Core_continuation_handler.pattern_match handler
         (fun param exp ->
-           Core_continuation_handler.create param
-             (core_fmap f arg exp))
+           Core_continuation_handler.create param (f exp))
     in
     let body =
       Core_letcont_body.pattern_match body
         (fun cont exp ->
-          Core_letcont_body.create cont
-            (core_fmap f arg exp))
+           Core_letcont_body.create cont (f exp))
     in
-    Let_cont (Non_recursive {handler; body}))
-  | Let_cont (Recursive body) ->
-    (let bound, continuation_map, body =
+    Let_cont (Non_recursive {handler; body})
+  | Recursive body ->
+    let bound, continuation_map, body =
       Core_recursive.pattern_match body ~f:(fun b {continuation_map; body} ->
         b, continuation_map, body)
     in
@@ -1223,47 +1220,53 @@ let rec core_fmap
     let continuation_map =
       Continuation.Map.map
         (fun x ->
-            Core_continuation_handler.pattern_match x
-                (fun param exp ->
-                    Core_continuation_handler.create param
-                      (core_fmap f arg exp))) continuation_map
+          Core_continuation_handler.pattern_match x
+            (fun param exp ->
+                Core_continuation_handler.create param
+                  (f exp))) continuation_map
     in
-    let body = core_fmap f arg body
+    let body = f body
     in
     let body =
       Core_recursive.create bound
         {continuation_map = Core_continuation_map.create bound_cm continuation_map;
-         body}
+        body}
     in
-    Let_cont (Recursive body))
-  | Apply
-      {callee; continuation; exn_continuation; apply_args} ->
-    Apply
-      {callee = core_fmap f arg callee;
-       continuation; exn_continuation;
-       apply_args =
-         List.map (core_fmap f arg) apply_args;}
-  | Apply_cont {k; args} ->
-    Apply_cont
-      {k = k;
-       args = List.map (core_fmap f arg) args}
-  | Lambda e ->
-    Core_lambda.pattern_match e
-      ~f:(fun id b e ->
-        Lambda (Core_lambda.create id b (core_fmap f arg e)))
-  | Switch {scrutinee; arms} ->
-    Switch
-      {scrutinee = core_fmap f arg scrutinee;
-       arms = Targetint_31_63.Map.map (core_fmap f arg) arms}
-  | Invalid _ -> e
+    Let_cont (Recursive body)
 
-and core_set_of_closures f arg {function_decls; value_slots; alloc_mode}
-  : set_of_closures =
+let apply_fix (f : core_exp -> core_exp)
+      ({callee; continuation; exn_continuation; apply_args} : apply_expr) =
+  Apply
+    {callee = f callee;
+     continuation; exn_continuation;
+     apply_args = List.map f apply_args;}
+
+let apply_cont_fix (f : core_exp -> core_exp)
+      ({k; args} : apply_cont_expr) =
+  Apply_cont
+    {k = k;
+     args = List.map f args}
+
+let lambda_fix (f : core_exp -> core_exp) (e : lambda_expr) =
+  Core_lambda.pattern_match e
+    ~f:(fun id b e ->
+      Lambda (Core_lambda.create id b (f e)))
+
+let switch_fix (f : core_exp -> core_exp)
+      ({scrutinee; arms} : switch_expr) =
+  Switch
+    {scrutinee = f scrutinee;
+     arms = Targetint_31_63.Map.map f arms}
+
+let set_of_closures_fix (fix : core_exp -> core_exp)
+      (f : 'a -> Simple.t -> core_exp)
+      (arg : 'a)
+      {function_decls; value_slots; alloc_mode} =
   let in_order =
     Function_slot.Lmap.map (fun x ->
       match x with
       | Id _ -> x
-      | Exp e -> Exp (core_fmap f arg e)) function_decls.in_order
+      | Exp e -> Exp (fix e)) function_decls.in_order
   in
   let function_decls = function_decl_create in_order
   in
@@ -1271,38 +1274,28 @@ and core_set_of_closures f arg {function_decls; value_slots; alloc_mode}
     Value_slot.Map.map (fun (x, kind) ->
       match x with
       | Id v -> (Exp (f arg v), kind)
-      | Exp e -> (Exp (core_fmap f arg e), kind)) value_slots
+      | Exp e -> (Exp (fix e), kind)) value_slots
   in
   {function_decls; value_slots; alloc_mode}
 
-and core_fmap_named (f : 'a -> Simple.t -> core_exp) arg (e : named)
-  : core_exp =
+let static_const_fix (fix : core_exp -> core_exp)
+      f arg (e : static_const) : static_const =
   match e with
-  | Simple v -> f arg v
-  | Prim (Nullary _) -> Named e
-  | Prim (Unary (p, e)) ->
-    Named (Prim (Unary (p, core_fmap f arg e)))
-  | Prim (Binary (p, e1, e2)) ->
-    Named (Prim (Binary (p, core_fmap f arg e1, core_fmap f arg e2)))
-  | Prim (Ternary (p, e1, e2, e3)) ->
-    Named (Prim (Ternary (p, core_fmap f arg e1, core_fmap f arg e2, core_fmap f arg e3)))
-  | Prim (Variadic (p, list)) ->
-    Named (Prim (Variadic (p, List.map (core_fmap f arg) list)))
-  | Closure_expr (phi, slot, clo) ->
+  | Static_set_of_closures clo ->
     let {function_decls; value_slots; alloc_mode} =
-      core_set_of_closures f arg clo
+      set_of_closures_fix fix f arg clo
     in
-    Named (Closure_expr (phi, slot, {function_decls; value_slots; alloc_mode}))
-  | Set_of_closures clo ->
-    let {function_decls; value_slots; alloc_mode} =
-      core_set_of_closures f arg clo
+    Static_set_of_closures {function_decls; value_slots; alloc_mode}
+  | Block (tag, mut, list) ->
+    let list = List.map fix list
     in
-    Named (Set_of_closures {function_decls; value_slots; alloc_mode})
-  | Static_consts group ->
-    Named (Static_consts (List.map (core_fmap_static_const_or_code f arg) group))
-  | Slot _ | Rec_info _ -> Named e
+    Block (tag, mut, list)
+  | _ -> e
 
-and core_fmap_static_const_or_code f arg (e : static_const_or_code) =
+let static_const_or_code_fix (fix : core_exp -> core_exp)
+      (f : 'a -> Simple.t -> core_exp)
+      (arg : 'a)
+      (e : static_const_or_code) =
   match e with
   | Code params_and_body ->
     Code
@@ -1314,20 +1307,52 @@ and core_fmap_static_const_or_code f arg (e : static_const_or_code) =
                 params
                 (Core_lambda.pattern_match body
                    ~f:(fun id bound body ->
-                     Core_lambda.create id bound (core_fmap f arg body)))))
+                     Core_lambda.create id bound (fix body)))))
   | Deleted_code -> e
   | Static_const const ->
-    Static_const (core_fmap_static_const f arg const)
+    Static_const (static_const_fix fix f arg const)
 
-and core_fmap_static_const f arg (e : static_const) : static_const =
+let named_fix (fix : core_exp -> core_exp)
+      (f : 'a -> Simple.t -> core_exp) arg (e : named) =
   match e with
-  | Static_set_of_closures clo ->
+  | Simple v -> f arg v
+  | Prim (Nullary _) -> Named e
+  | Prim (Unary (p, e)) ->
+    Named (Prim (Unary (p, fix e)))
+  | Prim (Binary (p, e1, e2)) ->
+    Named (Prim (Binary (p, fix e1, fix e2)))
+  | Prim (Ternary (p, e1, e2, e3)) ->
+    Named (Prim (Ternary (p, fix e1, fix e2, fix e3)))
+  | Prim (Variadic (p, list)) ->
+    Named (Prim (Variadic (p, List.map fix list)))
+  | Closure_expr (phi, slot, clo) ->
     let {function_decls; value_slots; alloc_mode} =
-      core_set_of_closures f arg clo
+      set_of_closures_fix fix f arg clo
     in
-    Static_set_of_closures {function_decls; value_slots; alloc_mode}
-  | Block (tag, mut, list) ->
-    let list = List.map (core_fmap f arg) list
+    Named (Closure_expr (phi, slot, {function_decls; value_slots; alloc_mode}))
+  | Set_of_closures clo ->
+    let {function_decls; value_slots; alloc_mode} =
+      set_of_closures_fix fix f arg clo
     in
-    Block (tag, mut, list)
-  | _ -> e
+    Named (Set_of_closures {function_decls; value_slots; alloc_mode})
+  | Static_consts group ->
+    Named (Static_consts (List.map (static_const_or_code_fix fix f arg) group))
+  | Slot _ | Rec_info _ -> Named e
+
+let rec core_fmap
+          (f : 'a -> Simple.t -> core_exp)
+          (arg : 'a) (e : core_exp) : core_exp =
+  match e with
+  | Named e ->
+    named_fix (core_fmap f arg) f arg e
+  | Let e ->
+    let_fix (core_fmap f arg) e
+  | Let_cont e ->
+    let_cont_fix (core_fmap f arg) e
+  | Apply e ->
+    apply_fix (core_fmap f arg) e
+  | Apply_cont e ->
+    apply_cont_fix (core_fmap f arg) e
+  | Lambda e -> lambda_fix (core_fmap f arg) e
+  | Switch e -> switch_fix (core_fmap f arg) e
+  | Invalid _ -> e
