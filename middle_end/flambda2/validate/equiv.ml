@@ -156,12 +156,6 @@ let zip_sort_fold l1 l2 ~compare ~f ~acc =
 (* Ignore code ids, phi slots, and rec info *)
 let equiv_code_ids _ _ _ = true
 
-let equiv_method_kind _env (k1 : Call_kind.Method_kind.t) (k2 : Call_kind.Method_kind.t)
-  : eq =
-  match k1, k2 with
-  | Self, Self | Public, Public | Cached, Cached -> true
-  | (Self | Public | Cached), _ -> false
-
 let rec equiv (env:Env.t) e1 e2 : eq =
   match e1, e2 with
   | Named (Closure_expr (_, slot1, {function_decls;_})), Lambda _ ->
@@ -452,50 +446,7 @@ and equiv_apply env (e1 : apply_expr) (e2 : apply_expr) : eq =
   let args =
     zip_fold (e1.apply_args) (e2.apply_args)
       ~f:(fun x (e1, e2) -> x && equiv env e1 e2) ~acc:true in
-  let call_kind = equiv_call_kind env (e1.call_kind) (e2.call_kind) in
-  equiv_conts && callee && args && call_kind
-
-and equiv_call_kind env (k1 : Call_kind.t) (k2 : Call_kind.t) : eq =
-  match k1, k2 with
-  (* Direct OCaml function calls *)
-  | Function
-      { function_call =
-          Direct code_id1 ; _ },
-    Function
-      { function_call =
-          Direct code_id2 ; _ } ->
-    equiv_code_ids env code_id1 code_id2
-
-  (* Indirect OCaml function calls, with known arity  *)
-  | Function
-      { function_call =
-          Indirect_known_arity ; _},
-    Function
-      { function_call =
-          Indirect_known_arity ; _} -> true
-
-  (* Indirect OCaml function calls, with unknown arity  *)
-  | Function { function_call = Indirect_unknown_arity ; _ },
-    Function { function_call = Indirect_unknown_arity ; _ } -> true
-
-  (* OCaml method invocation *)
-  | Method { kind = kind1; obj = obj1; _ },
-    Method { kind = kind2; obj = obj2; _ } ->
-    equiv_method_kind env kind1 kind2 && equiv_simple env obj1 obj2
-
-  (* C calls *)
-  | C_call
-      { alloc = alloc1;
-        is_c_builtin = _},
-    C_call
-      { alloc = alloc2;
-        is_c_builtin = _} ->
-    Bool.equal alloc1 alloc2
-
-  | (Function { function_call = Direct _ ; _}
-      | Function { function_call = Indirect_known_arity ; _}
-      | Function { function_call = Indirect_unknown_arity ; _}
-      | Method _ | C_call _), _ -> false
+  equiv_conts && callee && args
 
 (* [apply_cont] *)
 and equiv_apply_cont env

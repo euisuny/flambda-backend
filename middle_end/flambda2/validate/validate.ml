@@ -84,13 +84,12 @@ and subst_singleton_set_of_closures ~(bound: Bound_var.t)
     in
     Let_cont (Recursive body))
   | Apply
-      {callee; continuation; exn_continuation; apply_args; call_kind} ->
+      {callee; continuation; exn_continuation; apply_args} ->
     Apply
       {callee = subst_singleton_set_of_closures ~bound ~clo callee;
        continuation; exn_continuation;
        apply_args =
-         List.map (subst_singleton_set_of_closures ~bound ~clo) apply_args;
-       call_kind}
+         List.map (subst_singleton_set_of_closures ~bound ~clo) apply_args;}
   | Apply_cont {k; args} ->
     Apply_cont
       {k = k;
@@ -340,13 +339,12 @@ and subst_pattern_static
         in
         Let_cont (Recursive body))
     )
-  | Apply {callee; continuation; exn_continuation; apply_args; call_kind} ->
+  | Apply {callee; continuation; exn_continuation; apply_args} ->
     Apply
       {callee = subst_pattern_static ~bound ~let_body callee;
        continuation; exn_continuation;
        apply_args =
-         List.map (subst_pattern_static ~bound ~let_body) apply_args;
-       call_kind}
+         List.map (subst_pattern_static ~bound ~let_body) apply_args;}
   | Lambda e ->
     Core_lambda.pattern_match e
       ~f:(fun id b e ->
@@ -765,7 +763,7 @@ let rec subst_cont (cont_e1: core_exp) (k: Bound_continuation.t)
           body}
      in
      Let_cont (Recursive body))
-  | Apply {callee; continuation; exn_continuation; apply_args; call_kind} ->
+  | Apply {callee; continuation; exn_continuation; apply_args} ->
     let continuation =
       (match continuation with
       | Cont_id (Return cont) ->
@@ -786,8 +784,7 @@ let rec subst_cont (cont_e1: core_exp) (k: Bound_continuation.t)
       {callee = subst_cont callee k args cont_e2;
        continuation; exn_continuation;
        apply_args =
-         List.map (fun e1 -> subst_cont e1 k args cont_e2) apply_args;
-       call_kind}
+         List.map (fun e1 -> subst_cont e1 k args cont_e2) apply_args;}
   | Apply_cont {k = cont; args = concrete_args} ->
     if Continuation.equal cont k
     then subst_params args cont_e2 concrete_args
@@ -814,8 +811,8 @@ let rec normalize (e:core_exp) : core_exp =
   | Let_cont e ->
     normalize_let_cont e
     |> normalize
-  | Apply {callee; continuation; exn_continuation; apply_args; call_kind} ->
-    normalize_apply callee continuation exn_continuation apply_args call_kind
+  | Apply {callee; continuation; exn_continuation; apply_args} ->
+    normalize_apply callee continuation exn_continuation apply_args
   | Apply_cont {k ; args} ->
     (* The recursive call for [apply_cont] is done for the arguments *)
     normalize_apply_cont k args
@@ -872,7 +869,7 @@ and normalize_let_cont (e:let_cont_expr) : core_exp =
     subst_cont e1 k args e2
   | Recursive _handlers -> failwith "Unimplemented_recursive"
 
-and normalize_apply callee continuation exn_continuation apply_args call_kind
+and normalize_apply callee continuation exn_continuation apply_args
   : core_exp =
   match callee with
   | Named (Static_consts [Code code]) ->
@@ -952,7 +949,7 @@ and normalize_apply callee continuation exn_continuation apply_args call_kind
        | Handler handler -> Handler (normalize_continuation_handler handler))
     in
     Apply {callee;continuation;
-           exn_continuation;apply_args;call_kind}
+           exn_continuation;apply_args}
 
 and normalize_continuation_handler (e : continuation_handler) =
   Core_continuation_handler.pattern_match e
@@ -1185,13 +1182,12 @@ and subst_my_closure_body (clo: set_of_closures) (e : core_exp) : core_exp =
           body}
      in
      Let_cont (Recursive body))
-  | Apply {callee; continuation; exn_continuation; apply_args; call_kind} ->
+  | Apply {callee; continuation; exn_continuation; apply_args} ->
     Apply
       {callee = subst_my_closure_body clo callee;
        continuation; exn_continuation;
        apply_args =
-         List.map (subst_my_closure_body clo) apply_args;
-       call_kind}
+         List.map (subst_my_closure_body clo) apply_args}
   | Apply_cont {k;args} ->
     Apply_cont
       { k = k;

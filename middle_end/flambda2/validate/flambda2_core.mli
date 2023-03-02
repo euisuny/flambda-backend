@@ -130,8 +130,7 @@ and apply_expr =
   { callee: core_exp;
     continuation: continuation_expr;
     exn_continuation: exn_continuation_expr;
-    apply_args: core_exp list;
-    call_kind: Call_kind.t; }
+    apply_args: core_exp list; }
 
 and continuation_expr = Apply_expr.Result_continuation.t id_or_cont
 

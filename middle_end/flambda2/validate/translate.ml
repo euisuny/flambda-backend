@@ -263,8 +263,7 @@ and apply_to_core (e : Apply.t) : core_exp =
     continuation = Cont_id (Apply_expr.continuation e);
     exn_continuation = Cont_id (Apply_expr.exn_continuation e |>
                         Exn_continuation.exn_handler);
-    apply_args = Apply_expr.args e |> List.map simple_to_core;
-    call_kind = Apply_expr.call_kind e;}
+    apply_args = Apply_expr.args e |> List.map simple_to_core }
 
 and apply_cont_to_core (e : Apply_cont.t) : core_exp =
   Apply_cont {

@@ -130,8 +130,7 @@ and apply_expr =
   { callee: core_exp;
     continuation: continuation_expr;
     exn_continuation: exn_continuation_expr;
-    apply_args: core_exp list;
-    call_kind: Call_kind.t; }
+    apply_args: core_exp list; }
 
 and continuation_expr = Apply_expr.Result_continuation.t id_or_cont
 
@@ -421,7 +420,7 @@ and apply_renaming_cont_map t renaming : continuation_handler_map =
 
 (* renaming for [Apply] *)
 and apply_renaming_apply
-      { callee; continuation; exn_continuation; apply_args; call_kind}
+      { callee; continuation; exn_continuation; apply_args}
       renaming:
   apply_expr =
   let continuation =
@@ -437,10 +436,9 @@ and apply_renaming_apply
   let callee = apply_renaming callee renaming in
   let apply_args =
     List.map (fun x -> apply_renaming x renaming) apply_args in
-  let call_kind = Call_kind.apply_renaming call_kind renaming in
   { callee = callee; continuation = continuation;
     exn_continuation = exn_continuation;
-    apply_args = apply_args; call_kind = call_kind }
+    apply_args = apply_args }
 
 (* renaming for [Apply_cont] *)
 and apply_renaming_apply_cont {k; args} renaming : apply_cont_expr =
@@ -772,9 +770,8 @@ and print_exn_continuation_expr ppf (t : exn_continuation_expr) =
     (print_handler ppf)
 
 and print_apply ppf
-      ({callee; continuation; exn_continuation; apply_args; call_kind} : apply_expr) =
-  fprintf ppf "(kind:%a)@ (callee:%a)@ (ret:%a)@ (exn:%a)@ "
-    Call_kind.basic_print call_kind
+      ({callee; continuation; exn_continuation; apply_args} : apply_expr) =
+  fprintf ppf "(callee:%a)@ (ret:%a)@ (exn:%a)@ "
     print callee
     print_continuation_expr continuation
     print_exn_continuation_expr exn_continuation;
@@ -978,7 +975,7 @@ and ids_for_export_cont_map (t : continuation_handler_map) =
 
 (* ids for [Apply] *)
 and ids_for_export_apply
-      { callee; continuation; exn_continuation; apply_args; call_kind } =
+      { callee; continuation; exn_continuation; apply_args } =
   let callee_ids = ids_for_export callee in
   let callee_and_args_ids =
     List.fold_left
@@ -994,9 +991,8 @@ and ids_for_export_apply
       (Ids_for_export.add_continuation Ids_for_export.empty)
       ids_for_export_cont_handler
   in
-  let call_kind_ids = Call_kind.ids_for_export call_kind in
   (Ids_for_export.union
-    (Ids_for_export.union callee_and_args_ids call_kind_ids)
+     callee_and_args_ids
     (Ids_for_export.union result_continuation_ids exn_continuation_ids))
 
 (* ids for [Apply_cont] *)
@@ -1241,13 +1237,12 @@ let rec core_fmap
     in
     Let_cont (Recursive body))
   | Apply
-      {callee; continuation; exn_continuation; apply_args; call_kind} ->
+      {callee; continuation; exn_continuation; apply_args} ->
     Apply
       {callee = core_fmap f arg callee;
        continuation; exn_continuation;
        apply_args =
-         List.map (core_fmap f arg) apply_args;
-       call_kind}
+         List.map (core_fmap f arg) apply_args;}
   | Apply_cont {k; args} ->
     Apply_cont
       {k = k;
