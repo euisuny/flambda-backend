@@ -295,8 +295,31 @@ and subst_pattern_static
                   (fun cont exp ->
                      Core_letcont_body.create
                        cont (subst_pattern_static ~bound ~let_body exp))})
-     | Recursive _ ->
-       failwith "Unimplemented_static_clo_recursive"
+     | Recursive body ->
+       (let boundr, continuation_map, body =
+          Core_recursive.pattern_match body ~f:(fun b {continuation_map; body} ->
+            b, continuation_map, body)
+        in
+        let bound_cm, continuation_map =
+          Core_continuation_map.pattern_match continuation_map
+            ~f:(fun b e -> b,e)
+        in
+        let continuation_map =
+          Continuation.Map.map
+            (fun x ->
+               Core_continuation_handler.pattern_match x
+                 (fun param exp ->
+                    Core_continuation_handler.create param
+                      (subst_pattern_static ~bound ~let_body exp))) continuation_map
+        in
+        let body = subst_pattern_static ~bound ~let_body body
+        in
+        let body =
+          Core_recursive.create boundr
+            {continuation_map = Core_continuation_map.create bound_cm continuation_map;
+             body}
+        in
+        Let_cont (Recursive body))
     )
   | Apply {callee; continuation; exn_continuation; apply_args; call_kind} ->
     Apply
@@ -405,11 +428,7 @@ and subst_bound_set_of_closures (bound : Bound_var.t) ~let_body
           | None -> Named e)
      | _ -> Named e
     )
-  | Slot _ |  Closure_expr _ ->
-    Named e (* NEXT : Substitute in the value slots *)
-  | Set_of_closures _ -> Named e
-  | Rec_info _ ->
-    failwith "Unimplemented_block_like"
+  | Slot _ |  Closure_expr _ | Set_of_closures _ | Rec_info _ -> Named e
 
 and subst_bound_set_of_closures_static_const_group
       ~bound ~(let_body : core_exp) (e : static_const_group) : core_exp =
@@ -572,8 +591,7 @@ and subst_code_id (bound : Code_id.t) ~(let_body : core_exp) (e : named) : core_
         consts
     in
     Named (Static_consts consts)
-  | Rec_info _ ->
-    failwith "Unimplemented_subst_code_id"
+  | Rec_info _ -> Named e
 
 and subst_block_like
       ~(bound : Symbol.t) ~(let_body : core_exp) (e : named) : core_exp =
@@ -612,12 +630,7 @@ and subst_block_like
     Named (Prim (Variadic (e, args)))
   | Static_consts l ->
     subst_block_like_static_const_group ~bound ~let_body l
-  | Slot _ | Closure_expr _ ->
-    Named e (* NEXT *)
-  | Set_of_closures _ ->
-    Named e (* NEXT *)
-  | Rec_info _ ->
-    failwith "Unimplemented_block_like"
+  | Slot _ | Closure_expr _ | Set_of_closures _ | Rec_info _ -> Named e
 
 and subst_block_like_static_const_group
       ~(bound: Symbol.t) ~(let_body : core_exp) (e : static_const_group) : core_exp =
@@ -683,8 +696,31 @@ let rec subst_cont (cont_e1: core_exp) (k: Bound_continuation.t)
              (subst_cont exp k args cont_e2))
     in
     Let_cont (Non_recursive {handler; body})
-  | Let_cont (Recursive _) ->
-    failwith "Unimplemented subst cont recursive case"
+  | Let_cont (Recursive body) ->
+    (let bound, continuation_map, body =
+       Core_recursive.pattern_match body ~f:(fun b {continuation_map; body} ->
+         b, continuation_map, body)
+     in
+     let bound_cm, continuation_map =
+       Core_continuation_map.pattern_match continuation_map
+         ~f:(fun b e -> b,e)
+     in
+     let continuation_map =
+       Continuation.Map.map
+         (fun x ->
+            Core_continuation_handler.pattern_match x
+              (fun param exp ->
+                 Core_continuation_handler.create param
+                   (subst_cont exp k args cont_e2))) continuation_map
+     in
+     let body = subst_cont body k args cont_e2
+     in
+     let body =
+       Core_recursive.create bound
+         {continuation_map = Core_continuation_map.create bound_cm continuation_map;
+          body}
+     in
+     Let_cont (Recursive body))
   | Apply {callee; continuation; exn_continuation; apply_args; call_kind} ->
     let continuation =
       (match continuation with
@@ -714,8 +750,10 @@ let rec subst_cont (cont_e1: core_exp) (k: Bound_continuation.t)
     else
       Apply_cont
         {k = cont; args = List.map (fun x -> subst_cont x k args cont_e2) concrete_args}
-  | Lambda _ ->
-    failwith "Unimplemented subst_cont: Lambda"
+  | Lambda e ->
+    Core_lambda.pattern_match e
+      ~f:(fun id b e ->
+        Lambda (Core_lambda.create id b (subst_cont e k args cont_e2)))
   | Switch {scrutinee; arms} ->
     Switch
       {scrutinee = subst_cont scrutinee k args cont_e2;
@@ -723,7 +761,7 @@ let rec subst_cont (cont_e1: core_exp) (k: Bound_continuation.t)
   | Invalid _ -> cont_e1
 
 let eval_prim_nullary (_v : P.nullary_primitive) : named =
-  failwith "eval_prim_nullary"
+  failwith "[Primitive eval] eval_prim_nullary"
 
 let eval_prim_unary (v : P.unary_primitive) (arg : core_exp) : named =
   match v with
@@ -769,7 +807,7 @@ let eval_prim_binary
             (match List.nth blocks 0 with
              | Static_const (Block (_, _, l)) ->
                List.nth l (Targetint_31_63.to_int i)
-             | _ -> failwith "Unimplemented_block_load")
+             | _ -> failwith "[Primitive eval] Unimplemented_block_load")
 
           | None -> Named (Prim (Binary (v, arg1, arg2))))
        else
@@ -788,9 +826,9 @@ let eval_prim_binary
          Named (Prim (Binary (v, arg1, arg2)))
      | _, _ -> Named (Prim (Binary (v, arg1, arg2))))
   | Block_load (Naked_floats _, (Immutable | Immutable_unique)) ->
-    failwith "Unimplemented immutable block load: naked_floats"
+    failwith "[Primitive eval] Unimplemented immutable block load: naked_floats"
   | Block_load (_kind, _Mutable) ->
-    failwith "Unimplemented mutable block load"
+    failwith "[Primitive eval] Unimplemented mutable block load"
   | Array_load (_,_)
   | String_or_bigstring_load (_,_)
   | Bigarray_load (_,_,_)
@@ -803,7 +841,7 @@ let eval_prim_binary
 
 let eval_prim_ternary (_v : P.ternary_primitive)
       (_arg1 : core_exp) (_arg2 : core_exp) (_arg3 : core_exp) : named =
-  failwith "eval_prim_ternary"
+  failwith "[Primitive eval] eval_prim_ternary"
 
 let eval_prim_variadic (v : P.variadic_primitive) (args : core_exp list) : named =
   match v with
@@ -827,14 +865,14 @@ let eval_prim_variadic (v : P.variadic_primitive) (args : core_exp list) : named
               Static_consts [(Static_const block)]
             | (Naked_immediate _ | Naked_float _
               | Naked_int32 _ | Naked_int64 _ | Naked_nativeint _) ->
-              failwith "Unimplemented constant")
+              failwith "[Primitive eval] Unimplemented constant")
         | (Naked_number _ | Region | Rec_info) ->
-          failwith "Unimplemented_eval_prim: making block for non-value kind")
+          failwith "[Primitive eval] Unimplemented_eval_prim: making block for non-value kind")
     | _ -> Prim (Variadic (v, args)))
   | Make_block _ ->
     Prim (Variadic (v, args))
   | Make_array _ ->
-    failwith "eval_prim_variadic_make_array_unspported"
+    Misc.fatal_error "[Primitive eval]: eval_prim_variadic_make_array_unspported"
 
 let eval_prim (v : primitive) : core_exp =
   match v with
@@ -1194,8 +1232,31 @@ and subst_my_closure_body (clo: set_of_closures) (e : core_exp) : core_exp =
              (subst_my_closure_body clo exp))
     in
     Let_cont (Non_recursive {handler; body})
-  | Let_cont (Recursive _) ->
-    failwith "Unimplemented subst_pattern_set_of_closures: Let_cont recursive case"
+  | Let_cont (Recursive body) ->
+    (let bound, continuation_map, body =
+       Core_recursive.pattern_match body ~f:(fun b {continuation_map; body} ->
+         b, continuation_map, body)
+     in
+     let bound_cm, continuation_map =
+       Core_continuation_map.pattern_match continuation_map
+         ~f:(fun b e -> b,e)
+     in
+     let continuation_map =
+       Continuation.Map.map
+         (fun x ->
+            Core_continuation_handler.pattern_match x
+              (fun param exp ->
+                 Core_continuation_handler.create param
+                   (subst_my_closure_body clo exp))) continuation_map
+     in
+     let body = subst_my_closure_body clo body
+     in
+     let body =
+       Core_recursive.create bound
+         {continuation_map = Core_continuation_map.create bound_cm continuation_map;
+          body}
+     in
+     Let_cont (Recursive body))
   | Apply {callee; continuation; exn_continuation; apply_args; call_kind} ->
     Apply
       {callee = subst_my_closure_body clo callee;
@@ -1207,8 +1268,10 @@ and subst_my_closure_body (clo: set_of_closures) (e : core_exp) : core_exp =
     Apply_cont
       { k = k;
         args = List.map (subst_my_closure_body clo) args }
-  | Lambda _ ->
-    failwith "Unimplemented_subst_my_closure_body: Lambda"
+  | Lambda e ->
+    Core_lambda.pattern_match e
+      ~f:(fun id b e ->
+        Lambda (Core_lambda.create id b (subst_my_closure_body clo e)))
   | Switch {scrutinee; arms} ->
     Switch
       { scrutinee = subst_my_closure_body clo scrutinee;
