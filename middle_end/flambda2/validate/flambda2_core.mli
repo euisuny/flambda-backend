@@ -280,3 +280,14 @@ val apply_renaming : core_exp -> Renaming.t -> core_exp
 val function_decl_create : function_expr Function_slot.Lmap.t -> function_declarations
 
 val core_fmap : ('a -> Simple.t -> core_exp) -> 'a -> core_exp -> core_exp
+
+(* Fixpoint functions for core expressions *)
+val named_fix :
+  (core_exp -> core_exp) ->
+  ('a -> Simple.t -> core_exp) -> 'a -> named -> core_exp
+val let_fix : (core_exp -> core_exp) -> let_expr -> core_exp
+val let_cont_fix : (core_exp -> core_exp) -> let_cont_expr -> core_exp
+val apply_fix : (core_exp -> core_exp) -> apply_expr -> core_exp
+val apply_cont_fix : (core_exp -> core_exp) -> apply_cont_expr -> core_exp
+val lambda_fix : (core_exp -> core_exp) -> lambda_expr -> core_exp
+val switch_fix : (core_exp -> core_exp) -> switch_expr -> core_exp
