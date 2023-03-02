@@ -70,8 +70,11 @@ and subst_singleton_set_of_closures_named ~bound ~clo (e : named) : core_exp =
     in
     Named (Set_of_closures clo)
   | Static_consts group ->
-    static_const_group_fix (subst_singleton_set_of_closures ~bound ~clo)
-      f bound group
+    let group =
+      List.map
+        (subst_singleton_set_of_closures_static_const_or_code ~bound ~clo) group
+    in
+    Named (Static_consts group)
   | Slot (phi, Function_slot slot) ->
     (let bound = Function_slot.Lmap.bindings clo.function_decls.in_order
     in
@@ -84,6 +87,58 @@ and subst_singleton_set_of_closures_named ~bound ~clo (e : named) : core_exp =
       | Some (k, _) -> Named (Closure_expr (phi, k, clo))))
   | Slot _
   | Rec_info _ -> Named e
+
+and subst_singleton_set_of_closures_static_const_or_code ~bound ~clo
+      (e : static_const_or_code) =
+  match e with
+  | Code params_and_body ->
+    Code
+      (Core_function_params_and_body.pattern_match
+         params_and_body
+         ~f:(fun
+              params body ->
+              Core_function_params_and_body.create
+                params
+                (Core_lambda.pattern_match body
+                   ~f:(fun id b_id body ->
+                     Core_lambda.create id b_id
+                       (subst_singleton_set_of_closures ~bound ~clo body)))))
+  | Deleted_code -> e
+  | Static_const const ->
+    Static_const (match const with
+     | Static_set_of_closures {function_decls; value_slots; alloc_mode}->
+      let {function_decls; value_slots; alloc_mode} =
+        (let in_order =
+            Function_slot.Lmap.map (fun x ->
+              match x with
+              | Id _ -> x
+              | Exp e ->
+                Exp (subst_singleton_set_of_closures ~bound ~clo e))
+             function_decls.in_order
+          in
+          let function_decls = function_decl_create in_order
+          in
+          let value_slots =
+            Value_slot.Map.map (fun (x, kind) ->
+              match x with
+              | Id v -> (Exp (
+                if Simple.same v (Simple.var (Bound_var.var bound)) then
+                  Named (Set_of_closures clo)
+                else
+                  Named (Static_consts [e])), kind)
+              | Exp e ->
+                (Exp (subst_singleton_set_of_closures ~bound ~clo e), kind))
+              value_slots
+          in
+          {function_decls; value_slots; alloc_mode}
+        )
+      in
+      Static_set_of_closures {function_decls; value_slots; alloc_mode}
+    | Block (tag, mut, list) ->
+      let list = List.map (subst_singleton_set_of_closures ~bound ~clo) list
+      in
+      Block (tag, mut, list)
+    | _ -> const)
 
 and subst_static_list ~(bound : Bound_codelike.t) ~let_body e : core_exp =
   let rec subst_static_list_ bound body e =
@@ -338,8 +393,28 @@ let rec subst_cont (cont_e1: core_exp) (k: Bound_continuation.t)
     let_fix (fun e -> subst_cont e k args cont_e2) e
   | Let_cont e ->
     let_cont_fix (fun e -> subst_cont e k args cont_e2) e
-  | Apply e ->
-    apply_fix (fun e -> subst_cont e k args cont_e2) e
+  | Apply {callee; continuation; exn_continuation; apply_args} ->
+    let continuation =
+      (match continuation with
+       | Cont_id (Return cont) ->
+         if Continuation.equal cont k
+         then Handler (Core_continuation_handler.create args cont_e2)
+         else continuation
+       | _ -> continuation)
+    in
+    let exn_continuation =
+      (match exn_continuation with
+       | Cont_id cont ->
+         if Continuation.equal cont k
+         then Handler (Core_continuation_handler.create args cont_e2)
+         else exn_continuation
+       | _ -> exn_continuation)
+    in
+    Apply
+      {callee = subst_cont callee k args cont_e2;
+       continuation; exn_continuation;
+       apply_args =
+         List.map (fun e1 -> subst_cont e1 k args cont_e2) apply_args;}
   | Apply_cont {k = cont; args = concrete_args} ->
     if Continuation.equal cont k
     then subst_params args cont_e2 concrete_args
@@ -701,7 +776,7 @@ and subst_my_closure_body (clo: set_of_closures) (e : core_exp) : core_exp =
 
 (* [ClosureVal] and [ClosureFn] normalization *)
 and subst_my_closure_body_named
-    ({function_decls=_;value_slots;alloc_mode=_}: set_of_closures) (e : named)
+    ({function_decls;value_slots;alloc_mode=_}: set_of_closures) (e : named)
   : core_exp =
   match e with
   | Prim (Unary (Project_value_slot slot, _arg)) ->
@@ -718,6 +793,11 @@ and subst_my_closure_body_named
        (match Function_slot.Lmap.get_singleton fun_decls with
         | Some (_, Exp e) -> e
         | _ -> Named e)
+     | Some (Exp (Named (Slot (phi, Function_slot slot))), _) ->
+       (match Function_slot.Lmap.find_opt slot function_decls.in_order with
+        | Some (Exp e) -> e
+        | _ -> (Named (Slot (phi, Function_slot slot))))
+     | Some (Exp e, _) -> e
      | _ -> Named e)
   | Prim (Unary (Project_function_slot {move_from ; move_to},
                  Named (Slot (phi, Function_slot slot)))) ->
