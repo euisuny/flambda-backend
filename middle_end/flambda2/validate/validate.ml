@@ -17,8 +17,8 @@ let _std_print = Format.fprintf Format.std_formatter "@.TERM:%a@." print
 
 (* [Let-β]
       e[bound\let_body] *)
-let rec subst_pattern ~(bound : Bound_for_let.t) ~(let_body : core_exp) (e : core_exp)
-  : core_exp =
+let rec subst_pattern ~(bound : Bound_for_let.t) ~(let_body : core_exp)
+          (e : core_exp) : core_exp =
   match bound with
   | Singleton bound ->
     (match let_body with
@@ -33,8 +33,8 @@ let rec subst_pattern ~(bound : Bound_for_let.t) ~(let_body : core_exp) (e : cor
   | Static bound ->
     subst_static_list ~bound ~let_body e
 
-and subst_singleton_set_of_closures ~(bound: Bound_var.t) ~(clo : set_of_closures)
-      (e : core_exp) : core_exp =
+and subst_singleton_set_of_closures ~(bound: Bound_var.t)
+      ~(clo : set_of_closures) (e : core_exp) : core_exp =
   match e with
   | Named e -> subst_singleton_set_of_closures_named ~bound ~clo e
   | Let {let_abst; expr_body} ->
@@ -126,7 +126,9 @@ and subst_singleton_set_of_closures_named ~bound ~clo (e : named) : core_exp =
                           subst_singleton_set_of_closures ~bound ~clo e2,
                           subst_singleton_set_of_closures ~bound ~clo e3)))
   | Prim (Variadic (p, list)) ->
-    Named (Prim (Variadic (p, List.map (subst_singleton_set_of_closures ~bound ~clo) list)))
+    let list = List.map (subst_singleton_set_of_closures ~bound ~clo) list
+    in
+    Named (Prim (Variadic (p, list)))
   | Closure_expr (phi, slot, {function_decls; value_slots; alloc_mode}) ->
     let {function_decls; value_slots; alloc_mode} =
       (let in_order =
@@ -146,7 +148,9 @@ and subst_singleton_set_of_closures_named ~bound ~clo (e : named) : core_exp =
               Named (Set_of_closures clo)
             else
               Named e), kind)
-          | Exp e -> (Exp (subst_singleton_set_of_closures ~bound ~clo e), kind)) value_slots
+          | Exp e ->
+            (Exp (subst_singleton_set_of_closures ~bound ~clo e), kind))
+          value_slots
       in
       {function_decls; value_slots; alloc_mode})
     in
@@ -157,7 +161,9 @@ and subst_singleton_set_of_closures_named ~bound ~clo (e : named) : core_exp =
         Function_slot.Lmap.map (fun x ->
           match x with
           | Id _ -> x
-          | Exp e -> Exp (subst_singleton_set_of_closures ~bound ~clo e)) function_decls.in_order
+          | Exp e ->
+            Exp (subst_singleton_set_of_closures ~bound ~clo e))
+          function_decls.in_order
       in
       let function_decls = function_decl_create in_order
       in
@@ -169,13 +175,19 @@ and subst_singleton_set_of_closures_named ~bound ~clo (e : named) : core_exp =
               Named (Set_of_closures clo)
             else
               Named e), kind)
-          | Exp e -> (Exp (subst_singleton_set_of_closures ~bound ~clo e), kind)) value_slots
+          | Exp e ->
+            (Exp (subst_singleton_set_of_closures ~bound ~clo e), kind))
+          value_slots
       in
       {function_decls; value_slots; alloc_mode}
     in
     Named (Set_of_closures {function_decls; value_slots; alloc_mode})
   | Static_consts group ->
-    Named (Static_consts (List.map (subst_singleton_set_of_closures_static_const_or_code ~bound ~clo) group))
+    let group =
+      List.map
+        (subst_singleton_set_of_closures_static_const_or_code ~bound ~clo) group
+    in
+    Named (Static_consts group)
   | Slot (phi, Function_slot slot) ->
     (let bound = Function_slot.Lmap.bindings clo.function_decls.in_order
     in
@@ -213,7 +225,9 @@ and subst_singleton_set_of_closures_static_const_or_code ~bound ~clo
             Function_slot.Lmap.map (fun x ->
               match x with
               | Id _ -> x
-              | Exp e -> Exp (subst_singleton_set_of_closures ~bound ~clo e)) function_decls.in_order
+              | Exp e ->
+                Exp (subst_singleton_set_of_closures ~bound ~clo e))
+             function_decls.in_order
           in
           let function_decls = function_decl_create in_order
           in
@@ -225,7 +239,9 @@ and subst_singleton_set_of_closures_static_const_or_code ~bound ~clo
                   Named (Set_of_closures clo)
                 else
                   Named (Static_consts [e])), kind)
-              | Exp e -> (Exp (subst_singleton_set_of_closures ~bound ~clo e), kind)) value_slots
+              | Exp e ->
+                (Exp (subst_singleton_set_of_closures ~bound ~clo e), kind))
+              value_slots
           in
           {function_decls; value_slots; alloc_mode}
         )
@@ -256,7 +272,8 @@ and subst_static_list ~(bound : Bound_codelike.t) ~let_body e : core_exp =
   | _ -> Misc.fatal_error "Expected name static constants in let body"
 
 and subst_pattern_static
-      ~(bound : Bound_codelike.Pattern.t) ~(let_body : core_exp) (e : core_exp) : core_exp =
+      ~(bound : Bound_codelike.Pattern.t) ~(let_body : core_exp) (e : core_exp)
+  : core_exp =
   match e with
   | Apply_cont {k ; args} ->
     Apply_cont
@@ -394,13 +411,15 @@ and subst_bound_set_of_closures (bound : Bound_var.t) ~let_body
         ~bound:(Bound_codelike.Pattern.set_of_closures bound) ~let_body arg2
     in
     let arg3 =
-      subst_pattern_static ~bound:(Bound_codelike.Pattern.set_of_closures bound) ~let_body arg3
+      subst_pattern_static ~bound:(Bound_codelike.Pattern.set_of_closures bound)
+        ~let_body arg3
     in
     Named (Prim (Ternary (e, arg1, arg2, arg3)))
   | Prim (Variadic (e, args)) ->
     let args =
       List.map
-        (subst_pattern_static ~bound:(Bound_codelike.Pattern.set_of_closures bound) ~let_body) args
+        (subst_pattern_static ~bound:(Bound_codelike.Pattern.set_of_closures bound)
+           ~let_body) args
     in
     Named (Prim (Variadic (e, args)))
   | Static_consts e ->
@@ -419,7 +438,8 @@ and subst_bound_set_of_closures (bound : Bound_var.t) ~let_body
           | Some (Static_const (Static_set_of_closures set)) ->
             let bound = Function_slot.Lmap.bindings set.function_decls.in_order
             in
-            (* try to find if any of the symbols being bound is the same as the variable v *)
+            (* try to find if any of the symbols being bound is the same as the
+               variable v *)
             let bound_closure =
               List.find_opt (fun (x, _) -> x = slot) bound
             in
@@ -434,8 +454,9 @@ and subst_bound_set_of_closures (bound : Bound_var.t) ~let_body
 
 and subst_bound_set_of_closures_static_const_group
       ~bound ~(let_body : core_exp) (e : static_const_group) : core_exp =
-  Named (Static_consts
-           (List.map (subst_bound_set_of_closures_static_const_or_code ~bound ~let_body) e))
+  let subst = subst_bound_set_of_closures_static_const_or_code ~bound ~let_body
+  in
+  Named (Static_consts (List.map subst e))
 
 and subst_bound_set_of_closures_static_const_or_code
       ~(bound : Bound_var.t)
@@ -461,12 +482,15 @@ and subst_bound_set_of_closures_static_const_or_code
   | Deleted_code -> e
 
 and subst_bound_set_of_closures_static_const
-      ~(bound : Bound_var.t) ~(let_body : core_exp) (e : static_const) : static_const =
+      ~(bound : Bound_var.t) ~(let_body : core_exp) (e : static_const)
+  : static_const =
   match e with
   | Block (tag, mut, args) ->
     let args =
       List.map
-        (subst_pattern_static ~bound:(Bound_codelike.Pattern.set_of_closures bound) ~let_body)
+        (subst_pattern_static
+           ~bound:(Bound_codelike.Pattern.set_of_closures bound)
+           ~let_body)
         args
     in
     Block (tag, mut, args)
@@ -581,14 +605,19 @@ and subst_code_id (bound : Code_id.t) ~(let_body : core_exp) (e : named) : core_
                       then Exp let_body
                       else Id code_id
                     | Exp e ->
-                      Exp (subst_pattern_static ~bound:(Bound_codelike.Pattern.code bound)
+                      Exp (subst_pattern_static
+                             ~bound:(Bound_codelike.Pattern.code bound)
                              ~let_body e))
              in
              let function_decls =
-               { funs = Function_slot.Map.of_list (Function_slot.Lmap.bindings in_order);
+               { funs =
+                   Function_slot.Map.of_list
+                     (Function_slot.Lmap.bindings in_order);
                  in_order }
              in
-             Static_const (Static_set_of_closures {function_decls; value_slots; alloc_mode}))
+             Static_const
+               (Static_set_of_closures
+                  {function_decls; value_slots; alloc_mode}))
            | x -> x)
         consts
     in
@@ -603,31 +632,39 @@ and subst_block_like
   | Prim (Nullary e) -> Named (Prim (Nullary e))
   | Prim (Unary (e, arg1)) ->
     let arg1 =
-      subst_pattern_static ~bound:(Bound_codelike.Pattern.block_like bound) ~let_body arg1
+      subst_pattern_static ~bound:(Bound_codelike.Pattern.block_like bound)
+        ~let_body arg1
     in
     Named (Prim (Unary (e, arg1)))
   | Prim (Binary (e, arg1, arg2)) ->
     let arg1 =
-      subst_pattern_static ~bound:(Bound_codelike.Pattern.block_like bound) ~let_body arg1
+      subst_pattern_static ~bound:(Bound_codelike.Pattern.block_like bound)
+        ~let_body arg1
     in
     let arg2 =
-      subst_pattern_static ~bound:(Bound_codelike.Pattern.block_like bound) ~let_body arg2
+      subst_pattern_static ~bound:(Bound_codelike.Pattern.block_like bound)
+        ~let_body arg2
     in
     Named (Prim (Binary (e, arg1, arg2)))
   | Prim (Ternary (e, arg1, arg2, arg3)) ->
     let arg1 =
-      subst_pattern_static ~bound:(Bound_codelike.Pattern.block_like bound) ~let_body arg1
+      subst_pattern_static ~bound:(Bound_codelike.Pattern.block_like bound)
+        ~let_body arg1
     in
     let arg2 =
-      subst_pattern_static ~bound:(Bound_codelike.Pattern.block_like bound) ~let_body arg2
+      subst_pattern_static ~bound:(Bound_codelike.Pattern.block_like bound)
+        ~let_body arg2
     in
     let arg3 =
-      subst_pattern_static ~bound:(Bound_codelike.Pattern.block_like bound) ~let_body arg3
+      subst_pattern_static ~bound:(Bound_codelike.Pattern.block_like bound)
+        ~let_body arg3
     in
     Named (Prim (Ternary (e, arg1, arg2, arg3)))
   | Prim (Variadic (e, args)) ->
     let args =
-      List.map (subst_pattern_static ~bound:(Bound_codelike.Pattern.block_like bound) ~let_body) args
+      List.map
+        (subst_pattern_static
+           ~bound:(Bound_codelike.Pattern.block_like bound) ~let_body) args
     in
     Named (Prim (Variadic (e, args)))
   | Static_consts l ->
@@ -635,23 +672,28 @@ and subst_block_like
   | Slot _ | Closure_expr _ | Set_of_closures _ | Rec_info _ -> Named e
 
 and subst_block_like_static_const_group
-      ~(bound: Symbol.t) ~(let_body : core_exp) (e : static_const_group) : core_exp =
+      ~(bound: Symbol.t) ~(let_body : core_exp) (e : static_const_group)
+  : core_exp =
   Named (Static_consts
            (List.map (subst_block_like_static_const_or_code ~bound ~let_body) e))
 
 and subst_block_like_static_const_or_code
-      ~(bound: Symbol.t) ~(let_body : core_exp) (e : static_const_or_code) : static_const_or_code =
+      ~(bound: Symbol.t) ~(let_body : core_exp) (e : static_const_or_code)
+  : static_const_or_code =
   match e with
-  | Static_const const -> Static_const (subst_block_like_static_const ~bound ~let_body const)
+  | Static_const const ->
+    Static_const (subst_block_like_static_const ~bound ~let_body const)
   | (Code _ | Deleted_code) -> e
 
 and subst_block_like_static_const
-      ~(bound: Symbol.t) ~(let_body : core_exp) (e : static_const) : static_const =
+      ~(bound: Symbol.t) ~(let_body : core_exp) (e : static_const)
+  : static_const =
   match e with
   | Block (tag, mut, args) ->
     let args =
       List.map
-        (subst_pattern_static ~bound:(Bound_codelike.Pattern.block_like bound) ~let_body)
+        (subst_pattern_static
+           ~bound:(Bound_codelike.Pattern.block_like bound) ~let_body)
         args
     in
     Block (tag, mut, args)
@@ -751,7 +793,8 @@ let rec subst_cont (cont_e1: core_exp) (k: Bound_continuation.t)
     then subst_params args cont_e2 concrete_args
     else
       Apply_cont
-        {k = cont; args = List.map (fun x -> subst_cont x k args cont_e2) concrete_args}
+        {k = cont;
+         args = List.map (fun x -> subst_cont x k args cont_e2) concrete_args}
   | Lambda e ->
     Core_lambda.pattern_match e
       ~f:(fun id b e ->
@@ -759,7 +802,8 @@ let rec subst_cont (cont_e1: core_exp) (k: Bound_continuation.t)
   | Switch {scrutinee; arms} ->
     Switch
       {scrutinee = subst_cont scrutinee k args cont_e2;
-       arms = Targetint_31_63.Map.map (fun x -> subst_cont x k args cont_e2) arms;}
+       arms =
+         Targetint_31_63.Map.map (fun x -> subst_cont x k args cont_e2) arms;}
   | Invalid _ -> cont_e1
 
 let rec normalize (e:core_exp) : core_exp =
@@ -796,7 +840,8 @@ and normalize_let let_abst body : core_exp =
   match body with
   | Named (Static_consts [Code _]) ->
     (* [LetCode-β] Non-recursive case
-       let code f (x, ρ, res_k, exn_k) = e1 in e2 ⟶ e2 [f \ λ (x, ρ, res_k, exn_k). e1] *)
+       let code f (x, ρ, res_k, exn_k) = e1 in e2 ⟶
+       e2 [f \ λ (x, ρ, res_k, exn_k). e1] *)
     subst_pattern ~bound:x ~let_body:e1 e2
   | _ ->
       (* [LetL]
@@ -931,8 +976,8 @@ and normalize_static_const (phi : Bound_for_let.t) (const : static_const) : stat
     | Immutable_float_block _ | Immutable_float_array _ | Immutable_value_array _
     | Empty_array | Mutable_string _ | Immutable_string _) -> const (* CHECK *)
 
-and normalize_static_const_or_code (phi : Bound_for_let.t) (const_or_code : static_const_or_code)
-  : static_const_or_code =
+and normalize_static_const_or_code (phi : Bound_for_let.t)
+      (const_or_code : static_const_or_code) : static_const_or_code =
   match const_or_code with
   | Code code ->
     let (param, (id, bound, body)) =
@@ -948,8 +993,8 @@ and normalize_static_const_or_code (phi : Bound_for_let.t) (const_or_code : stat
   | Static_const const -> Static_const (normalize_static_const phi const)
   | Deleted_code -> Deleted_code
 
-and normalize_static_const_group (phi : Bound_codelike.Pattern.t list) (consts : static_const_group) :
-  Bound_codelike.Pattern.t list * core_exp =
+and normalize_static_const_group (phi : Bound_codelike.Pattern.t list)
+      (consts : static_const_group) : Bound_codelike.Pattern.t list * core_exp =
   let is_static_set_of_closures =
     (fun e ->
      match e with
@@ -1002,8 +1047,9 @@ and normalize_static_const_group (phi : Bound_codelike.Pattern.t list) (consts :
           | _ -> Misc.fatal_error "Expected set of closures") set_of_closures
     in
     let static_consts =
-      List.map (fun (_, x) -> normalize_static_const_or_code
-                                (Bound_for_let.Static (Bound_codelike.create phi)) x) static_consts
+      List.map (fun (_, x) ->
+        normalize_static_const_or_code
+          (Bound_for_let.Static (Bound_codelike.create phi)) x) static_consts
     in
     let consts = set_of_closures @ static_consts
     in
@@ -1017,7 +1063,8 @@ and normalize_static_const_group (phi : Bound_codelike.Pattern.t list) (consts :
 (* N.B. This normalization is rather inefficient;
    Right now (for the sake of clarity) it goes through three passes of the
    value and function expressions *)
-and normalize_set_of_closures (phi : Bound_for_let.t) {function_decls; value_slots; alloc_mode}
+and normalize_set_of_closures (phi : Bound_for_let.t)
+      {function_decls; value_slots; alloc_mode}
   : set_of_closures =
   let value_slots =
     Value_slot.Map.map
@@ -1037,7 +1084,8 @@ and normalize_set_of_closures (phi : Bound_for_let.t) {function_decls; value_slo
                code
               {function_decls;value_slots;alloc_mode}
            in
-           Exp params_and_body (* FIXME: Might want to put [Lambda] as a [Static_const] *)
+           (* FIXME: Might want to put [Lambda] as a [Static_const] *)
+           Exp params_and_body
          | _ -> x)
       function_decls.in_order
   in
@@ -1198,7 +1246,8 @@ and normalize_value_expr (val_expr : value_expr) : value_expr =
 
 (* This is a "normalization" of [named] expression, in quotations because there
   is some simple evaluation that occurs for primitive arithmetic expressions *)
-and normalize_named (var: Bound_for_let.t) (body : named) : Bound_for_let.t * core_exp =
+and normalize_named (var: Bound_for_let.t) (body : named)
+  : Bound_for_let.t * core_exp =
   match body with
   | Simple _ (* A [Simple] is a register-sized value *)
   | Slot _
