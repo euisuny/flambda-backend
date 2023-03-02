@@ -535,7 +535,7 @@ and print_named ppf (t : named) =
     fprintf ppf "prim@ %a"
       print_prim prim;
   | Slot (var, Function_slot slot) ->
-    fprintf ppf "slot(%a ,%a)"
+    fprintf ppf "slot(%a,@ %a)"
       Variable.print var
       Function_slot.print slot
   | Slot (var, Value_slot slot) ->

@@ -149,7 +149,7 @@ and subst_singleton_set_of_closures_named ~bound ~clo (e : named) : core_exp =
       {function_decls; value_slots; alloc_mode})
     in
     Named (Closure_expr (phi, slot, {function_decls; value_slots; alloc_mode}))
-  | Set_of_closures {function_decls; value_slots; alloc_mode}->
+  | Set_of_closures {function_decls; value_slots; alloc_mode} ->
     let {function_decls; value_slots; alloc_mode} =
       let in_order =
         Function_slot.Lmap.map (fun x ->
@@ -199,16 +199,15 @@ and subst_singleton_set_of_closures_static_const_or_code ~bound ~clo
               Core_function_params_and_body.create
                 params
                 (Core_lambda.pattern_match body
-                   ~f:(fun id bound body ->
-                     Core_lambda.create id bound
-                       (subst_singleton_set_of_closures ~bound:params ~clo body)))))
+                   ~f:(fun id b_id body ->
+                     Core_lambda.create id b_id
+                       (subst_singleton_set_of_closures ~bound ~clo body)))))
   | Deleted_code -> e
   | Static_const const ->
     Static_const (match const with
      | Static_set_of_closures {function_decls; value_slots; alloc_mode}->
       let {function_decls; value_slots; alloc_mode} =
-        (
-          let in_order =
+        (let in_order =
             Function_slot.Lmap.map (fun x ->
               match x with
               | Id _ -> x
@@ -493,7 +492,7 @@ and subst_code_id_set_of_closures (bound : Code_id.t) ~(let_body : core_exp)
 
 and subst_code_id (bound : Code_id.t) ~(let_body : core_exp) (e : named) : core_exp =
   match e with
-  | Simple _ -> Named e
+  | Simple _ | Slot _ -> Named e
   | Prim (Nullary e) -> Named (Prim (Nullary e))
   | Prim (Unary (e, arg1)) ->
     let arg1 =
@@ -530,7 +529,6 @@ and subst_code_id (bound : Code_id.t) ~(let_body : core_exp) (e : named) : core_
         (subst_pattern_static ~bound:(Bound_codelike.Pattern.code bound) ~let_body) args
     in
     Named (Prim (Variadic (e, args)))
-  | Slot _ -> Named e (* NEXT *)
   | Closure_expr (phi, slot, set) ->
     Named (Closure_expr (phi, slot, subst_code_id_set_of_closures bound ~let_body set))
   | Set_of_closures set ->
@@ -950,11 +948,12 @@ and normalize_apply callee continuation exn_continuation apply_args call_kind
     let exp =
       apply_renaming body renaming
     in
-    subst_params params exp
-      (List.map normalize apply_args)
+    subst_params params exp (List.map normalize apply_args)
   | Lambda exp ->
     let _, bound, exp =
       Core_lambda.pattern_match exp ~f:(fun id x y -> id, x,y)
+    in
+    let params = bound.params
     in
     let renaming = Renaming.empty
     in
@@ -977,8 +976,7 @@ and normalize_apply callee continuation exn_continuation apply_args call_kind
     let exp =
       apply_renaming exp renaming
     in
-    subst_params (bound.params) exp
-      (List.map normalize apply_args)
+    subst_params params exp (List.map normalize apply_args)
   | _ ->
     let continuation =
       (match continuation with
@@ -1160,8 +1158,7 @@ and subst_my_closure (phi : Bound_for_let.t) (slot : Function_slot.t)
                      (fun _ simple  ->
                         if (Simple.same (Simple.var (Bound_var.var bff)) simple)
                         then
-                          (let _ = Named (Slot (phi, Function_slot slot)) in
-                          failwith "Gotcha")
+                          Named (Slot (phi, Function_slot slot))
                         else (Named (Simple simple))) () body
                  in
                 Core_lambda.create id bound
