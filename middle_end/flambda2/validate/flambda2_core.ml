@@ -1312,19 +1312,27 @@ let static_const_or_code_fix (fix : core_exp -> core_exp)
   | Static_const const ->
     Static_const (static_const_fix fix f arg const)
 
+let prim_fix (fix : core_exp -> core_exp) (e : primitive) =
+  match e with
+  | Nullary _ -> Named (Prim e)
+  | Unary (p, e) ->
+    Named (Prim (Unary (p, fix e)))
+  | Binary (p, e1, e2) ->
+    Named (Prim (Binary (p, fix e1, fix e2)))
+  | Ternary (p, e1, e2, e3) ->
+    Named (Prim (Ternary (p, fix e1, fix e2, fix e3)))
+  | Variadic (p, list) ->
+    Named (Prim (Variadic (p, List.map fix list)))
+
+let static_const_group_fix (fix : core_exp -> core_exp)
+      (f : 'a -> Simple.t -> core_exp) arg (e : static_const_group) =
+  Named (Static_consts (List.map (static_const_or_code_fix fix f arg) e))
+
 let named_fix (fix : core_exp -> core_exp)
       (f : 'a -> Simple.t -> core_exp) arg (e : named) =
   match e with
   | Simple v -> f arg v
-  | Prim (Nullary _) -> Named e
-  | Prim (Unary (p, e)) ->
-    Named (Prim (Unary (p, fix e)))
-  | Prim (Binary (p, e1, e2)) ->
-    Named (Prim (Binary (p, fix e1, fix e2)))
-  | Prim (Ternary (p, e1, e2, e3)) ->
-    Named (Prim (Ternary (p, fix e1, fix e2, fix e3)))
-  | Prim (Variadic (p, list)) ->
-    Named (Prim (Variadic (p, List.map fix list)))
+  | Prim e -> prim_fix fix e
   | Closure_expr (phi, slot, clo) ->
     let {function_decls; value_slots; alloc_mode} =
       set_of_closures_fix fix f arg clo
@@ -1336,7 +1344,7 @@ let named_fix (fix : core_exp -> core_exp)
     in
     Named (Set_of_closures {function_decls; value_slots; alloc_mode})
   | Static_consts group ->
-    Named (Static_consts (List.map (static_const_or_code_fix fix f arg) group))
+    static_const_group_fix fix f arg group
   | Slot _ | Rec_info _ -> Named e
 
 let rec core_fmap
