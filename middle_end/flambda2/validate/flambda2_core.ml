@@ -1182,9 +1182,6 @@ let function_decl_create (in_order : function_expr Function_slot.Lmap.t) =
   { funs = Function_slot.Map.of_list (Function_slot.Lmap.bindings in_order);
     in_order }
 
-let _std_print =
-  Format.fprintf Format.std_formatter "@. TERM:%a@." print
-
 (* Fixpoint combinator for core expressions *)
 let let_fix (f : core_exp -> core_exp) {let_abst; expr_body} =
   Core_let.pattern_match {let_abst; expr_body}

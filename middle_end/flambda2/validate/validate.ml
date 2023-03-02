@@ -163,7 +163,10 @@ and subst_bound_set_of_closures (bound : Bound_var.t) ~let_body
                 ~bound:(Bound_codelike.Pattern.set_of_closures bound)
                 ~let_body) e
   | Static_consts e ->
-    subst_bound_set_of_closures_static_const_group ~bound ~let_body e
+    static_const_group_fix
+      (subst_pattern_static
+      ~bound:(Bound_codelike.Pattern.set_of_closures bound)
+      ~let_body) (fun _ v -> Named (Simple v)) () e
   | Slot (phi, Function_slot slot) ->
     (match let_body with
      | Named (Static_consts consts) ->
@@ -191,67 +194,6 @@ and subst_bound_set_of_closures (bound : Bound_var.t) ~let_body
      | _ -> Named e
     )
   | Slot _ |  Closure_expr _ | Set_of_closures _ | Rec_info _ -> Named e
-
-and subst_bound_set_of_closures_static_const_group
-      ~bound ~(let_body : core_exp) (e : static_const_group) : core_exp =
-  let subst = subst_bound_set_of_closures_static_const_or_code ~bound ~let_body
-  in
-  Named (Static_consts (List.map subst e))
-
-and subst_bound_set_of_closures_static_const_or_code
-      ~(bound : Bound_var.t)
-      ~(let_body : core_exp) (e : static_const_or_code) : static_const_or_code =
-  match e with
-  | Static_const const ->
-    Static_const (subst_bound_set_of_closures_static_const ~bound ~let_body const)
-  | Code params_and_body ->
-    Code
-      (Core_function_params_and_body.pattern_match
-         params_and_body
-         ~f:(fun
-              params body ->
-              Core_function_params_and_body.create
-                params
-                (Core_lambda.pattern_match body
-                   ~f:(fun id bound body ->
-                     Core_lambda.create id bound
-                       (subst_pattern_static
-                          ~bound:(Bound_codelike.Pattern.set_of_closures params)
-                          ~let_body body
-                       )))))
-  | Deleted_code -> e
-
-and subst_bound_set_of_closures_static_const
-      ~(bound : Bound_var.t) ~(let_body : core_exp) (e : static_const)
-  : static_const =
-  match e with
-  | Block (tag, mut, args) ->
-    let args =
-      List.map
-        (subst_pattern_static
-           ~bound:(Bound_codelike.Pattern.set_of_closures bound)
-           ~let_body)
-        args
-    in
-    Block (tag, mut, args)
-  | Static_set_of_closures {function_decls;value_slots;alloc_mode}->
-    (let in_order : function_expr Function_slot.Lmap.t =
-       function_decls.in_order |>
-       Function_slot.Lmap.map
-         (fun x ->
-            match x with
-            | Id code_id -> Id code_id
-            | Exp e ->
-              Exp (subst_pattern_static
-                     ~bound:(Bound_codelike.Pattern.set_of_closures bound)
-                     ~let_body e))
-     in
-     let function_decls =
-       { funs = Function_slot.Map.of_list (Function_slot.Lmap.bindings in_order);
-         in_order }
-     in
-     (Static_set_of_closures {function_decls; value_slots; alloc_mode}))
-  | _ -> e
 
 and subst_code_id_set_of_closures (bound : Code_id.t) ~(let_body : core_exp)
       {function_decls; value_slots; alloc_mode}
@@ -742,72 +684,19 @@ and subst_my_closure (phi : Bound_for_let.t) (slot : Function_slot.t)
     we eliminate the projection. *)
 and subst_my_closure_body (clo: set_of_closures) (e : core_exp) : core_exp =
   match e with
-  | Named e ->
-    subst_my_closure_body_named clo e
-  | Let {let_abst; expr_body} ->
-     Core_let.pattern_match {let_abst; expr_body}
-       ~f:(fun ~x ~e1 ~e2 ->
-          Core_let.create
-            ~x
-            ~e1:(subst_my_closure_body clo e1)
-            ~e2:(subst_my_closure_body clo e2))
-  | Let_cont (Non_recursive {handler; body}) ->
-    let handler =
-      Core_continuation_handler.pattern_match handler
-        (fun param exp ->
-           Core_continuation_handler.create param
-             (subst_my_closure_body clo exp))
-    in
-    let body =
-      Core_letcont_body.pattern_match body
-        (fun cont exp ->
-           Core_letcont_body.create cont
-             (subst_my_closure_body clo exp))
-    in
-    Let_cont (Non_recursive {handler; body})
-  | Let_cont (Recursive body) ->
-    (let bound, continuation_map, body =
-       Core_recursive.pattern_match body ~f:(fun b {continuation_map; body} ->
-         b, continuation_map, body)
-     in
-     let bound_cm, continuation_map =
-       Core_continuation_map.pattern_match continuation_map
-         ~f:(fun b e -> b,e)
-     in
-     let continuation_map =
-       Continuation.Map.map
-         (fun x ->
-            Core_continuation_handler.pattern_match x
-              (fun param exp ->
-                 Core_continuation_handler.create param
-                   (subst_my_closure_body clo exp))) continuation_map
-     in
-     let body = subst_my_closure_body clo body
-     in
-     let body =
-       Core_recursive.create bound
-         {continuation_map = Core_continuation_map.create bound_cm continuation_map;
-          body}
-     in
-     Let_cont (Recursive body))
-  | Apply {callee; continuation; exn_continuation; apply_args} ->
-    Apply
-      {callee = subst_my_closure_body clo callee;
-       continuation; exn_continuation;
-       apply_args =
-         List.map (subst_my_closure_body clo) apply_args}
-  | Apply_cont {k;args} ->
-    Apply_cont
-      { k = k;
-        args = List.map (subst_my_closure_body clo) args }
+  | Named e -> subst_my_closure_body_named clo e
+  | Let e ->
+    let_fix (subst_my_closure_body clo) e
+  | Let_cont e ->
+    let_cont_fix (subst_my_closure_body clo) e
+  | Apply e ->
+    apply_fix (subst_my_closure_body clo) e
+  | Apply_cont e ->
+    apply_cont_fix (subst_my_closure_body clo) e
   | Lambda e ->
-    Core_lambda.pattern_match e
-      ~f:(fun id b e ->
-        Lambda (Core_lambda.create id b (subst_my_closure_body clo e)))
-  | Switch {scrutinee; arms} ->
-    Switch
-      { scrutinee = subst_my_closure_body clo scrutinee;
-        arms = Targetint_31_63.Map.map (subst_my_closure_body clo) arms; }
+    lambda_fix (subst_my_closure_body clo) e
+  | Switch e ->
+    switch_fix (subst_my_closure_body clo) e
   | Invalid _ -> e
 
 (* [ClosureVal] and [ClosureFn] normalization *)
