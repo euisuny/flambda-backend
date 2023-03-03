@@ -67,10 +67,8 @@ let eval_binary
        else
          Named (Prim (Binary (v, arg1, arg2)))
      | _, _ -> Named (Prim (Binary (v, arg1, arg2))))
-  | Block_load (Naked_floats _, (Immutable | Immutable_unique)) ->
-    failwith "[Primitive eval] Unimplemented immutable block load: naked_floats"
-  | Block_load (_kind, _Mutable) ->
-    failwith "[Primitive eval] Unimplemented mutable block load"
+  | Block_load (Naked_floats _, (Immutable | Immutable_unique))
+  | Block_load (_, _)
   | Array_load (_,_)
   | String_or_bigstring_load (_,_)
   | Bigarray_load (_,_,_)
