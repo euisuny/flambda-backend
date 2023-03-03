@@ -13,8 +13,7 @@ let create ~return_continuation ~exn_continuation ~params =
 let free_names
       { return_continuation;
         exn_continuation;
-        params;
-      } =
+        params} =
   (* See [bound_continuations.ml] for why [add_traps] is [true]. *)
   let free_names =
     Name_occurrences.add_continuation Name_occurrences.empty return_continuation
@@ -32,7 +31,7 @@ let free_names
 let apply_renaming
       { return_continuation;
         exn_continuation;
-        params} renaming =
+        params } renaming =
   let return_continuation =
     Renaming.apply_continuation renaming return_continuation
   in
@@ -48,8 +47,7 @@ let apply_renaming
 let ids_for_export
       { return_continuation;
         exn_continuation;
-        params;
-      } =
+        params } =
   let ids =
     Ids_for_export.add_continuation Ids_for_export.empty return_continuation
   in

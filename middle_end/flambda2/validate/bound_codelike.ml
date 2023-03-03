@@ -79,7 +79,6 @@ module Pattern = struct
 
 end
 
-
 type t = Pattern.t list
 
 let empty = []
