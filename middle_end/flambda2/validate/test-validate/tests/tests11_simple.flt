@@ -44,3 +44,58 @@ let $camlTests11_simple =
   Block 0 ($camlTests11_simple__bar_2, $camlTests11_simple__map_foo_3)
 in
 cont done ($camlTests11_simple)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+let code size(6) bar_0_1 (map_foo, param) my_closure my_region my_depth -> k * k1 =
+  apply inlined(never) map_foo (0) -> k * k1
+in
+let $camlTests11_simple__bar_2 = closure bar_0_1 @bar in
+let code rec size(4) map_foo_1_1 (param) my_closure my_region my_depth -> k * k1 =
+  apply direct(map_foo_1_1) inlined(never) inlining_state(depth(10))
+    $camlTests11_simple__map_foo_3 (0) -> k * k1
+and $camlTests11_simple__map_foo_3 =
+  closure map_foo_1_1 @map_foo
+in
+let $camlTests11_simple =
+  Block 0 ($camlTests11_simple__bar_2, $camlTests11_simple__map_foo_3)
+in
+cont done ($camlTests11_simple)

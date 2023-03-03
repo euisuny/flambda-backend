@@ -210,8 +210,6 @@ let () =
   (* simplify_term "noinline.fl";
    * normalize_term "noinline.fl"; *)
 
-  (* ------------- NEW --------------- *)
-
   (* [Recursive function] *)
 
   (* simplify_term "size.fl";
@@ -228,22 +226,26 @@ let () =
   (* simplify_term "length.fl";
    * normalize_term "length.fl"; *)
 
-  (* A. More features of recursion *)
-  (* 1. [Applying a mutually recursive function to concrete arguments] *)
+  (* More features of recursion *)
+  (* [Applying a mutually recursive function to concrete arguments] *)
+  (* Also has some nested non-recursive [letcont].. *)
 
-  (* some non-recursive [letcont].. *)
   (* simplify_term "lengthapply.fl";
    * normalize_term "lengthapply.fl"; *)
-
-  (* ------------- TODO --------------- *)
 
   (* 2. test11 :
      [Sets of closures that are mutually recursive to each other]
      [Indirect calls] *)
-  simplify_term "tests11_simple.fl";
-  normalize_term "tests11_simple.fl";
+  (* simplify_term "tests11_simple.fl";
+   * normalize_term "tests11_simple.fl"; *)
+
   (* simplify_term "tests11.fl";
    * normalize_term "tests11.fl"; *)
+
+  (* ------------- TODO --------------- *)
+  (* [Anonymous functions] *)
+  (* simplify_term "anon.fl";
+   * normalize_term "anon.fl"; *)
 
   (* 3. [LetCont : Recursive case] *)
 
@@ -254,6 +256,11 @@ let () =
   (* [Inlining effectful functions (1) Mutable state] *)
 
   (* (2) External calls *)
+
+  (* [External calls, arithmetic evaluation] *)
+  simplify_term "tests13.fl";
+  normalize_term "tests13.fl";
+
 
   (* D. Bureaucratic tax *)
   (* Implementing primitive evaluation (arithmetic evaluation..) *)
