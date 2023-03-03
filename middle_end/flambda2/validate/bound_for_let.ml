@@ -6,9 +6,7 @@ let [@ocamlformat "disable"] print ppf t =
   match t with
   | Singleton bound_var -> Bound_var.print ppf bound_var
   | Static bound_static ->
-    Format.fprintf ppf "@[<hov 1>\
-        @[(bound_static@ %a)@]\
-        )@]"
+    Format.fprintf ppf "@[<hov 1>%a@]"
       Bound_codelike.print bound_static
 
 let free_names t =

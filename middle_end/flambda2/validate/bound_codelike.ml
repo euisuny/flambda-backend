@@ -14,10 +14,10 @@ module Pattern = struct
   let [@ocamlformat "disable"] print ppf t =
     match t with
     | Code code_id ->
-      Format.fprintf ppf "@[<hov 1>(Code@ %a)@]" Code_id.print code_id
+      Format.fprintf ppf "@[<hov 1>Code@ %a@]" Code_id.print code_id
     | Set_of_closures var -> Bound_var.print ppf var
     | Block_like symbol ->
-      Format.fprintf ppf "@[<hov 1>(Block_like@ %a)@]" Symbol.print symbol
+      Format.fprintf ppf "@[<hov 1>Block_like@ %a@]" Symbol.print symbol
 
   let apply_renaming t renaming =
     match t with
