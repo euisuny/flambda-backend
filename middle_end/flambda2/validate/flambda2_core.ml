@@ -697,7 +697,6 @@ and print_function_params_and_body ppf (t:function_params_and_body) =
 and print_let_cont ppf (t : let_cont_expr) =
   match t with
   | Non_recursive {handler; body} ->
-
     Name_abstraction.pattern_match_for_printing
       (module Bound_continuation) body
       ~apply_renaming_to_term:apply_renaming

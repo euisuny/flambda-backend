@@ -233,6 +233,7 @@ let () =
   (* simplify_term "lengthapply.fl";
    * normalize_term "lengthapply.fl"; *)
 
+  (* ------------- NEW ---------------- *)
   (* 2. test11 :
      [Sets of closures that are mutually recursive to each other]
      [Indirect calls] *)
@@ -242,24 +243,31 @@ let () =
   (* simplify_term "tests11.fl";
    * normalize_term "tests11.fl"; *)
 
-  (* ------------- TODO --------------- *)
   (* [Anonymous functions] *)
   (* simplify_term "anon.fl";
    * normalize_term "anon.fl"; *)
 
-  (* 3. [LetCont : Recursive case] *)
+  (* The example without partial application works fine *)
+  (* simplify_term "tests13_simpler.fl";
+   * normalize_term "tests13_simpler.fl"; *)
 
-  (* IY: Are there other features of mutually recursive functions that we
-     might want to test? *)
+  (* [Partial application] *)
+  (* simplify_term "opaque_partial.fl";
+   * normalize_term "opaque_partial.fl"; *)
+
+  simplify_term "tests13_simple.fl";
+  normalize_term "tests13_simple.fl";
+
+  (* ------------- TODO ---------------- *)
+  (* simplify_term "tests13.fl";
+   * normalize_term "tests13.fl"; *)
+
+  (* 3. [LetCont : Recursive case] *)
 
   (* B. Effects *)
   (* [Inlining effectful functions (1) Mutable state] *)
 
   (* (2) External calls *)
-
-  (* [External calls, arithmetic evaluation] *)
-  simplify_term "tests13.fl";
-  normalize_term "tests13.fl";
 
 
   (* D. Bureaucratic tax *)

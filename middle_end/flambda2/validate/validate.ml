@@ -363,7 +363,7 @@ let rec normalize (e:core_exp) : core_exp =
     Core_lambda.pattern_match e
       ~f:(fun id x e ->
         Lambda (Core_lambda.create id x (normalize e)))
-  | Switch {scrutinee; arms} -> (* TODO *)
+  | Switch {scrutinee; arms} ->
     Switch
       {scrutinee = normalize scrutinee;
             arms = Targetint_31_63.Map.map normalize arms}
@@ -417,6 +417,53 @@ and normalize_let_cont (e:let_cont_expr) : core_exp =
 and normalize_apply callee continuation exn_continuation apply_args
   : core_exp =
   match callee with
+  | Named (Closure_expr (_, _, {function_decls; value_slots = _; alloc_mode = _})) ->
+    (let in_order = function_decls.in_order
+     in
+     match Function_slot.Lmap.get_singleton in_order with
+     | Some (_, Exp (Lambda exp)) ->
+        (let _, bound, exp =
+          Core_lambda.pattern_match exp ~f:(fun id x y -> id, x,y)
+        in
+        let params = bound.params
+        in
+        let renaming = Renaming.empty
+        in
+        let renaming =
+          (match continuation with
+            | Cont_id (Apply_expr.Result_continuation.Return continuation) ->
+              Renaming.add_continuation renaming
+                (bound.return_continuation)
+                continuation
+            | _ -> renaming)
+        in
+        let renaming =
+          (match exn_continuation with
+            | Cont_id exn_continuation ->
+              Renaming.add_continuation renaming
+                (bound.exn_continuation)
+                exn_continuation
+            | _ -> renaming)
+        in
+        let exp =
+          apply_renaming exp renaming
+        in
+        subst_params params exp (List.map normalize apply_args))
+        |> normalize
+     | _ ->
+       (let continuation =
+         (match continuation with
+          | Cont_id _ -> continuation
+          | Handler handler -> Handler (normalize_continuation_handler handler))
+       in
+       let exn_continuation =
+         (match exn_continuation with
+          | Cont_id _ -> exn_continuation
+          | Handler handler -> Handler (normalize_continuation_handler handler))
+       in
+       Apply {callee;continuation;exn_continuation;apply_args}
+      )
+    )
   | Named (Static_consts [Code code]) ->
     let _, lambda_expr =
       Core_function_params_and_body.pattern_match
@@ -453,7 +500,7 @@ and normalize_apply callee continuation exn_continuation apply_args
     let exp =
       apply_renaming body renaming
     in
-    subst_params params exp (List.map normalize apply_args)
+    subst_params params exp (List.map normalize apply_args) |> normalize
   | Lambda exp ->
     let _, bound, exp =
       Core_lambda.pattern_match exp ~f:(fun id x y -> id, x,y)
@@ -481,7 +528,7 @@ and normalize_apply callee continuation exn_continuation apply_args
     let exp =
       apply_renaming exp renaming
     in
-    subst_params params exp (List.map normalize apply_args)
+    subst_params params exp (List.map normalize apply_args) |> normalize
   | _ ->
     let continuation =
       (match continuation with
@@ -493,8 +540,7 @@ and normalize_apply callee continuation exn_continuation apply_args
        | Cont_id _ -> exn_continuation
        | Handler handler -> Handler (normalize_continuation_handler handler))
     in
-    Apply {callee;continuation;
-           exn_continuation;apply_args}
+    Apply {callee;continuation;exn_continuation;apply_args}
 
 and normalize_continuation_handler (e : continuation_handler) =
   Core_continuation_handler.pattern_match e
@@ -626,7 +672,6 @@ and normalize_set_of_closures (phi : Bound_for_let.t)
                code
               {function_decls;value_slots;alloc_mode}
            in
-           (* FIXME: Might want to put [Lambda] as a [Static_const] *)
            Exp params_and_body
          | _ -> x)
       function_decls.in_order
