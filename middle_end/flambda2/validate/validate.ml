@@ -315,15 +315,20 @@ let rec subst_cont (cont_e1: core_exp) (k: Bound_continuation.t)
     let_cont_fix (fun e -> subst_cont e k args cont_e2) e
   | Apply {callee; continuation; exn_continuation; apply_args} ->
     _std_print cont_e1;
-    Format.fprintf Format.std_formatter "Bound_continuation %a@."
-      Bound_continuation.print k;
     let continuation =
       (match continuation with
        | Cont_id (Return cont) ->
          if Continuation.equal cont k
          then Handler (Core_continuation_handler.create args cont_e2)
          else continuation
-       | _ -> continuation)
+       | Handler handler ->
+         let args, e2 =
+           Core_continuation_handler.pattern_match handler
+             (fun bound body -> (bound, body))
+         in
+         let e2 = subst_cont e2 k args cont_e2 in
+         Handler (Core_continuation_handler.create args e2)
+       | _ -> Misc.fatal_error "Expected return continuation")
     in
     let exn_continuation =
       (match exn_continuation with
@@ -331,19 +336,13 @@ let rec subst_cont (cont_e1: core_exp) (k: Bound_continuation.t)
          if Continuation.equal cont k
          then Handler (Core_continuation_handler.create args cont_e2)
          else exn_continuation
-       | _ -> exn_continuation)
+       | _ -> failwith "Unimplemented")
     in
-    let result =
-      Apply
-        {callee = subst_cont callee k args cont_e2;
-        continuation; exn_continuation;
-        apply_args =
-          List.map (fun e1 -> subst_cont e1 k args cont_e2) apply_args;}
-    in
-    Format.fprintf Format.std_formatter "Result %a@."
-      print result
-    ; result
-
+    Apply
+      {callee = subst_cont callee k args cont_e2;
+      continuation; exn_continuation;
+      apply_args =
+        List.map (fun e1 -> subst_cont e1 k args cont_e2) apply_args;}
   | Apply_cont {k = cont; args = concrete_args} ->
     if Continuation.equal cont k
     then subst_params args cont_e2 concrete_args
@@ -401,18 +400,18 @@ and normalize_let let_abst body : core_exp =
        e2 [f \ λ (x, ρ, res_k, exn_k). e1] *)
     subst_pattern ~bound:x ~let_body:e1 e2
   | _ ->
-      (* [LetL]
-                      e1 ⟶ e1'
-        -------------------------------------
-         let x = e1 in e2 ⟶ let x = e1' in e2 *)
-      let x, e1 =
-        (match e1 with
-        | Named e -> normalize_named x e
-        | _ -> x, normalize e1)
-      in
-      (* [Let-β]
-         let x = v in e1 ⟶ e2 [x\v] *)
-      subst_pattern ~bound:x ~let_body:e1 e2
+    (* [LetL]
+                    e1 ⟶ e1'
+      -------------------------------------
+        let x = e1 in e2 ⟶ let x = e1' in e2 *)
+    let x, e1 =
+      (match e1 with
+      | Named e -> normalize_named x e
+      | _ -> x, normalize e1)
+    in
+    (* [Let-β]
+        let x = v in e1 ⟶ e2 [x\v] *)
+    subst_pattern ~bound:x ~let_body:e1 e2
 
 and normalize_let_cont (e:let_cont_expr) : core_exp =
   match e with
@@ -436,7 +435,8 @@ and normalize_let_cont (e:let_cont_expr) : core_exp =
 and normalize_apply callee continuation exn_continuation apply_args
   : core_exp =
   match callee with
-  | Named (Closure_expr (_, _, {function_decls; value_slots = _; alloc_mode = _})) ->
+  | Named (Closure_expr (_, _,
+                         {function_decls; value_slots = _; alloc_mode = _})) ->
     (let in_order = function_decls.in_order
      in
      match Function_slot.Lmap.get_singleton in_order with
@@ -513,7 +513,7 @@ and normalize_apply callee continuation exn_continuation apply_args
     in
     let renaming =
       (match continuation with
-      | Cont_id (Apply_expr.Result_continuation.Return continuation) ->
+       | Cont_id (Apply_expr.Result_continuation.Return continuation) ->
           Renaming.add_continuation renaming
             return_continuation2
             continuation
@@ -600,8 +600,10 @@ and normalize_static_const_or_code (phi : Bound_for_let.t)
   | Code code ->
     let (param, (id, bound, body)) =
       Core_function_params_and_body.pattern_match
-        code  ~f:(fun x y -> x,
-                             Core_lambda.pattern_match y ~f:(fun id b body -> id, b, body))
+        code
+        ~f:(fun x y ->
+          x,
+          Core_lambda.pattern_match y ~f:(fun id b body -> id, b, body))
     in
     let params_and_body =
       Core_function_params_and_body.create param
