@@ -1275,6 +1275,66 @@ let set_of_closures_fix (fix : core_exp -> core_exp)
   in
   {function_decls; value_slots; alloc_mode}
 
+let set_of_closures_fix' (fix : core_exp -> core_exp)
+      (f : 'a -> Simple.t -> core_exp)
+      (f_code_id : 'a -> Code_id.t -> function_expr)
+      (arg : 'a)
+      {function_decls; value_slots; alloc_mode} =
+  let in_order =
+    Function_slot.Lmap.map (fun x ->
+      match x with
+      | Id x -> f_code_id arg x
+      | Exp e -> Exp (fix e)) function_decls.in_order
+  in
+  let function_decls = function_decl_create in_order
+  in
+  let value_slots =
+    Value_slot.Map.map (fun (x, kind) ->
+      match x with
+      | Id v -> (Exp (f arg v), kind)
+      | Exp e -> (Exp (fix e), kind)) value_slots
+  in
+  {function_decls; value_slots; alloc_mode}
+
+let static_const_fix' (fix : core_exp -> core_exp)
+      f f_code_id arg (e : static_const) : static_const =
+  match e with
+  | Static_set_of_closures clo ->
+    let {function_decls; value_slots; alloc_mode} =
+      set_of_closures_fix' fix f f_code_id arg clo
+    in
+    Static_set_of_closures {function_decls; value_slots; alloc_mode}
+  | Block (tag, mut, list) ->
+    let list = List.map fix list
+    in
+    Block (tag, mut, list)
+  | _ -> e
+
+let static_const_or_code_fix' (fix : core_exp -> core_exp)
+      (f : 'a -> Simple.t -> core_exp) f_code_id
+      (arg : 'a)
+      (e : static_const_or_code) =
+  match e with
+  | Code params_and_body ->
+    Code
+      (Core_function_params_and_body.pattern_match
+         params_and_body
+         ~f:(fun
+              params body ->
+              Core_function_params_and_body.create
+                params
+                (Core_lambda.pattern_match body
+                   ~f:(fun id bound body ->
+                     Core_lambda.create id bound (fix body)))))
+  | Deleted_code -> e
+  | Static_const const ->
+    Static_const (static_const_fix' fix f f_code_id arg const)
+
+let static_const_group_fix' (fix : core_exp -> core_exp)
+      (f : 'a -> Simple.t -> core_exp) f_code_id
+      arg (e : static_const_group) =
+  Named (Static_consts (List.map (static_const_or_code_fix' fix f f_code_id arg) e))
+
 let static_const_fix (fix : core_exp -> core_exp)
       f arg (e : static_const) : static_const =
   match e with
@@ -1309,6 +1369,10 @@ let static_const_or_code_fix (fix : core_exp -> core_exp)
   | Static_const const ->
     Static_const (static_const_fix fix f arg const)
 
+let static_const_group_fix (fix : core_exp -> core_exp)
+      (f : 'a -> Simple.t -> core_exp) arg (e : static_const_group) =
+  Named (Static_consts (List.map (static_const_or_code_fix fix f arg) e))
+
 let prim_fix (fix : core_exp -> core_exp) (e : primitive) =
   match e with
   | Nullary _ -> Named (Prim e)
@@ -1320,10 +1384,6 @@ let prim_fix (fix : core_exp -> core_exp) (e : primitive) =
     Named (Prim (Ternary (p, fix e1, fix e2, fix e3)))
   | Variadic (p, list) ->
     Named (Prim (Variadic (p, List.map fix list)))
-
-let static_const_group_fix (fix : core_exp -> core_exp)
-      (f : 'a -> Simple.t -> core_exp) arg (e : static_const_group) =
-  Named (Static_consts (List.map (static_const_or_code_fix fix f arg) e))
 
 let named_fix (fix : core_exp -> core_exp)
       (f : 'a -> Simple.t -> core_exp) arg (e : named) =

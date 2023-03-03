@@ -80,10 +80,8 @@ and subst_singleton_set_of_closures_named ~bound ~clo (e : named) : core_exp =
       List.find_opt (fun (x, _) -> x = slot) bound
     in
     (match bound_closure with
-     | None ->
-       Named e
-     | Some (k, _) ->
-       Named (Closure_expr (phi, k, clo))))
+     | None -> Named e
+     | Some (k, _) -> Named (Closure_expr (phi, k, clo))))
   | Slot _
   | Rec_info _ -> Named e
 
@@ -239,41 +237,14 @@ and subst_code_id (bound : Code_id.t) ~(let_body : core_exp) (e : named) : core_
     in
     Named (Static_consts [Static_const (Block (tag, immutable, exps))])
   | Static_consts consts ->
-    (* Assumption : there is at most one [set_of_closures] definition *)
-    let consts =
-      List.map
-        (fun x ->
-           match x with
-           | Static_const
-               (Static_set_of_closures {function_decls; value_slots; alloc_mode})
-             ->
-             (let in_order : function_expr Function_slot.Lmap.t =
-               function_decls.in_order |>
-               Function_slot.Lmap.map
-                 (fun x ->
-                    match x with
-                    | Id code_id ->
-                      if (Code_id.compare code_id bound = 0)
-                      then Exp let_body
-                      else Id code_id
-                    | Exp e ->
-                      Exp (subst_pattern_static
-                             ~bound:(Bound_codelike.Pattern.code bound)
-                             ~let_body e))
-             in
-             let function_decls =
-               { funs =
-                   Function_slot.Map.of_list
-                     (Function_slot.Lmap.bindings in_order);
-                 in_order }
-             in
-             Static_const
-               (Static_set_of_closures
-                  {function_decls; value_slots; alloc_mode}))
-           | x -> x)
-        consts
-    in
-    Named (Static_consts consts)
+    static_const_group_fix'
+      (subst_pattern_static ~bound:(Bound_codelike.Pattern.code bound) ~let_body)
+      (fun _ x -> Named (Simple x))
+      (fun (bound, let_body) code_id ->
+         if (Code_id.compare code_id bound = 0)
+         then Exp let_body
+         else Id code_id)
+      (bound, let_body) consts
   | Rec_info _ -> Named e
 
 and subst_block_like
@@ -393,7 +364,9 @@ let rec normalize (e:core_exp) : core_exp =
       ~f:(fun id x e ->
         Lambda (Core_lambda.create id x (normalize e)))
   | Switch {scrutinee; arms} -> (* TODO *)
-    Switch {scrutinee = normalize scrutinee; arms}
+    Switch
+      {scrutinee = normalize scrutinee;
+            arms = Targetint_31_63.Map.map normalize arms}
   | Named (Closure_expr (phi, slot, clo)) ->
     let var = Bound_for_let.Singleton (Bound_var.create phi Name_mode.normal)
     in

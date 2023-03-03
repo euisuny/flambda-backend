@@ -1,10 +1,10 @@
 open! Flambda2_core
 
-let debug = ref false
+let debug = ref true
 
 let unequal (e1 : core_exp) (e2 : core_exp) =
   if !debug then
-    Format.fprintf Format.std_formatter "Unequal:@ %a <> %a@."
+    Format.fprintf Format.std_formatter "Unequal:@ %a <>@ %a@."
       print e1
       print e2
   else ();

@@ -299,3 +299,8 @@ val prim_fix : (core_exp -> core_exp) -> primitive -> core_exp
 val static_const_group_fix :
   (core_exp -> core_exp) ->
   ('a -> Simple.t -> core_exp) -> 'a -> static_const_group -> core_exp
+val static_const_group_fix' :
+  (core_exp -> core_exp) ->
+  ('a -> Simple.t -> core_exp) ->
+  ('a -> Code_id.t -> function_expr) ->
+  'a -> static_const_group -> core_exp
