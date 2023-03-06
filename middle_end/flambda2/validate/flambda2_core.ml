@@ -1354,7 +1354,10 @@ let static_const_or_code_fix (fix : core_exp -> core_exp)
       (e : static_const_or_code) =
   match e with
   | Code params_and_body ->
-    Code
+    (* Format.fprintf Format.std_formatter "[BEFORE]%a@." print
+     *   (Named (Static_consts [e])); *)
+    let e =
+      Code
       (Core_function_params_and_body.pattern_match
          params_and_body
          ~f:(fun
@@ -1364,6 +1367,11 @@ let static_const_or_code_fix (fix : core_exp -> core_exp)
                 (Core_lambda.pattern_match body
                    ~f:(fun id bound body ->
                      Core_lambda.create id bound (fix body)))))
+    in
+    (* Format.fprintf Format.std_formatter "[AFTER]%a@." print
+     *   (Named (Static_consts [e])); *)
+    e
+
   | Deleted_code -> e
   | Static_const const ->
     Static_const (static_const_fix fix f arg const)

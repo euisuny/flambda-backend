@@ -461,13 +461,20 @@ and normalize_apply callee continuation exn_continuation apply_args : core_exp =
             | _ -> Misc.fatal_error "Expected result continuation"
           )
         in
-        let renaming =
+        let exp, renaming =
           (match exn_continuation with
             | Cont_id exn_continuation ->
-              Renaming.add_continuation renaming
+              exp, Renaming.add_continuation renaming
                 (bound.exn_continuation)
                 exn_continuation
-            | Handler _ -> failwith "Unimplemented")
+            | Handler handler ->
+              let args, e2 =
+                Core_continuation_handler.pattern_match handler
+                  (fun bound body -> (bound, body))
+              in
+              let exp = subst_cont exp bound.return_continuation args e2
+              in
+              (exp, renaming))
         in
         let exp =
           apply_renaming exp renaming
@@ -495,7 +502,7 @@ and normalize_apply callee continuation exn_continuation apply_args : core_exp =
       Core_function_params_and_body.pattern_match
         code  ~f:(fun my_closure t -> my_closure, t)
     in
-    let _, bound, body =
+    let _, bound, exp =
       Core_lambda.pattern_match lambda_expr
         ~f:(fun id b body -> id, b, body)
     in
@@ -507,24 +514,39 @@ and normalize_apply callee continuation exn_continuation apply_args : core_exp =
     in
     let renaming = Renaming.empty
     in
-    let renaming =
+    let exp, renaming =
       (match continuation with
        | Cont_id (Apply_expr.Result_continuation.Return continuation) ->
-          Renaming.add_continuation renaming
+          (exp, Renaming.add_continuation renaming
             return_continuation2
-            continuation
-      | _ -> failwith "Unimplemented")
+            continuation)
+       | Handler handler ->
+         let args, e2 =
+           Core_continuation_handler.pattern_match handler
+             (fun bound body -> (bound, body))
+         in
+         let exp = subst_cont exp bound.return_continuation args e2
+         in
+         (exp, renaming)
+       | _ -> Misc.fatal_error "Expected result continuation")
     in
-    let renaming =
+    let exp, renaming =
       (match exn_continuation with
        | Cont_id continuation ->
-         Renaming.add_continuation renaming
+         (exp, Renaming.add_continuation renaming
            exn_continuation2
-           continuation
-       | _ -> failwith "Unimplemented")
+           continuation)
+       | Handler handler ->
+         let args, e2 =
+           Core_continuation_handler.pattern_match handler
+             (fun bound body -> (bound, body))
+         in
+         let exp = subst_cont exp bound.return_continuation args e2
+         in
+         (exp, renaming))
     in
     let exp =
-      apply_renaming body renaming
+      apply_renaming exp renaming
     in
     let result = subst_params params exp (List.map normalize apply_args)
     in
@@ -537,21 +559,36 @@ and normalize_apply callee continuation exn_continuation apply_args : core_exp =
     in
     let renaming = Renaming.empty
     in
-    let renaming =
+    let exp, renaming =
       (match continuation with
        | Cont_id (Apply_expr.Result_continuation.Return continuation) ->
-         Renaming.add_continuation renaming
+         (exp, Renaming.add_continuation renaming
            (bound.return_continuation)
-           continuation
-       | _ -> failwith "Unimplemented")
+           continuation)
+       | Handler handler ->
+         let args, e2 =
+           Core_continuation_handler.pattern_match handler
+             (fun bound body -> (bound, body))
+         in
+         let exp = subst_cont exp bound.return_continuation args e2
+         in
+         (exp, renaming)
+       | _ -> Misc.fatal_error "Expected result continuation")
     in
-    let renaming =
+    let exp, renaming =
       (match exn_continuation with
        | Cont_id exn_continuation ->
-         Renaming.add_continuation renaming
+         (exp, Renaming.add_continuation renaming
            (bound.exn_continuation)
-           exn_continuation
-       | _ -> failwith "Unimplemented")
+           exn_continuation)
+       | Handler handler ->
+         let args, e2 =
+           Core_continuation_handler.pattern_match handler
+             (fun bound body -> (bound, body))
+         in
+         let exp = subst_cont exp bound.return_continuation args e2
+         in
+         (exp, renaming))
     in
     let exp =
       apply_renaming exp renaming
