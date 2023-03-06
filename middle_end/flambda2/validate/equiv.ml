@@ -465,7 +465,8 @@ and equiv_cont _env (e1 : Continuation.t) (e2 : Continuation.t) : eq =
   | Normal_or_exn, Normal_or_exn
   | Return, Return
   | Define_root_symbol, Define_root_symbol -> true
-  (* Continuation.equal e1 e2 *) (* TODO *)
+  (* TODO *)
+  (* Continuation.equal e1 e2 *)
   | (Normal_or_exn | Return | Define_root_symbol | Toplevel_return), _ -> false
 
 and equiv_lambda env (e1 : lambda_expr) (e2 : lambda_expr) : eq =

@@ -376,8 +376,8 @@ let rec normalize (e:core_exp) : core_exp =
     normalize_apply_cont k args
   | Lambda e ->
     Core_lambda.pattern_match e
-      ~f:(fun id x e ->
-        Lambda (Core_lambda.create id x (normalize e)))
+      ~f:(fun x e ->
+        Lambda (Core_lambda.create x (normalize e)))
   | Switch {scrutinee; arms} ->
     Switch
       {scrutinee = normalize scrutinee;
@@ -437,8 +437,8 @@ and normalize_apply callee continuation exn_continuation apply_args : core_exp =
      in
      match Function_slot.Lmap.get_singleton in_order with
      | Some (_, Exp (Lambda exp)) ->
-        (let _, bound, exp =
-          Core_lambda.pattern_match exp ~f:(fun id x y -> id, x,y)
+        (let bound, exp =
+          Core_lambda.pattern_match exp ~f:(fun x y -> x,y)
         in
         let params = bound.params
         in
@@ -502,9 +502,9 @@ and normalize_apply callee continuation exn_continuation apply_args : core_exp =
       Core_function_params_and_body.pattern_match
         code  ~f:(fun my_closure t -> my_closure, t)
     in
-    let _, bound, exp =
+    let bound, exp =
       Core_lambda.pattern_match lambda_expr
-        ~f:(fun id b body -> id, b, body)
+        ~f:(fun b body -> b, body)
     in
     let return_continuation2 = bound.return_continuation
     in
@@ -552,8 +552,8 @@ and normalize_apply callee continuation exn_continuation apply_args : core_exp =
     in
     normalize result
   | Lambda exp ->
-    let _, bound, exp =
-      Core_lambda.pattern_match exp ~f:(fun id x y -> id, x,y)
+    let bound, exp =
+      Core_lambda.pattern_match exp ~f:(fun x y -> x,y)
     in
     let params = bound.params
     in
@@ -635,16 +635,16 @@ and normalize_static_const_or_code (phi : Bound_for_let.t)
       (const_or_code : static_const_or_code) : static_const_or_code =
   match const_or_code with
   | Code code ->
-    let (param, (id, bound, body)) =
+    let (param, (bound, body)) =
       Core_function_params_and_body.pattern_match
         code
         ~f:(fun x y ->
           x,
-          Core_lambda.pattern_match y ~f:(fun id b body -> id, b, body))
+          Core_lambda.pattern_match y ~f:(fun b body -> b, body))
     in
     let params_and_body =
       Core_function_params_and_body.create param
-        (Core_lambda.create id bound (normalize body))
+        (Core_lambda.create bound (normalize body))
     in
     Code params_and_body
   | Static_const const -> Static_const (normalize_static_const phi const)
@@ -771,7 +771,7 @@ and subst_my_closure (phi : Bound_for_let.t) (slot : Function_slot.t)
         ~f:(fun bff e ->
           Lambda
             (Core_lambda.pattern_match e
-               ~f:(fun id bound body ->
+               ~f:(fun bound body ->
                  (* Note: Can't use [Renaming] because it is bidirectional:
                     we only want to substitute in one direction here, namely
                     if we see any occurrence of a [my_closure], substitute in
@@ -784,8 +784,7 @@ and subst_my_closure (phi : Bound_for_let.t) (slot : Function_slot.t)
                           Named (Slot (phi, Function_slot slot))
                         else (Named (Simple simple))) () body
                  in
-                Core_lambda.create id bound
-                  (subst_my_closure_body clo body)))))
+                Core_lambda.create bound (subst_my_closure_body clo body)))))
   | _ -> Named (Static_consts [Code fn_expr])
 
 (* N.B. [PROJECTION REDUCTION]

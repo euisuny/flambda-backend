@@ -16,7 +16,7 @@ type core_exp =
   | Invalid of { message : string }
 
 and lambda_expr =
-  Code_id.t * (Bound_for_lambda.t, core_exp) Name_abstraction.t
+  (Bound_for_lambda.t, core_exp) Name_abstraction.t
 
 and 'a id_or_exp =
   | Id of 'a
@@ -224,17 +224,14 @@ end
 module Core_lambda : sig
   type t = lambda_expr
 
-  val create : Code_id.t -> Bound_for_lambda.t -> T0.t -> t
-
-  val name : t -> Code_id.t
+  val create : Bound_for_lambda.t -> T0.t -> t
 
   val pattern_match :
-    t -> f:(Code_id.t -> Bound_for_lambda.t -> T0.t -> 'a) -> 'a
+    t -> f:(Bound_for_lambda.t -> T0.t -> 'a) -> 'a
 
   val pattern_match_pair:
     t -> t ->
-    f:(Code_id.t -> Code_id.t ->
-       return_continuation:Continuation.t ->
+    f:(return_continuation:Continuation.t ->
        exn_continuation:Continuation.t ->
        Bound_parameters.t -> core_exp -> core_exp -> 'a) -> 'a
 end
@@ -246,17 +243,13 @@ module Core_function_params_and_body : sig
 
   val my_closure : t -> Bound_var.t
 
-  val name : t -> Code_id.t
-
   val lambda_expr : t -> Core_lambda.t
 
   val pattern_match :
     t -> f:(Bound_var.t -> Core_lambda.t -> 'a) -> 'a
 
   val pattern_match_pair :
-    t -> t -> f:(
-      Code_id.t -> Code_id.t ->
-      return_continuation:Continuation.t ->
+    t -> t -> f:(return_continuation:Continuation.t ->
       exn_continuation:Continuation.t ->
       Bound_parameters.t ->
       body1:core_exp -> body2:core_exp ->
