@@ -21,6 +21,7 @@ val cfg_equivalence_check : bool ref
 val validate : bool ref
 
 val reorder_blocks_random : int option ref
+val basic_block_sections : bool ref
 
 val dasm_comments : bool ref
 
