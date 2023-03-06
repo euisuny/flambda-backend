@@ -139,7 +139,7 @@ and function_declarations_to_core (e : Function_declarations.t) : function_decla
 and value_slots_to_core
       (e : (Simple.t * Flambda_kind.With_subkind.t) Value_slot.Map.t) :
   (value_expr * Flambda_kind.With_subkind.t) Value_slot.Map.t =
-    Value_slot.Map.map (fun (x, y) -> (Id x, y)) e
+    Value_slot.Map.map (fun (x, y) -> (Id (Simple.without_coercion x), y)) e
 
 and prim_to_core (e : P.t) : primitive =
   match e with

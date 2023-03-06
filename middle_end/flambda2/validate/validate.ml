@@ -51,8 +51,8 @@ and subst_singleton_set_of_closures_named ~bound ~clo (e : named) : core_exp =
   let f bound v =
     (if Simple.same v (Simple.var (Bound_var.var bound)) then
         Named (Set_of_closures clo)
-      else
-        Named e)
+     else
+       Named (Simple v))
   in
   match e with
   | Simple v -> f bound v
@@ -314,7 +314,6 @@ let rec subst_cont (cont_e1: core_exp) (k: Bound_continuation.t)
   | Let_cont e ->
     let_cont_fix (fun e -> subst_cont e k args cont_e2) e
   | Apply {callee; continuation; exn_continuation; apply_args} ->
-    _std_print cont_e1;
     let continuation =
       (match continuation with
        | Cont_id (Return cont) ->
@@ -336,13 +335,19 @@ let rec subst_cont (cont_e1: core_exp) (k: Bound_continuation.t)
          if Continuation.equal cont k
          then Handler (Core_continuation_handler.create args cont_e2)
          else exn_continuation
-       | _ -> failwith "Unimplemented")
+       | Handler handler ->
+         let args, e2 =
+           Core_continuation_handler.pattern_match handler
+             (fun bound body -> (bound, body))
+         in
+         let e2 = subst_cont e2 k args cont_e2 in
+         Handler (Core_continuation_handler.create args e2))
     in
     Apply
       {callee = subst_cont callee k args cont_e2;
-      continuation; exn_continuation;
-      apply_args =
-        List.map (fun e1 -> subst_cont e1 k args cont_e2) apply_args;}
+       continuation; exn_continuation;
+       apply_args =
+         List.map (fun e1 -> subst_cont e1 k args cont_e2) apply_args;}
   | Apply_cont {k = cont; args = concrete_args} ->
     if Continuation.equal cont k
     then subst_params args cont_e2 concrete_args
@@ -365,14 +370,11 @@ let rec normalize (e:core_exp) : core_exp =
     normalize_let_cont e
     |> normalize
   | Apply {callee; continuation; exn_continuation; apply_args} ->
-    Format.fprintf Format.std_formatter "apply@.";
     normalize_apply callee continuation exn_continuation apply_args
   | Apply_cont {k ; args} ->
-    Format.fprintf Format.std_formatter "apply_cont@.";
     (* The recursive call for [apply_cont] is done for the arguments *)
     normalize_apply_cont k args
   | Lambda e ->
-    Format.fprintf Format.std_formatter "lambda@.";
     Core_lambda.pattern_match e
       ~f:(fun id x e ->
         Lambda (Core_lambda.create id x (normalize e)))
@@ -380,10 +382,6 @@ let rec normalize (e:core_exp) : core_exp =
     Switch
       {scrutinee = normalize scrutinee;
             arms = Targetint_31_63.Map.map normalize arms}
-  | Named (Closure_expr (phi, slot, clo)) ->
-    let var = Bound_for_let.Singleton (Bound_var.create phi Name_mode.normal)
-    in
-    Named (Closure_expr (phi, slot, normalize_set_of_closures var clo))
   | Named _
   | Invalid _ -> e
 
@@ -392,7 +390,6 @@ and normalize_let let_abst body : core_exp =
     Core_let.pattern_match {let_abst; expr_body = body}
       ~f:(fun ~x ~e1 ~e2 -> (x, e1, e2))
   in
-  Format.fprintf Format.std_formatter "let_expr %a@." Bound_for_let.print x;
   match body with
   | Named (Static_consts [Code _]) ->
     (* [LetCode-β] Non-recursive case
@@ -410,8 +407,9 @@ and normalize_let let_abst body : core_exp =
       | _ -> x, normalize e1)
     in
     (* [Let-β]
-        let x = v in e1 ⟶ e2 [x\v] *)
+       let x = v in e1 ⟶ e2 [x\v] *)
     subst_pattern ~bound:x ~let_body:e1 e2
+
 
 and normalize_let_cont (e:let_cont_expr) : core_exp =
   match e with
@@ -423,17 +421,15 @@ and normalize_let_cont (e:let_cont_expr) : core_exp =
     let k, e1 =
       Core_letcont_body.pattern_match body (fun bound body -> (bound, body))
     in
-    Format.fprintf Format.std_formatter "let_cont %a@."
-      Bound_continuation.print k;
     (* [LetCont-β]
        e1 where k args = e2 ⟶ e1 [k \ λ args. e2] *)
-    subst_cont e1 k args e2
+    let result = subst_cont e1 k args e2 in
+    result
   | Recursive _handlers -> failwith "Unimplemented_recursive"
 
 (* TODO: For cases where the return and exn continuations are not just continuation
    ids, we need to substitute in those expressions in the callee code ! *)
-and normalize_apply callee continuation exn_continuation apply_args
-  : core_exp =
+and normalize_apply callee continuation exn_continuation apply_args : core_exp =
   match callee with
   | Named (Closure_expr (_, _,
                          {function_decls; value_slots = _; alloc_mode = _})) ->
@@ -530,7 +526,9 @@ and normalize_apply callee continuation exn_continuation apply_args
     let exp =
       apply_renaming body renaming
     in
-    subst_params params exp (List.map normalize apply_args) |> normalize
+    let result = subst_params params exp (List.map normalize apply_args)
+    in
+    normalize result
   | Lambda exp ->
     let _, bound, exp =
       Core_lambda.pattern_match exp ~f:(fun id x y -> id, x,y)
@@ -558,7 +556,9 @@ and normalize_apply callee continuation exn_continuation apply_args
     let exp =
       apply_renaming exp renaming
     in
-    subst_params params exp (List.map normalize apply_args) |> normalize
+    let result = subst_params params exp (List.map normalize apply_args)
+    in
+    normalize result
   | _ ->
     let continuation =
       (match continuation with
@@ -686,12 +686,6 @@ and normalize_static_const_group (phi : Bound_codelike.Pattern.t list)
 and normalize_set_of_closures (phi : Bound_for_let.t)
       {function_decls; value_slots; alloc_mode}
   : set_of_closures =
-  let keys = Function_slot.Lmap.keys function_decls.in_order in
-  Format.fprintf Format.std_formatter "normalize_set_of_closures %a "
-    Bound_for_let.print phi;
-  let _ = List.map (Function_slot.print Format.std_formatter) keys
-  in
-  Format.fprintf Format.std_formatter "@.";
   let value_slots =
     Value_slot.Map.map
       (fun (val_expr, kind) -> (normalize_value_expr val_expr, kind))
@@ -719,15 +713,12 @@ and normalize_set_of_closures (phi : Bound_for_let.t)
   let in_order =
     Function_slot.Lmap.map normalize_function_expr in_order
   in
-  let set =
-    { function_decls =
-        { funs =
-            Function_slot.Map.of_list (Function_slot.Lmap.bindings in_order);
-          in_order}
-    ; value_slots = Value_slot.Map.empty
-    ; alloc_mode = alloc_mode }
-  in
-  set
+  { function_decls =
+      { funs =
+          Function_slot.Map.of_list (Function_slot.Lmap.bindings in_order);
+        in_order}
+  ; value_slots = Value_slot.Map.empty
+  ; alloc_mode = alloc_mode }
 
 (* For every occurrence of the "my_closure" argument in [fn_expr],
    substitute in [Slot(phi, clo)] *)
@@ -753,12 +744,7 @@ and subst_my_closure (phi : Bound_for_let.t) (slot : Function_slot.t)
                      (fun _ simple  ->
                         if (Simple.same (Simple.var (Bound_var.var bff)) simple)
                         then
-                          (
-                           (* Format.fprintf Format.std_formatter
-                            *  "Exp found: %a,@.my_closure variable: %a @.@."
-                            *  print (Named (Static_consts [Code fn_expr]))
-                            *  Bound_var.print bff; *)
-                           Named (Slot (phi, Function_slot slot)))
+                          Named (Slot (phi, Function_slot slot))
                         else (Named (Simple simple))) () body
                  in
                 Core_lambda.create id bound
