@@ -1,11 +1,10 @@
-let $camlTests13_simple2__first_const29 = Block 0 () in
 let code size(6)
       bar_0 (foo, param : imm tagged) my_closure my_region my_depth -> k * k1 =
   apply foo (0) &my_region -> k * k1
 in
 let code size(6)
       partial_bar_2 (param1) my_closure my_region my_depth -> k * k1 =
-  let foo = %project_value_slot partial_bar.my_closure my_closure in
+  let foo = %project_value_slot partial_bar.foo_closure my_closure in
   let bar = %project_value_slot partial_bar.bar my_closure in
   apply direct(bar_0) bar (foo, param1) &my_region -> k * k1
 in
@@ -14,7 +13,7 @@ let code rec size(21)
   let next_depth = rec_info (succ my_depth) in
   let bar = %project_value_slot foo.bar_1 my_closure in
   (let partial_bar = closure partial_bar_2 @partial_bar
-   with { bar = bar; my_closure = my_closure ~ depth my_depth -> next_depth }
+   with { bar = bar; foo_closure = my_closure ~ depth my_depth -> next_depth }
    in
    cont k2 (partial_bar))
     where k2 (g) =
