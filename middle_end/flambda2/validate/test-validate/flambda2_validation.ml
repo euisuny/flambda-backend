@@ -259,8 +259,8 @@ let () =
   (* simplify_term "tests13_simple3.fl";
    * normalize_term "tests13_simple3.fl"; *)
 
-  simplify_term "tests13.fl";
-  normalize_term "tests13.fl";
+  simplify_term "tests12.fl";
+  normalize_term "tests12.fl";
 
   (* 3. [LetCont : Recursive case] *)
 
