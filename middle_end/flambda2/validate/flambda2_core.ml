@@ -1365,7 +1365,6 @@ let static_const_or_code_fix (fix : core_exp -> core_exp)
          anon}
     in
     e
-
   | Deleted_code -> e
   | Static_const const ->
     Static_const (static_const_fix fix f arg const)
