@@ -45,10 +45,12 @@ let run_validator filename : Outcome.t =
 
   try
     (if Equiv.core_eq src_core tgt_core then
-       (Format.eprintf "%s PASS (validated)@." filename;
+       (Format.eprintf "fλ2: %s PASS@." filename;
         Success)
-     else Failure) with
-
+     else
+       (Format.eprintf "fλ2: %s FAIL@." filename;
+        Failure)
+    ) with
   | _ -> Error
 
 let _ =

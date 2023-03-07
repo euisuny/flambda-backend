@@ -106,9 +106,9 @@ let validate filename (src : Flambda_unit.t) (res : Flambda_unit.t) =
   in
   if (Equiv.core_eq src_core res_core)
   then
-    Format.eprintf "%s PASS (validated)@." filename
+    Format.eprintf "fλ2: %s PASS@." filename
   else
-    Format.eprintf "%s FAIL (validated)@." filename
+    Format.eprintf "fλ2: %s FAIL@." filename
 
 let lambda_to_cmm ~ppf_dump:ppf ~prefixname ~filename ~keep_symbol_tables
     (program : Lambda.program) =
