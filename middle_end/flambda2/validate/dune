@@ -15,6 +15,8 @@
     -open
     Flambda2_bound_identifiers
     -open
+    Flambda2_core_bound_identifiers
+    -open
     Flambda2_cmx
     -open
     Flambda2_identifiers
@@ -40,6 +42,7 @@
    ocamlcommon
    ocamlbytecomp
    ocamloptcomp
+   flambda2_core_bound_identifiers
    flambda2_cmx
    flambda2_parser
    flambda2_algorithms
