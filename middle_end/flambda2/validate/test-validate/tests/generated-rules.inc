@@ -1,3 +1,7 @@
+; Generated automatically by this directory's dune.
+; Run inc.sh to generate a new .inc file.
+
+(alias (name regen))
 
  (rule
  (alias runtest)
@@ -5,13 +9,6 @@
   (action
    (progn
    (run ../tools/flvalidate.exe tests13.fl))))
-
- (rule
- (alias runtest)
-  (deps let2.fl)
-  (action
-   (progn
-   (run ../tools/flvalidate.exe let2.fl))))
 
  (rule
  (alias runtest)
@@ -43,13 +40,6 @@
 
  (rule
  (alias runtest)
-  (deps let.fl)
-  (action
-   (progn
-   (run ../tools/flvalidate.exe let.fl))))
-
- (rule
- (alias runtest)
   (deps noinline.fl)
   (action
    (progn
@@ -75,6 +65,13 @@
   (action
    (progn
    (run ../tools/flvalidate.exe tests13_simple2.fl))))
+
+ (rule
+ (alias runtest)
+  (deps tests12.fl)
+  (action
+   (progn
+   (run ../tools/flvalidate.exe tests12.fl))))
 
  (rule
  (alias runtest)
@@ -134,24 +131,10 @@
 
  (rule
  (alias runtest)
-  (deps foo.fl)
-  (action
-   (progn
-   (run ../tools/flvalidate.exe foo.fl))))
-
- (rule
- (alias runtest)
   (deps length.fl)
   (action
    (progn
    (run ../tools/flvalidate.exe length.fl))))
-
- (rule
- (alias runtest)
-  (deps let3.fl)
-  (action
-   (progn
-   (run ../tools/flvalidate.exe let3.fl))))
 
  (rule
  (alias runtest)

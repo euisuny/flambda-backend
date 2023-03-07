@@ -1,4 +1,3 @@
-let get_module_info = Flambda2.get_module_info
 let print = Flambda2_core.print
 
 (** Parsing **)
@@ -22,35 +21,29 @@ module Outcome = struct
 
   let to_exit_code = function
     | Success -> 0
+    | Failure when exit_normally_on_failure -> 0
     | Failure -> 1
     | Error -> 2
 end
 
 let run_validator filename : Outcome.t =
   let comp_unit =
-    Parse_flambda.make_compilation_unit ~extension:".fl" ~filename () in
+    Parse_flambda.make_compilation_unit ~extension ~filename:file () in
   Compilation_unit.set_current (Some comp_unit);
-  let fl_output :Flambda_unit.t = parse_flambda filename in
+  let fl_output :Flambda_unit.t = parse_flambda (cwd ^ test_dir ^ file) in
   let cmx_loader = Flambda_cmx.create_loader ~get_module_info in
 
   (* IY: What is [round]? *)
   let {Simplify.unit = simplify_result ; _ } =
     Simplify.run ~cmx_loader ~round:0 fl_output in
 
-  let src_core = Translate.flambda_unit_to_core fl_output in
-  let tgt_core = Translate.flambda_unit_to_core simplify_result in
+  let src_core = flambda_unit_to_core fl_output in
+  let tgt_core = flambda_unit_to_core simplify_result in
 
-  let src_core = src_core |> Normalize.normalize in
-  let tgt_core = tgt_core |> Normalize.normalize in
+  let src_core = src_core |> normalize in
+  let tgt_core = tgt_core |> normalize in
 
-  try
-    (if Equiv.core_eq src_core tgt_core then
-       (Format.eprintf "fλ2: %s PASS@." filename;
-        Success)
-     else
-       (Format.eprintf "fλ2: %s FAIL@." filename;
-        Failure)
-    ) with
+  try (if Equiv.core_eq src_core tgt_core then Success else Failure) with
   | _ -> Error
 
 let _ =

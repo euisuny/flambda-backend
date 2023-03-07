@@ -2,14 +2,56 @@ open! Flambda
 open! Flambda2_core
 open! Translate
 
-let _std_print = Format.fprintf Format.std_formatter "@.TERM:%a@." print
-
 (** Normalization
 
     - CBV-style reduction for [let] and [letcont] expressions
     - Assumes that the [typeopt/value_kind] flag is [false] *)
 
 (* Substitution funtions for β-reduction *)
+let rec apply_directed_renaming
+      (cont_id: (Continuation.t * Continuation.t) list) (exp : core_exp): core_exp =
+  let f_res : Apply_expr.Result_continuation.t -> continuation_expr =
+    (fun x ->
+       match x with
+       | Return id ->
+         (match List.assoc_opt id cont_id with
+          | Some id -> Cont_id (Return id)
+          | _ -> Cont_id x)
+       | _ -> Cont_id x)
+  in
+  let f_exn =
+    (fun id ->
+       match List.assoc_opt id cont_id with
+       | Some id -> Cont_id id
+       | _ -> Cont_id id)
+  in
+  let f_cont =
+    (fun id ->
+       match List.assoc_opt id cont_id with
+       | Some id -> id
+       | _ -> id)
+  in
+  match exp with
+  | Named e ->
+    named_fix (apply_directed_renaming cont_id)
+      (fun _ x -> Named (Simple x)) () e
+  | Let e ->
+    let_fix (apply_directed_renaming cont_id) e
+  | Let_cont e ->
+    let_cont_fix (apply_directed_renaming cont_id) e
+  | Apply e ->
+    apply_fix
+      (apply_directed_renaming cont_id)
+      f_res
+      f_exn
+      e
+  | Apply_cont e ->
+    apply_cont_fix' (apply_directed_renaming cont_id) f_cont e
+  | Lambda e ->
+    lambda_fix (apply_directed_renaming cont_id) e
+  | Switch e ->
+    switch_fix (apply_directed_renaming cont_id) e
+  | Invalid _ -> exp
 
 (* [Let-β]
       e[bound\let_body] *)
@@ -25,6 +67,8 @@ let rec subst_pattern ~(bound : Bound_for_let.t) ~(let_body : core_exp)
           (fun (bound, let_body) s ->
             let bound = Simple.var (Bound_var.var bound) in
             if (Simple.equal s bound) then let_body else Named (Simple s))
+          (fun x -> Cont_id x)
+          (fun x -> Cont_id x)
           (bound, let_body) e)
   | Static bound ->
     subst_static_list ~bound ~let_body e
@@ -38,7 +82,11 @@ and subst_singleton_set_of_closures ~(bound: Bound_var.t)
   | Let_cont e ->
     let_cont_fix (subst_singleton_set_of_closures ~bound ~clo) e
   | Apply e ->
-    apply_fix (subst_singleton_set_of_closures ~bound ~clo) e
+    apply_fix
+      (subst_singleton_set_of_closures ~bound ~clo)
+      (fun x -> Cont_id x)
+      (fun x -> Cont_id x)
+      e
   | Apply_cont e ->
     apply_cont_fix (subst_singleton_set_of_closures ~bound ~clo) e
   | Lambda e ->
@@ -112,7 +160,11 @@ and subst_pattern_static
   | Let_cont e ->
     let_cont_fix (subst_pattern_static ~bound ~let_body) e
   | Apply e ->
-    apply_fix (subst_pattern_static ~bound ~let_body) e
+    apply_fix
+      (subst_pattern_static ~bound ~let_body)
+      (fun x -> Cont_id x)
+      (fun x -> Cont_id x)
+      e
   | Apply_cont e ->
     apply_cont_fix (subst_pattern_static ~bound ~let_body) e
   | Lambda e ->
@@ -302,52 +354,35 @@ let subst_params
     (fun () s ->
       match List.assoc_opt s param_args with
       | Some arg_v -> arg_v
-      | None -> Named (Simple s)) () e
+      | None -> Named (Simple s))
+    (fun x -> Cont_id x)
+    (fun x -> Cont_id x)
+    () e
 
 (* [LetCont-β] *)
 let rec subst_cont (cont_e1: core_exp) (k: Bound_continuation.t)
           (args: Bound_parameters.t) (cont_e2: core_exp) : core_exp =
+  let f_res (cont : Apply_expr.Result_continuation.t) : continuation_expr =
+    match cont with
+    | Return cont ->
+      if Continuation.equal cont k
+      then Handler (Core_continuation_handler.create args cont_e2)
+      else Cont_id (Return cont)
+    | _ -> Cont_id cont
+  in
+  let f_exn (cont : Continuation.t) : exn_continuation_expr =
+    if Continuation.equal cont k
+    then Handler (Core_continuation_handler.create args cont_e2)
+    else Cont_id cont
+  in
   match cont_e1 with
   | Named _ -> cont_e1
   | Let e ->
     let_fix (fun e -> subst_cont e k args cont_e2) e
   | Let_cont e ->
     let_cont_fix (fun e -> subst_cont e k args cont_e2) e
-  | Apply {callee; continuation; exn_continuation; apply_args} ->
-    let continuation =
-      (match continuation with
-       | Cont_id (Return cont) ->
-         if Continuation.equal cont k
-         then Handler (Core_continuation_handler.create args cont_e2)
-         else continuation
-       | Handler handler ->
-         let args, e2 =
-           Core_continuation_handler.pattern_match handler
-             (fun bound body -> (bound, body))
-         in
-         let e2 = subst_cont e2 k args cont_e2 in
-         Handler (Core_continuation_handler.create args e2)
-       | _ -> Misc.fatal_error "Expected return continuation")
-    in
-    let exn_continuation =
-      (match exn_continuation with
-       | Cont_id cont ->
-         if Continuation.equal cont k
-         then Handler (Core_continuation_handler.create args cont_e2)
-         else exn_continuation
-       | Handler handler ->
-         let args, e2 =
-           Core_continuation_handler.pattern_match handler
-             (fun bound body -> (bound, body))
-         in
-         let e2 = subst_cont e2 k args cont_e2 in
-         Handler (Core_continuation_handler.create args e2))
-    in
-    Apply
-      {callee = subst_cont callee k args cont_e2;
-       continuation; exn_continuation;
-       apply_args =
-         List.map (fun e1 -> subst_cont e1 k args cont_e2) apply_args;}
+  | Apply e ->
+    apply_fix (fun e -> subst_cont e k args cont_e2) f_res f_exn e
   | Apply_cont {k = cont; args = concrete_args} ->
     if Continuation.equal cont k
     then subst_params args cont_e2 concrete_args
@@ -410,7 +445,6 @@ and normalize_let let_abst body : core_exp =
        let x = v in e1 ⟶ e2 [x\v] *)
     subst_pattern ~bound:x ~let_body:e1 e2
 
-
 and normalize_let_cont (e:let_cont_expr) : core_exp =
   match e with
   | Non_recursive {handler; body} ->
@@ -425,187 +459,88 @@ and normalize_let_cont (e:let_cont_expr) : core_exp =
        e1 where k args = e2 ⟶ e1 [k \ λ args. e2] *)
     let result = subst_cont e1 k args e2 in
     result
-  | Recursive _handlers -> failwith "Unimplemented_recursive"
+  | Recursive _handlers -> failwith "Unimplemented_recursive "
+
+and normalize_apply_no_beta_redex callee continuation exn_continuation apply_args =
+  let continuation =
+     (match continuation with
+      | Cont_id _ -> continuation
+      | Handler handler -> Handler (normalize_continuation_handler handler))
+   in
+   let exn_continuation =
+     (match exn_continuation with
+      | Cont_id _ -> exn_continuation
+      | Handler handler -> Handler (normalize_continuation_handler handler))
+   in
+   Apply {callee;continuation;exn_continuation;apply_args}
+
+and normalize_apply_function_decls function_decls
+      callee continuation exn_continuation apply_args =
+  (let in_order = function_decls.in_order
+     in
+     match Function_slot.Lmap.get_singleton in_order with
+     | Some (_, Exp (Lambda exp)) ->
+        normalize_apply_lambda exp continuation exn_continuation apply_args
+     | _ ->
+       normalize_apply_no_beta_redex
+         callee continuation exn_continuation apply_args)
+
+and normalize_apply_code expr continuation exn_continuation apply_args =
+  let _, lambda_expr =
+    Core_function_params_and_body.pattern_match
+      expr ~f:(fun my_closure t -> my_closure, t)
+  in
+  normalize_apply_lambda lambda_expr continuation exn_continuation apply_args
+
+and normalize_apply_lambda lambda_expr continuation exn_continuation apply_args =
+  let bound, exp =
+    Core_lambda.pattern_match lambda_expr ~f:(fun b body -> b, body)
+  in
+  let params = bound.params
+  in
+  let exp =
+    (match continuation with
+     | Cont_id (Apply_expr.Result_continuation.Return continuation) ->
+        (apply_directed_renaming [(bound.return_continuation, continuation)] exp)
+      | Handler handler ->
+        let args, e2 =
+          Core_continuation_handler.pattern_match handler
+            (fun bound body -> (bound, body))
+        in
+        let exp = subst_cont exp bound.return_continuation args e2
+        in
+        exp
+      | _ -> Misc.fatal_error "Expected result continuation")
+  in
+  let exp =
+    (match exn_continuation with
+      | Cont_id continuation ->
+        (apply_directed_renaming [(bound.exn_continuation, continuation)] exp)
+      | Handler handler ->
+        let args, e2 =
+          Core_continuation_handler.pattern_match handler
+            (fun bound body -> (bound, body))
+        in
+        let exp = subst_cont exp bound.exn_continuation args e2
+        in
+        exp)
+  in
+  let result = subst_params params exp (List.map normalize apply_args)
+  in
+  normalize result
 
 and normalize_apply callee continuation exn_continuation apply_args : core_exp =
   match callee with
   | Named (Closure_expr (_, _,
                          {function_decls; value_slots = _; alloc_mode = _})) ->
-    (let in_order = function_decls.in_order
-     in
-     match Function_slot.Lmap.get_singleton in_order with
-     | Some (_, Exp (Lambda exp)) ->
-        (let bound, exp =
-          Core_lambda.pattern_match exp ~f:(fun x y -> x,y)
-        in
-        let params = bound.params
-        in
-        let renaming = Renaming.empty
-        in
-        let exp, renaming =
-          (match continuation with
-            | Cont_id (Apply_expr.Result_continuation.Return continuation) ->
-              (exp, Renaming.add_continuation renaming
-                (bound.return_continuation)
-                continuation)
-            | Handler handler ->
-              let args, e2 =
-                Core_continuation_handler.pattern_match handler
-                  (fun bound body -> (bound, body))
-              in
-              let exp = subst_cont exp bound.return_continuation args e2
-              in
-              (exp, renaming)
-            | _ -> Misc.fatal_error "Expected result continuation"
-          )
-        in
-        let exp, renaming =
-          (match exn_continuation with
-            | Cont_id exn_continuation ->
-              exp, Renaming.add_continuation renaming
-                (bound.exn_continuation)
-                exn_continuation
-            | Handler handler ->
-              let args, e2 =
-                Core_continuation_handler.pattern_match handler
-                  (fun bound body -> (bound, body))
-              in
-              let exp = subst_cont exp bound.return_continuation args e2
-              in
-              (exp, renaming))
-        in
-        let exp =
-          apply_renaming exp renaming
-        in
-        let result =
-          subst_params params exp (List.map normalize apply_args)
-        in
-        normalize result)
-     | _ ->
-       (let continuation =
-         (match continuation with
-          | Cont_id _ -> continuation
-          | Handler handler -> Handler (normalize_continuation_handler handler))
-       in
-       let exn_continuation =
-         (match exn_continuation with
-          | Cont_id _ -> exn_continuation
-          | Handler handler -> Handler (normalize_continuation_handler handler))
-       in
-       Apply {callee;continuation;exn_continuation;apply_args}
-      )
-    )
+    normalize_apply_function_decls function_decls
+      callee continuation exn_continuation apply_args
   | Named (Static_consts [Code {expr; anon=_}]) ->
-    let _, lambda_expr =
-      Core_function_params_and_body.pattern_match
-        expr ~f:(fun my_closure t -> my_closure, t)
-    in
-    let bound, exp =
-      Core_lambda.pattern_match lambda_expr
-        ~f:(fun b body -> b, body)
-    in
-    let return_continuation2 = bound.return_continuation
-    in
-    let exn_continuation2 = bound.exn_continuation
-    in
-    let params = bound.params
-    in
-    let renaming = Renaming.empty
-    in
-    let exp, renaming =
-      (match continuation with
-       | Cont_id (Apply_expr.Result_continuation.Return continuation) ->
-          (exp, Renaming.add_continuation renaming
-            return_continuation2
-            continuation)
-       | Handler handler ->
-         let args, e2 =
-           Core_continuation_handler.pattern_match handler
-             (fun bound body -> (bound, body))
-         in
-         let exp = subst_cont exp bound.return_continuation args e2
-         in
-         (exp, renaming)
-       | _ -> Misc.fatal_error "Expected result continuation")
-    in
-    let exp, renaming =
-      (match exn_continuation with
-       | Cont_id continuation ->
-         (exp, Renaming.add_continuation renaming
-           exn_continuation2
-           continuation)
-       | Handler handler ->
-         let args, e2 =
-           Core_continuation_handler.pattern_match handler
-             (fun bound body -> (bound, body))
-         in
-         let exp = subst_cont exp bound.return_continuation args e2
-         in
-         (exp, renaming))
-    in
-    let exp =
-      apply_renaming exp renaming
-    in
-    let result = subst_params params exp (List.map normalize apply_args)
-    in
-    normalize result
-  | Lambda exp ->
-    let bound, exp =
-      Core_lambda.pattern_match exp ~f:(fun x y -> x,y)
-    in
-    let params = bound.params
-    in
-    let renaming = Renaming.empty
-    in
-    let exp, renaming =
-      (match continuation with
-       | Cont_id (Apply_expr.Result_continuation.Return continuation) ->
-         (exp, Renaming.add_continuation renaming
-           (bound.return_continuation)
-           continuation)
-       | Handler handler ->
-         let args, e2 =
-           Core_continuation_handler.pattern_match handler
-             (fun bound body -> (bound, body))
-         in
-         let exp = subst_cont exp bound.return_continuation args e2
-         in
-         (exp, renaming)
-       | _ -> Misc.fatal_error "Expected result continuation")
-    in
-    let exp, renaming =
-      (match exn_continuation with
-       | Cont_id exn_continuation ->
-         (exp, Renaming.add_continuation renaming
-           (bound.exn_continuation)
-           exn_continuation)
-       | Handler handler ->
-         let args, e2 =
-           Core_continuation_handler.pattern_match handler
-             (fun bound body -> (bound, body))
-         in
-         let exp = subst_cont exp bound.return_continuation args e2
-         in
-         (exp, renaming))
-    in
-    let exp =
-      apply_renaming exp renaming
-    in
-    let result = subst_params params exp (List.map normalize apply_args)
-    in
-    normalize result
+    normalize_apply_code expr continuation exn_continuation apply_args
+  | Lambda expr ->
+    normalize_apply_lambda expr continuation exn_continuation apply_args
   | _ ->
-    let continuation =
-      (match continuation with
-       | Cont_id _ -> continuation
-       | Handler handler -> Handler (normalize_continuation_handler handler))
-    in
-    let exn_continuation =
-      (match exn_continuation with
-       | Cont_id _ -> exn_continuation
-       | Handler handler -> Handler (normalize_continuation_handler handler))
-    in
-    Apply {callee;continuation;exn_continuation;apply_args}
+    normalize_apply_no_beta_redex callee continuation exn_continuation apply_args
 
 and normalize_continuation_handler (e : continuation_handler) =
   Core_continuation_handler.pattern_match e
@@ -794,12 +729,15 @@ and subst_my_closure (phi : Bound_for_let.t) (slot : Function_slot.t)
                         if (Simple.same (Simple.var (Bound_var.var bff)) simple)
                         then
                           Named (Slot (phi, Function_slot slot))
-                        else (Named (Simple simple))) () body
+                        else (Named (Simple simple)))
+                     (fun x -> Cont_id x)
+                     (fun x -> Cont_id x)
+                     () body
                  in
                 Core_lambda.create bound (subst_my_closure_body clo body)))))
   | _ -> Named (Static_consts [Code {expr=fn_expr; anon}])
 
-(* N.B. [PROJECTION REDUCTION]
+(* N.B. [Projection reduction]
     When we substitute in a set of closures for primitives,
     (Here is where the `Projection` primitives occur),
     we eliminate the projection. *)
@@ -811,7 +749,11 @@ and subst_my_closure_body (clo: set_of_closures) (e : core_exp) : core_exp =
   | Let_cont e ->
     let_cont_fix (subst_my_closure_body clo) e
   | Apply e ->
-    apply_fix (subst_my_closure_body clo) e
+    apply_fix
+      (subst_my_closure_body clo)
+      (fun x -> Cont_id x)
+      (fun x -> Cont_id x)
+      e
   | Apply_cont e ->
     apply_cont_fix (subst_my_closure_body clo) e
   | Lambda e ->
@@ -887,14 +829,3 @@ and normalize_named (var: Bound_for_let.t) (body : named)
        (Static (Bound_codelike.create phi), exp)
      | _ -> Misc.fatal_error "Expected bound static variables")
   | Prim v -> (var, Eval_prim.eval v)
-
-let simulation_relation src tgt =
-  let {Simplify.unit = tgt; _} = tgt in
-  let src_core = Flambda_unit.body src |> flambda_expr_to_core in
-  let tgt_core = Flambda_unit.body tgt |> flambda_expr_to_core in
-  Equiv.core_eq src_core tgt_core
-
-(** Top-level validator *)
-let validate ~cmx_loader ~round src =
-  let tgt = Simplify.run ~cmx_loader ~round src in
-  simulation_relation src tgt

@@ -15,6 +15,8 @@
     -open
     Flambda2_bound_identifiers
     -open
+    Flambda2_core_bound_identifiers
+    -open
     Flambda2_cmx
     -open
     Flambda2_identifiers
@@ -29,8 +31,6 @@
     -open
     Flambda2_terms
     -open
-    Flambda2_simplify
-    -open
     Flambda2_lattices
     -open
     Flambda2_parser
@@ -42,10 +42,9 @@
    ocamlcommon
    ocamlbytecomp
    ocamloptcomp
+   flambda2_core_bound_identifiers
    flambda2_cmx
    flambda2_parser
-   flambda2_simplify
-   flambda2_simplify_shared
    flambda2_algorithms
    flambda2_terms
 ))

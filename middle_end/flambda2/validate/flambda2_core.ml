@@ -1088,7 +1088,7 @@ module Core_continuation_handler = struct
         f params body1 body2)
 end
 
-module  Core_letcont_body = struct
+module Core_letcont_body = struct
   module A = Name_abstraction.Make (Bound_continuation) (T0)
   type t = (Bound_continuation.t, core_exp) Name_abstraction.t
   let create = A.create
@@ -1225,12 +1225,36 @@ let let_cont_fix (f : core_exp -> core_exp) (e : let_cont_expr) =
     in
     Let_cont (Recursive body)
 
+let handler_fix (f : core_exp -> core_exp)
+      (handler : continuation_handler) =
+  Core_continuation_handler.pattern_match handler
+    (fun param exp -> Core_continuation_handler.create param (f exp))
+
 let apply_fix (f : core_exp -> core_exp)
+      (f_cont : Apply_expr.Result_continuation.t -> continuation_expr)
+      (f_exn_cont : Continuation.t -> exn_continuation_expr)
       ({callee; continuation; exn_continuation; apply_args} : apply_expr) =
+  let continuation =
+    match continuation with
+    | Cont_id cont -> f_cont cont
+    | Handler handler -> Handler (handler_fix f handler)
+  in
+  let exn_continuation =
+    match exn_continuation with
+    | Cont_id cont -> f_exn_cont cont
+    | Handler handler -> Handler (handler_fix f handler)
+  in
   Apply
     {callee = f callee;
      continuation; exn_continuation;
      apply_args = List.map f apply_args;}
+
+let apply_cont_fix' (f : core_exp -> core_exp)
+      (f_cont : Continuation.t -> Continuation.t)
+      ({k; args} : apply_cont_expr) =
+  Apply_cont
+    {k = f_cont k;
+     args = List.map f args}
 
 let apply_cont_fix (f : core_exp -> core_exp)
       ({k; args} : apply_cont_expr) =
@@ -1405,19 +1429,19 @@ let named_fix (fix : core_exp -> core_exp)
   | Slot _ | Rec_info _ -> Named e
 
 let rec core_fmap
-          (f : 'a -> Simple.t -> core_exp)
+          (f : 'a -> Simple.t -> core_exp) f_res f_exn
           (arg : 'a) (e : core_exp) : core_exp =
   match e with
   | Named e ->
-    named_fix (core_fmap f arg) f arg e
+    named_fix (core_fmap f f_res f_exn arg) f arg e
   | Let e ->
-    let_fix (core_fmap f arg) e
+    let_fix (core_fmap f f_res f_exn arg) e
   | Let_cont e ->
-    let_cont_fix (core_fmap f arg) e
+    let_cont_fix (core_fmap f f_res f_exn arg) e
   | Apply e ->
-    apply_fix (core_fmap f arg) e
+    apply_fix (core_fmap f f_res f_exn arg) f_res f_exn e
   | Apply_cont e ->
-    apply_cont_fix (core_fmap f arg) e
-  | Lambda e -> lambda_fix (core_fmap f arg) e
-  | Switch e -> switch_fix (core_fmap f arg) e
+    apply_cont_fix (core_fmap f f_res f_exn arg) e
+  | Lambda e -> lambda_fix (core_fmap f f_res f_exn arg) e
+  | Switch e -> switch_fix (core_fmap f f_res f_exn arg) e
   | Invalid _ -> e

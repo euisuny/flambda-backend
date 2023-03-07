@@ -1,6 +1,7 @@
 let [@ocamlformat "disable"] print_header () =
   Format.printf
 {|; Generated automatically by this directory's dune.
+; Run inc.sh to generate a new .inc file.
 
 (alias (name regen))
 |}
@@ -27,4 +28,5 @@ let _ =
   let run basename =
     print_test_rule ~test_runner:"../tools/flvalidate.exe" ~file:basename
   in
+  print_header ();
   List.map run fl_files

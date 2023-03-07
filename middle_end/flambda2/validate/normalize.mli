@@ -35,5 +35,3 @@
    alpha-equivalence. **)
 
 val normalize : Flambda2_core.core_exp -> Flambda2_core.core_exp
-
-val validate : cmx_loader:Flambda_cmx.loader -> round:int -> Flambda_unit.t -> bool
