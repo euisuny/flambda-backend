@@ -1,3 +1,0 @@
-(let $camlFoo = Block 0 (42) in cont k ($camlFoo))
-  where k define_root_symbol (arg) =
-    cont done (arg)
