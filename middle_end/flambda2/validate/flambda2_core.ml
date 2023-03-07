@@ -1225,8 +1225,25 @@ let let_cont_fix (f : core_exp -> core_exp) (e : let_cont_expr) =
     in
     Let_cont (Recursive body)
 
+let handler_fix (f : core_exp -> core_exp)
+      (handler : continuation_handler) =
+  Core_continuation_handler.pattern_match handler
+    (fun param exp -> Core_continuation_handler.create param (f exp))
+
 let apply_fix (f : core_exp -> core_exp)
+      (f_cont : Apply_expr.Result_continuation.t -> continuation_expr)
+      (f_exn_cont : Continuation.t -> exn_continuation_expr)
       ({callee; continuation; exn_continuation; apply_args} : apply_expr) =
+  let continuation =
+    match continuation with
+    | Cont_id cont -> f_cont cont
+    | Handler handler -> Handler (handler_fix f handler)
+  in
+  let exn_continuation =
+    match exn_continuation with
+    | Cont_id cont -> f_exn_cont cont
+    | Handler handler -> Handler (handler_fix f handler)
+  in
   Apply
     {callee = f callee;
      continuation; exn_continuation;
@@ -1415,7 +1432,7 @@ let rec core_fmap
   | Let_cont e ->
     let_cont_fix (core_fmap f arg) e
   | Apply e ->
-    apply_fix (core_fmap f arg) e
+    apply_fix (core_fmap f arg) (fun x -> Cont_id x) (fun x -> Cont_id x) e
   | Apply_cont e ->
     apply_cont_fix (core_fmap f arg) e
   | Lambda e -> lambda_fix (core_fmap f arg) e

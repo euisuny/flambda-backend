@@ -1,3 +1,7 @@
+; Generated automatically by this directory's dune.
+; Run inc.sh to generate a new .inc file.
+
+(alias (name regen))
 
  (rule
  (alias runtest)

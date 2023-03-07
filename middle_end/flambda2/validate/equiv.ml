@@ -433,17 +433,16 @@ and equiv_continuation_expr env (e1 : continuation_expr) (e2 : continuation_expr
   | Handler e1, Handler e2 -> equiv_cont_handler env e1 e2
   | _, _ -> false
 
-(* TODO & FIXME : There is a bug with substituting in the right continuations *)
 and equiv_exn_continuation_expr env
       (e1 : exn_continuation_expr) (e2 : exn_continuation_expr) : eq =
   match e1, e2 with
-  | Cont_id _e1, Cont_id _e2 -> true
-    (* if Continuation.equal e1 e2 then true
-     * else
-     *   (Format.fprintf Format.std_formatter "%a <> %a"
-     *      Continuation.print e1
-     *      Continuation.print e2;
-     *    false) *)
+  | Cont_id e1, Cont_id e2 ->
+    if Continuation.equal e1 e2 then true
+    else
+      (Format.fprintf Format.std_formatter "%a <> %a"
+         Continuation.print e1
+         Continuation.print e2;
+       false)
   | Handler e1, Handler e2 -> equiv_cont_handler env e1 e2
   | _, _ -> false
 

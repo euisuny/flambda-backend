@@ -36,7 +36,11 @@ and subst_singleton_set_of_closures ~(bound: Bound_var.t)
   | Let_cont e ->
     let_cont_fix (subst_singleton_set_of_closures ~bound ~clo) e
   | Apply e ->
-    apply_fix (subst_singleton_set_of_closures ~bound ~clo) e
+    apply_fix
+      (subst_singleton_set_of_closures ~bound ~clo)
+      (fun x -> Cont_id x)
+      (fun x -> Cont_id x)
+      e
   | Apply_cont e ->
     apply_cont_fix (subst_singleton_set_of_closures ~bound ~clo) e
   | Lambda e ->
@@ -110,7 +114,11 @@ and subst_pattern_static
   | Let_cont e ->
     let_cont_fix (subst_pattern_static ~bound ~let_body) e
   | Apply e ->
-    apply_fix (subst_pattern_static ~bound ~let_body) e
+    apply_fix
+      (subst_pattern_static ~bound ~let_body)
+      (fun x -> Cont_id x)
+      (fun x -> Cont_id x)
+      e
   | Apply_cont e ->
     apply_cont_fix (subst_pattern_static ~bound ~let_body) e
   | Lambda e ->
@@ -305,47 +313,27 @@ let subst_params
 (* [LetCont-β] *)
 let rec subst_cont (cont_e1: core_exp) (k: Bound_continuation.t)
           (args: Bound_parameters.t) (cont_e2: core_exp) : core_exp =
+  let f_res (cont : Apply_expr.Result_continuation.t) : continuation_expr =
+    match cont with
+    | Return cont ->
+      if Continuation.equal cont k
+      then Handler (Core_continuation_handler.create args cont_e2)
+      else Cont_id (Return cont)
+    | _ -> Cont_id cont
+  in
+  let f_exn (cont : Continuation.t) : exn_continuation_expr =
+    if Continuation.equal cont k
+    then Handler (Core_continuation_handler.create args cont_e2)
+    else Cont_id cont
+  in
   match cont_e1 with
   | Named _ -> cont_e1
   | Let e ->
     let_fix (fun e -> subst_cont e k args cont_e2) e
   | Let_cont e ->
     let_cont_fix (fun e -> subst_cont e k args cont_e2) e
-  | Apply {callee; continuation; exn_continuation; apply_args} ->
-    let continuation =
-      (match continuation with
-       | Cont_id (Return cont) ->
-         if Continuation.equal cont k
-         then Handler (Core_continuation_handler.create args cont_e2)
-         else continuation
-       | Handler handler ->
-         let args, e2 =
-           Core_continuation_handler.pattern_match handler
-             (fun bound body -> (bound, body))
-         in
-         let e2 = subst_cont e2 k args cont_e2 in
-         Handler (Core_continuation_handler.create args e2)
-       | _ -> Misc.fatal_error "Expected return continuation")
-    in
-    let exn_continuation =
-      (match exn_continuation with
-       | Cont_id cont ->
-         if Continuation.equal cont k
-         then Handler (Core_continuation_handler.create args cont_e2)
-         else exn_continuation
-       | Handler handler ->
-         let args, e2 =
-           Core_continuation_handler.pattern_match handler
-             (fun bound body -> (bound, body))
-         in
-         let e2 = subst_cont e2 k args cont_e2 in
-         Handler (Core_continuation_handler.create args e2))
-    in
-    Apply
-      {callee = subst_cont callee k args cont_e2;
-       continuation; exn_continuation;
-       apply_args =
-         List.map (fun e1 -> subst_cont e1 k args cont_e2) apply_args;}
+  | Apply e ->
+    apply_fix (fun e -> subst_cont e k args cont_e2) f_res f_exn e
   | Apply_cont {k = cont; args = concrete_args} ->
     if Continuation.equal cont k
     then subst_params args cont_e2 concrete_args
@@ -711,7 +699,7 @@ and subst_my_closure (phi : Bound_for_let.t) (slot : Function_slot.t)
                 Core_lambda.create bound (subst_my_closure_body clo body)))))
   | _ -> Named (Static_consts [Code {expr=fn_expr; anon}])
 
-(* N.B. [PROJECTION REDUCTION]
+(* N.B. [Projection reduction]
     When we substitute in a set of closures for primitives,
     (Here is where the `Projection` primitives occur),
     we eliminate the projection. *)
@@ -723,7 +711,11 @@ and subst_my_closure_body (clo: set_of_closures) (e : core_exp) : core_exp =
   | Let_cont e ->
     let_cont_fix (subst_my_closure_body clo) e
   | Apply e ->
-    apply_fix (subst_my_closure_body clo) e
+    apply_fix
+      (subst_my_closure_body clo)
+      (fun x -> Cont_id x)
+      (fun x -> Cont_id x)
+      e
   | Apply_cont e ->
     apply_cont_fix (subst_my_closure_body clo) e
   | Lambda e ->
