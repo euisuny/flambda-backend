@@ -410,7 +410,6 @@ and normalize_let let_abst body : core_exp =
        let x = v in e1 ⟶ e2 [x\v] *)
     subst_pattern ~bound:x ~let_body:e1 e2
 
-
 and normalize_let_cont (e:let_cont_expr) : core_exp =
   match e with
   | Non_recursive {handler; body} ->
@@ -425,187 +424,102 @@ and normalize_let_cont (e:let_cont_expr) : core_exp =
        e1 where k args = e2 ⟶ e1 [k \ λ args. e2] *)
     let result = subst_cont e1 k args e2 in
     result
-  | Recursive _handlers -> failwith "Unimplemented_recursive"
+  | Recursive _handlers -> failwith "Unimplemented_recursive "
+
+and normalize_apply_no_beta_redex callee continuation exn_continuation apply_args =
+  let continuation =
+     (match continuation with
+      | Cont_id _ -> continuation
+      | Handler handler -> Handler (normalize_continuation_handler handler))
+   in
+   let exn_continuation =
+     (match exn_continuation with
+      | Cont_id _ -> exn_continuation
+      | Handler handler -> Handler (normalize_continuation_handler handler))
+   in
+   Apply {callee;continuation;exn_continuation;apply_args}
+
+and normalize_apply_function_decls function_decls
+      callee continuation exn_continuation apply_args =
+  (let in_order = function_decls.in_order
+     in
+     match Function_slot.Lmap.get_singleton in_order with
+     | Some (_, Exp (Lambda exp)) ->
+        normalize_apply_lambda exp continuation exn_continuation apply_args
+     | _ ->
+       normalize_apply_no_beta_redex
+         callee continuation exn_continuation apply_args)
+
+and normalize_apply_code expr continuation exn_continuation apply_args =
+  let _, lambda_expr =
+    Core_function_params_and_body.pattern_match
+      expr ~f:(fun my_closure t -> my_closure, t)
+  in
+  normalize_apply_lambda lambda_expr continuation exn_continuation apply_args
+
+and normalize_apply_lambda lambda_expr continuation exn_continuation apply_args =
+  let bound, exp =
+    Core_lambda.pattern_match lambda_expr
+      ~f:(fun b body -> b, body)
+  in
+  let return_continuation2 = bound.return_continuation
+  in
+  let exn_continuation2 = bound.exn_continuation
+  in
+  let params = bound.params
+  in
+  let renaming = Renaming.empty
+  in
+  let exp, renaming =
+    (match continuation with
+      | Cont_id (Apply_expr.Result_continuation.Return continuation) ->
+        (exp, Renaming.add_continuation renaming
+          return_continuation2
+          continuation)
+      | Handler handler ->
+        let args, e2 =
+          Core_continuation_handler.pattern_match handler
+            (fun bound body -> (bound, body))
+        in
+        let exp = subst_cont exp bound.return_continuation args e2
+        in
+        (exp, renaming)
+      | _ -> Misc.fatal_error "Expected result continuation")
+  in
+  let exp, renaming =
+    (match exn_continuation with
+      | Cont_id continuation ->
+        (exp, Renaming.add_continuation renaming
+          exn_continuation2
+          continuation)
+      | Handler handler ->
+        let args, e2 =
+          Core_continuation_handler.pattern_match handler
+            (fun bound body -> (bound, body))
+        in
+        let exp = subst_cont exp bound.return_continuation args e2
+        in
+        (exp, renaming))
+  in
+  let exp =
+    apply_renaming exp renaming
+  in
+  let result = subst_params params exp (List.map normalize apply_args)
+  in
+  normalize result
 
 and normalize_apply callee continuation exn_continuation apply_args : core_exp =
   match callee with
   | Named (Closure_expr (_, _,
                          {function_decls; value_slots = _; alloc_mode = _})) ->
-    (let in_order = function_decls.in_order
-     in
-     match Function_slot.Lmap.get_singleton in_order with
-     | Some (_, Exp (Lambda exp)) ->
-        (let bound, exp =
-          Core_lambda.pattern_match exp ~f:(fun x y -> x,y)
-        in
-        let params = bound.params
-        in
-        let renaming = Renaming.empty
-        in
-        let exp, renaming =
-          (match continuation with
-            | Cont_id (Apply_expr.Result_continuation.Return continuation) ->
-              (exp, Renaming.add_continuation renaming
-                (bound.return_continuation)
-                continuation)
-            | Handler handler ->
-              let args, e2 =
-                Core_continuation_handler.pattern_match handler
-                  (fun bound body -> (bound, body))
-              in
-              let exp = subst_cont exp bound.return_continuation args e2
-              in
-              (exp, renaming)
-            | _ -> Misc.fatal_error "Expected result continuation"
-          )
-        in
-        let exp, renaming =
-          (match exn_continuation with
-            | Cont_id exn_continuation ->
-              exp, Renaming.add_continuation renaming
-                (bound.exn_continuation)
-                exn_continuation
-            | Handler handler ->
-              let args, e2 =
-                Core_continuation_handler.pattern_match handler
-                  (fun bound body -> (bound, body))
-              in
-              let exp = subst_cont exp bound.return_continuation args e2
-              in
-              (exp, renaming))
-        in
-        let exp =
-          apply_renaming exp renaming
-        in
-        let result =
-          subst_params params exp (List.map normalize apply_args)
-        in
-        normalize result)
-     | _ ->
-       (let continuation =
-         (match continuation with
-          | Cont_id _ -> continuation
-          | Handler handler -> Handler (normalize_continuation_handler handler))
-       in
-       let exn_continuation =
-         (match exn_continuation with
-          | Cont_id _ -> exn_continuation
-          | Handler handler -> Handler (normalize_continuation_handler handler))
-       in
-       Apply {callee;continuation;exn_continuation;apply_args}
-      )
-    )
+    normalize_apply_function_decls function_decls
+      callee continuation exn_continuation apply_args
   | Named (Static_consts [Code {expr; anon=_}]) ->
-    let _, lambda_expr =
-      Core_function_params_and_body.pattern_match
-        expr ~f:(fun my_closure t -> my_closure, t)
-    in
-    let bound, exp =
-      Core_lambda.pattern_match lambda_expr
-        ~f:(fun b body -> b, body)
-    in
-    let return_continuation2 = bound.return_continuation
-    in
-    let exn_continuation2 = bound.exn_continuation
-    in
-    let params = bound.params
-    in
-    let renaming = Renaming.empty
-    in
-    let exp, renaming =
-      (match continuation with
-       | Cont_id (Apply_expr.Result_continuation.Return continuation) ->
-          (exp, Renaming.add_continuation renaming
-            return_continuation2
-            continuation)
-       | Handler handler ->
-         let args, e2 =
-           Core_continuation_handler.pattern_match handler
-             (fun bound body -> (bound, body))
-         in
-         let exp = subst_cont exp bound.return_continuation args e2
-         in
-         (exp, renaming)
-       | _ -> Misc.fatal_error "Expected result continuation")
-    in
-    let exp, renaming =
-      (match exn_continuation with
-       | Cont_id continuation ->
-         (exp, Renaming.add_continuation renaming
-           exn_continuation2
-           continuation)
-       | Handler handler ->
-         let args, e2 =
-           Core_continuation_handler.pattern_match handler
-             (fun bound body -> (bound, body))
-         in
-         let exp = subst_cont exp bound.return_continuation args e2
-         in
-         (exp, renaming))
-    in
-    let exp =
-      apply_renaming exp renaming
-    in
-    let result = subst_params params exp (List.map normalize apply_args)
-    in
-    normalize result
-  | Lambda exp ->
-    let bound, exp =
-      Core_lambda.pattern_match exp ~f:(fun x y -> x,y)
-    in
-    let params = bound.params
-    in
-    let renaming = Renaming.empty
-    in
-    let exp, renaming =
-      (match continuation with
-       | Cont_id (Apply_expr.Result_continuation.Return continuation) ->
-         (exp, Renaming.add_continuation renaming
-           (bound.return_continuation)
-           continuation)
-       | Handler handler ->
-         let args, e2 =
-           Core_continuation_handler.pattern_match handler
-             (fun bound body -> (bound, body))
-         in
-         let exp = subst_cont exp bound.return_continuation args e2
-         in
-         (exp, renaming)
-       | _ -> Misc.fatal_error "Expected result continuation")
-    in
-    let exp, renaming =
-      (match exn_continuation with
-       | Cont_id exn_continuation ->
-         (exp, Renaming.add_continuation renaming
-           (bound.exn_continuation)
-           exn_continuation)
-       | Handler handler ->
-         let args, e2 =
-           Core_continuation_handler.pattern_match handler
-             (fun bound body -> (bound, body))
-         in
-         let exp = subst_cont exp bound.return_continuation args e2
-         in
-         (exp, renaming))
-    in
-    let exp =
-      apply_renaming exp renaming
-    in
-    let result = subst_params params exp (List.map normalize apply_args)
-    in
-    normalize result
+    normalize_apply_code expr continuation exn_continuation apply_args
+  | Lambda expr ->
+    normalize_apply_lambda expr continuation exn_continuation apply_args
   | _ ->
-    let continuation =
-      (match continuation with
-       | Cont_id _ -> continuation
-       | Handler handler -> Handler (normalize_continuation_handler handler))
-    in
-    let exn_continuation =
-      (match exn_continuation with
-       | Cont_id _ -> exn_continuation
-       | Handler handler -> Handler (normalize_continuation_handler handler))
-    in
-    Apply {callee;continuation;exn_continuation;apply_args}
+    normalize_apply_no_beta_redex callee continuation exn_continuation apply_args
 
 and normalize_continuation_handler (e : continuation_handler) =
   Core_continuation_handler.pattern_match e
