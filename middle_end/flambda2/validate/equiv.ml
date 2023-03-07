@@ -233,17 +233,15 @@ and equiv_static_consts env
      Static_const (Immutable_string _)|
      Code _ | Deleted_code), _ -> compare const1 const2 = 0
 
-and equiv_code env code1 code2 =
-  Core_function_params_and_body.pattern_match_pair code1 code2
+and equiv_code env {expr=expr1;anon=_} {expr=expr2;anon=_} =
+  Core_function_params_and_body.pattern_match_pair expr1 expr2
     ~f:(fun
-         id1 id2
          ~return_continuation:_
          ~exn_continuation:_
          _params
          ~body1
          ~body2
          ~my_closure:_ ->
-         equiv_code_ids env id1 id2 &&
          equiv env body1 body2)
 
 and equiv_block env (tag1, mut1, fields1) (tag2, mut2, fields2) =
@@ -471,9 +469,8 @@ and equiv_cont _env (e1 : Continuation.t) (e2 : Continuation.t) : eq =
 
 and equiv_lambda env (e1 : lambda_expr) (e2 : lambda_expr) : eq =
   Core_lambda.pattern_match_pair e1 e2
-    ~f:(fun id1 id2
+    ~f:(fun
          ~return_continuation:_ ~exn_continuation:_ _params e1 e2 ->
-         equiv_code_ids env id1 id2 &&
          equiv env e1 e2)
 
 (* [switch] *)

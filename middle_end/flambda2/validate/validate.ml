@@ -427,8 +427,6 @@ and normalize_let_cont (e:let_cont_expr) : core_exp =
     result
   | Recursive _handlers -> failwith "Unimplemented_recursive"
 
-(* TODO: For cases where the return and exn continuations are not just continuation
-   ids, we need to substitute in those expressions in the callee code ! *)
 and normalize_apply callee continuation exn_continuation apply_args : core_exp =
   match callee with
   | Named (Closure_expr (_, _,
@@ -497,10 +495,10 @@ and normalize_apply callee continuation exn_continuation apply_args : core_exp =
        Apply {callee;continuation;exn_continuation;apply_args}
       )
     )
-  | Named (Static_consts [Code code]) ->
+  | Named (Static_consts [Code {expr; anon=_}]) ->
     let _, lambda_expr =
       Core_function_params_and_body.pattern_match
-        code  ~f:(fun my_closure t -> my_closure, t)
+        expr ~f:(fun my_closure t -> my_closure, t)
     in
     let bound, exp =
       Core_lambda.pattern_match lambda_expr
@@ -634,7 +632,7 @@ and normalize_static_const (phi : Bound_for_let.t) (const : static_const) : stat
 and normalize_static_const_or_code (phi : Bound_for_let.t)
       (const_or_code : static_const_or_code) : static_const_or_code =
   match const_or_code with
-  | Code code ->
+  | Code {expr=code; anon}->
     let (param, (bound, body)) =
       Core_function_params_and_body.pattern_match
         code
@@ -646,7 +644,7 @@ and normalize_static_const_or_code (phi : Bound_for_let.t)
       Core_function_params_and_body.create param
         (Core_lambda.create bound (normalize body))
     in
-    Code params_and_body
+    Code {expr=params_and_body; anon}
   | Static_const const -> Static_const (normalize_static_const phi const)
   | Deleted_code -> Deleted_code
 
@@ -666,14 +664,30 @@ and normalize_static_const_group (phi : Bound_codelike.Pattern.t list)
   in
   let phi_consts = List.combine phi consts
   in
+  Format.fprintf Format.std_formatter "[BEFORE]@.%a@." print
+    (Named (Static_consts consts));
   let set_of_closures, static_consts =
     List.partition (fun (_, x) -> is_static_set_of_closures x) phi_consts
   in
+  (* If the set of closures is non-empty, substitute in the list of code
+     blocks into the set of closures *)
   match set_of_closures with
   | [] -> (phi, Named (Static_consts consts))
   | _ ->
-    (let code, static_consts =
+   (let code, static_consts =
       List.partition (fun (_, x) -> is_code x) static_consts
+    in
+    let anon_code, code =
+      List.partition (fun (_, x) ->
+        match x with
+        | Code {expr=_; anon} -> anon
+        | _ -> false) code
+    in
+    (* Substitute in the anonymous functions first, partition them into
+       "anon-fn"-prefixed code and non anonymous functions.
+       This is because anonymous functions get its set of closures declaration
+       locally inside of a code block after simplification *)
+    let code = code @ anon_code
     in
     let process_set_of_closures (set : set_of_closures) =
       List.fold_left
@@ -715,6 +729,10 @@ and normalize_static_const_group (phi : Bound_codelike.Pattern.t list)
         (fun x -> match x with
            | Bound_codelike.Pattern.Code _ -> false | _ -> true) phi
     in
+    Format.fprintf Format.std_formatter
+      "[After]@.%a@.@.-----------------------------------@."
+      print (Named (Static_consts consts));
+
     (phi, Named (Static_consts consts)))
 
 (* N.B. This normalization is rather inefficient;
@@ -760,7 +778,7 @@ and normalize_set_of_closures (phi : Bound_for_let.t)
 (* For every occurrence of the "my_closure" argument in [fn_expr],
    substitute in [Slot(phi, clo)] *)
 and subst_my_closure (phi : Bound_for_let.t) (slot : Function_slot.t)
-      (fn_expr : function_params_and_body)
+      ({expr=fn_expr;anon} : function_params_and_body)
       (clo : set_of_closures) : core_exp =
   match phi with
   | Singleton var
@@ -785,7 +803,7 @@ and subst_my_closure (phi : Bound_for_let.t) (slot : Function_slot.t)
                         else (Named (Simple simple))) () body
                  in
                 Core_lambda.create bound (subst_my_closure_body clo body)))))
-  | _ -> Named (Static_consts [Code fn_expr])
+  | _ -> Named (Static_consts [Code {expr=fn_expr; anon}])
 
 (* N.B. [PROJECTION REDUCTION]
     When we substitute in a set of closures for primitives,

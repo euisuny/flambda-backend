@@ -226,22 +226,11 @@ let () =
   (* simplify_term "length.fl";
    * normalize_term "length.fl"; *)
 
-  (* More features of recursion *)
-  (* [Applying a mutually recursive function to concrete arguments] *)
-  (* Also has some nested non-recursive [letcont].. *)
-
-  (* simplify_term "lengthapply.fl";
-   * normalize_term "lengthapply.fl"; *)
-
-  (* ------------- NEW ---------------- *)
   (* 2. test11 :
      [Sets of closures that are mutually recursive to each other]
      [Indirect calls] *)
   (* simplify_term "tests11_simple.fl";
    * normalize_term "tests11_simple.fl"; *)
-
-  (* simplify_term "tests11.fl";
-   * normalize_term "tests11.fl"; *)
 
   (* [Anonymous functions] *)
   (* simplify_term "anon.fl";
@@ -255,12 +244,23 @@ let () =
   (* simplify_term "opaque_partial.fl";
    * normalize_term "opaque_partial.fl"; *)
 
-  simplify_term "tests13_simple.fl";
-  normalize_term "tests13_simple.fl";
+  (* simplify_term "tests13_simple.fl";
+   * normalize_term "tests13_simple.fl"; *)
 
-  (* ------------- TODO ---------------- *)
-  (* simplify_term "tests13.fl";
-   * normalize_term "tests13.fl"; *)
+  (* simplify_term "lengthapply.fl";
+   * normalize_term "lengthapply.fl"; *)
+
+  (* simplify_term "tests13_simple2.fl";
+   * normalize_term "tests13_simple2.fl"; *)
+
+  (* simplify_term "tests11.fl";
+   * normalize_term "tests11.fl"; *)
+
+  (* simplify_term "tests13_simple3.fl";
+   * normalize_term "tests13_simple3.fl"; *)
+
+  simplify_term "tests13.fl";
+  normalize_term "tests13.fl";
 
   (* 3. [LetCont : Recursive case] *)
 

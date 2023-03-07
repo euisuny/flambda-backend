@@ -68,7 +68,8 @@ and primitive =
   | Variadic of P.variadic_primitive * core_exp list
 
 and function_params_and_body =
-  (Bound_var.t, lambda_expr) Name_abstraction.t
+  { expr: (Bound_var.t, lambda_expr) Name_abstraction.t;
+    anon: bool }
 
 and static_const_or_code =
   | Code of function_params_and_body
@@ -373,9 +374,12 @@ and apply_renaming_static_const t renaming =
       if fields' == fields then t else Immutable_value_array fields'
     | Empty_array -> Empty_array
 
-and apply_renaming_function_params_and_body t renaming =
-  Name_abstraction.apply_renaming
-    (module Bound_var) t renaming ~apply_renaming_to_term:apply_renaming_lambda
+and apply_renaming_function_params_and_body {expr; anon} renaming =
+  { expr =
+      Name_abstraction.apply_renaming
+        (module Bound_var) expr renaming ~apply_renaming_to_term:apply_renaming_lambda;
+    anon = anon }
+
 
 (* renaming for [Let_cont] *)
 and apply_renaming_let_cont t renaming : let_cont_expr =
@@ -682,9 +686,9 @@ and print_static_const ppf (t : static_const) : unit =
     fprintf ppf "(Immutable_string@ %S)"
       s
 
-and print_function_params_and_body ppf (t:function_params_and_body) =
+and print_function_params_and_body ppf ({expr;anon=_}:function_params_and_body) =
   Name_abstraction.pattern_match_for_printing
-    (module Bound_var) t
+    (module Bound_var) expr
     ~apply_renaming_to_term:apply_renaming_lambda
     ~f:(fun t expr ->
       fprintf ppf "λ my_closure: %a, %a"
@@ -928,9 +932,8 @@ and ids_for_export_static_const t =
   | Immutable_value_array fields -> ids_for_export_fields fields
   | Empty_array -> Ids_for_export.empty
 
-and ids_for_export_function_params_and_body abst =
-  Name_abstraction.ids_for_export
-    (module Bound_var) abst
+and ids_for_export_function_params_and_body {expr; anon=_} =
+  Name_abstraction.ids_for_export (module Bound_var) expr
     ~ids_for_export_of_term:ids_for_export_lambda
 
 (* ids for [Let_cont] *)
@@ -1306,17 +1309,18 @@ let static_const_or_code_fix' (fix : core_exp -> core_exp)
       (arg : 'a)
       (e : static_const_or_code) =
   match e with
-  | Code params_and_body ->
+  | Code {expr; anon}->
     Code
-      (Core_function_params_and_body.pattern_match
-         params_and_body
+      {expr = (Core_function_params_and_body.pattern_match
+         expr
          ~f:(fun
               params body ->
               Core_function_params_and_body.create
                 params
                 (Core_lambda.pattern_match body
                    ~f:(fun bound body ->
-                     Core_lambda.create bound (fix body)))))
+                     Core_lambda.create bound (fix body)))));
+       anon}
   | Deleted_code -> e
   | Static_const const ->
     Static_const (static_const_fix' fix f f_code_id arg const)
@@ -1345,23 +1349,21 @@ let static_const_or_code_fix (fix : core_exp -> core_exp)
       (arg : 'a)
       (e : static_const_or_code) =
   match e with
-  | Code params_and_body ->
-    (* Format.fprintf Format.std_formatter "[BEFORE]%a@." print
-     *   (Named (Static_consts [e])); *)
+  | Code {expr; anon}->
     let e =
       Code
-      (Core_function_params_and_body.pattern_match
-         params_and_body
-         ~f:(fun
-              params body ->
-              Core_function_params_and_body.create
-                params
-                (Core_lambda.pattern_match body
-                   ~f:(fun bound body ->
-                     Core_lambda.create bound (fix body)))))
+        {expr =
+           (Core_function_params_and_body.pattern_match
+              expr
+                ~f:(fun
+                      params body ->
+                      Core_function_params_and_body.create
+                        params
+                        (Core_lambda.pattern_match body
+                          ~f:(fun bound body ->
+                             Core_lambda.create bound (fix body)))));
+         anon}
     in
-    (* Format.fprintf Format.std_formatter "[AFTER]%a@." print
-     *   (Named (Static_consts [e])); *)
     e
 
   | Deleted_code -> e

@@ -102,19 +102,19 @@ let rec flambda_expr_to_core (e: expr) : core_exp =
 and let_to_core (e : Let_expr.t) : core_exp =
   let (var, body) = Let_expr.pattern_match e ~f:(fun var ~body -> (var, body))
   in
-  let e1 = Let_expr.defining_expr e |> named_to_core
+  let e1 = Let_expr.defining_expr e |> named_to_core var
   in
   let x, e1, e2 = bound_pattern_to_core var e1 (flambda_expr_to_core body)
   in
   Core_let.create ~x ~e1 ~e2
 
-and named_to_core (e : Flambda.named) : core_exp =
+and named_to_core var (e : Flambda.named) : core_exp =
   Named (
     match e with
     | Simple e -> Simple e
     | Prim (t, _) -> Prim (prim_to_core t)
     | Set_of_closures e -> Set_of_closures (set_of_closures_to_core e)
-    | Static_consts e -> Static_consts (static_consts_to_core e)
+    | Static_consts e -> Static_consts (static_consts_to_core var e)
     | Rec_info t -> Rec_info t)
 
 and set_of_closures_to_core (e : Set_of_closures.t) : set_of_closures =
@@ -153,18 +153,22 @@ and prim_to_core (e : P.t) : primitive =
   | Variadic (prim, args) ->
     Variadic (prim, List.map (fun x -> Named (Simple x)) args)
 
-and static_consts_to_core (e : Flambda.static_const_group) :
+and static_consts_to_core var (e : Flambda.static_const_group) :
   Flambda2_core.static_const_group =
   let static_consts = Static_const_group.to_list e
   in
-  List.map static_const_or_code_to_core static_consts
+  let bound_consts = Bound_static.to_list (Bound_pattern.must_be_static var)
+  in
+  List.map (fun (bound, const) ->
+    static_const_or_code_to_core bound const)
+    (List.combine bound_consts static_consts)
 
-and static_const_or_code_to_core (e : Flambda.static_const_or_code) :
+and static_const_or_code_to_core var (e : Flambda.static_const_or_code) :
   Flambda2_core.static_const_or_code =
   match e with
   | Code e -> Code
                 (Code0.params_and_body e |>
-                 function_params_and_body_to_core)
+                 function_params_and_body_to_core var)
   | Deleted_code -> Deleted_code
   | Static_const t -> Static_const (static_const_to_core t)
 
@@ -194,25 +198,35 @@ and field_of_static_block_to_core (e : Field_of_static_block.t) : core_exp =
   | Dynamically_computed (var, _) ->
     Named (Simple (Simple.var var))
 
-and function_params_and_body_to_core
+and function_params_and_body_to_core (var : Bound_static.Pattern.t)
       (t : Flambda.function_params_and_body) :
   Flambda2_core.function_params_and_body =
-  Function_params_and_body.pattern_match' t
-    ~f:(fun (bound: Bound_for_function.t) ~body ->
-      let my_closure = Bound_for_function.my_closure bound
-      in
-      Core_function_params_and_body.create
-        (Bound_var.create my_closure Name_mode.normal)
-        (Core_lambda.create
-           (Bound_for_lambda.create
-              ~return_continuation:
-                (Bound_for_function.return_continuation bound)
-              ~exn_continuation:
-                (Bound_for_function.exn_continuation bound)
-              ~params:
-                (Bound_for_function.params bound))
-           (flambda_expr_to_core body))
-    )
+  let name =
+    (match var with
+     | Code id -> id
+     | _ -> Misc.fatal_error "Expected code id")
+  in
+  let anon =
+    String.starts_with ~prefix:"anon-fn[" (Code_id.name name)
+  in
+  { expr =
+      Function_params_and_body.pattern_match' t
+        ~f:(fun (bound: Bound_for_function.t) ~body ->
+          let my_closure = Bound_for_function.my_closure bound
+          in
+          Core_function_params_and_body.create
+            (Bound_var.create my_closure Name_mode.normal)
+            (Core_lambda.create
+              (Bound_for_lambda.create
+                  ~return_continuation:
+                    (Bound_for_function.return_continuation bound)
+                  ~exn_continuation:
+                    (Bound_for_function.exn_continuation bound)
+                  ~params:
+                    (Bound_for_function.params bound))
+              (flambda_expr_to_core body))
+        );
+    anon}
 
 and let_cont_to_core (e : Let_cont_expr.t) : core_exp =
   match e with

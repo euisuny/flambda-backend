@@ -69,7 +69,8 @@ and primitive =
 
 (* Named lambda expression that has an additional closure parameter *)
 and function_params_and_body =
-  (Bound_var.t, lambda_expr) Name_abstraction.t
+  { expr: (Bound_var.t, lambda_expr) Name_abstraction.t;
+    anon: bool }
 
 and static_const_or_code =
   | Code of function_params_and_body
