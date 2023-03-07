@@ -20,6 +20,7 @@ let cfg_equivalence_check = ref false   (* -dcfg-equivalence-check *)
 let validate = ref false                (* -validate *)
 
 let reorder_blocks_random = ref None    (* -reorder-blocks-random seed *)
+let basic_block_sections = ref false    (* -basic-block-sections *)
 
 let dasm_comments = ref false (* -dasm-comments *)
 
