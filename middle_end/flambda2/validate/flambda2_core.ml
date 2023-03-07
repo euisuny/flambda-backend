@@ -1422,19 +1422,19 @@ let named_fix (fix : core_exp -> core_exp)
   | Slot _ | Rec_info _ -> Named e
 
 let rec core_fmap
-          (f : 'a -> Simple.t -> core_exp)
+          (f : 'a -> Simple.t -> core_exp) f_res f_exn
           (arg : 'a) (e : core_exp) : core_exp =
   match e with
   | Named e ->
-    named_fix (core_fmap f arg) f arg e
+    named_fix (core_fmap f f_res f_exn arg) f arg e
   | Let e ->
-    let_fix (core_fmap f arg) e
+    let_fix (core_fmap f f_res f_exn arg) e
   | Let_cont e ->
-    let_cont_fix (core_fmap f arg) e
+    let_cont_fix (core_fmap f f_res f_exn arg) e
   | Apply e ->
-    apply_fix (core_fmap f arg) (fun x -> Cont_id x) (fun x -> Cont_id x) e
+    apply_fix (core_fmap f f_res f_exn arg) f_res f_exn e
   | Apply_cont e ->
-    apply_cont_fix (core_fmap f arg) e
-  | Lambda e -> lambda_fix (core_fmap f arg) e
-  | Switch e -> switch_fix (core_fmap f arg) e
+    apply_cont_fix (core_fmap f f_res f_exn arg) e
+  | Lambda e -> lambda_fix (core_fmap f f_res f_exn arg) e
+  | Switch e -> switch_fix (core_fmap f f_res f_exn arg) e
   | Invalid _ -> e

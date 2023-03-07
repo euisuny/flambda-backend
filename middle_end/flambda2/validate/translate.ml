@@ -15,7 +15,10 @@ let subst_var_slot_helper
     (fun (var, phi, slot) v ->
       (if (Simple.same (Simple.var (Bound_var.var var)) v) then
         Named (Slot (Bound_var.var phi, slot))
-      else Named (Simple v))) (var, phi, slot) e2
+       else Named (Simple v)))
+    (fun x -> Cont_id x)
+    (fun x -> Cont_id x)
+    (var, phi, slot) e2
 
 let subst_var_slot
       (vars : Bound_var.t list) (phi : Bound_var.t) (e1 : core_exp) (e2 : core_exp) =
@@ -36,7 +39,10 @@ let subst_static_slot_helper
     (fun (sym, phi, slot) v ->
        if (Simple.same (Simple.symbol sym) v) then
          Named (Slot (Bound_var.var phi, slot))
-       else Named (Simple v)) (sym, phi, slot) e2
+       else Named (Simple v))
+    (fun x -> Cont_id x)
+    (fun x -> Cont_id x)
+    (sym, phi, slot) e2
 
 let subst_static_slot
       (bound : Symbol.t Function_slot.Lmap.t) (phi : Bound_var.t) (e2 : core_exp) =
