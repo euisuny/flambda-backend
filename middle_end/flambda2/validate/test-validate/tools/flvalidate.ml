@@ -1,5 +1,3 @@
-(* open Import *)
-
 let get_module_info = Flambda2.get_module_info
 let print = Flambda2_core.print
 
@@ -47,7 +45,7 @@ let run_validator filename : Outcome.t =
 
   try
     (if Equiv.core_eq src_core tgt_core then
-       (Format.eprintf "[%s] PASS: validated@." filename;
+       (Format.eprintf "%s PASS (validated)@." filename;
         Success)
      else Failure) with
 

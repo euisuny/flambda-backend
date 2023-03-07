@@ -97,61 +97,20 @@ let print_flexpect name main_dump_ppf ~raw_flambda:old_unit new_unit =
     ~header:("Before and after " ^ name)
     ~f:pp_flambda_as_flexpect (old_unit, new_unit)
 
-let cwd = "/usr/local/home/iyoon/workspaces/validation/flambda-backend"
-let test_dir = "/middle_end/flambda2/validate/test-validate/tests/"
+let validate filename (src : Flambda_unit.t) (res : Flambda_unit.t) =
+  let src_core =
+    Translate.flambda_unit_to_core src |> Validate.normalize
+  in
+  let res_core =
+    Translate.flambda_unit_to_core res |> Validate.normalize
+  in
+  if (Equiv.core_eq src_core res_core)
+  then
+    Format.eprintf "%s PASS (validated)@." filename
+  else
+    Format.eprintf "%s FAIL (validated)@." filename
 
-(** Parsing **)
-let parse_flambda file : Flambda_unit.t =
-  match Parse_flambda.parse file with
-  | Ok unit -> unit
-  | Error e ->
-    (match e with
-     | Parsing_error (msg, loc) ->
-       Format.eprintf "%a:@.Syntax error: %s@." Location.print_loc loc msg
-     | Lexing_error (error, loc) ->
-       Format.eprintf "%a:@.Lex error: %a@." Location.print_loc loc
-         Flambda_lex.pp_error error);
-    exit 1
-
-let debug file =
-  let comp_unit =
-    Parse_flambda.make_compilation_unit ~extension:".fl" ~filename:file () in
-  Compilation_unit.set_current (Some comp_unit);
-  let fl_output :Flambda_unit.t = parse_flambda (cwd ^ test_dir ^ file) in
-
-  let cmx_loader = Flambda_cmx.create_loader ~get_module_info in
-
-  (* IY: What is [round]? *)
-  let {Simplify.unit = simplify_result ; _ } =
-    Simplify.run ~cmx_loader ~round:0 fl_output in
-
-  let src_core = Flambda2_validate.Translate.flambda_unit_to_core fl_output in
-  let tgt_core = Flambda2_validate.Translate.flambda_unit_to_core simplify_result in
-
-  Format.fprintf Format.std_formatter
-    "\t\t\t\tNormalizing...\t\t\t@.";
-  Format.fprintf Format.std_formatter
-    "------------------------------------------------------------------------------@.";
-
-  let src_core = src_core |> Flambda2_validate.Validate.normalize in
-  let tgt_core = tgt_core |> Flambda2_validate.Validate.normalize in
-
-  let alpha_eq = Flambda2_validate.Equiv.core_eq src_core tgt_core in
-
-  Format.fprintf Format.std_formatter
-  "@.--------------------------------------------------------------------[original]@.";
-  Flambda2_validate.Flambda2_core.print Format.std_formatter src_core;
-  Format.fprintf Format.std_formatter
-    "@.-------------------------------------------------------------------[simplified]@.";
-  Flambda2_validate.Flambda2_core.print Format.std_formatter tgt_core;
-  Format.fprintf Format.std_formatter
-    "@..............................[α-equivalent?:%s]............................."
-    (alpha_eq |> Flambda2_validate.Equiv.eq_string |> String.uppercase_ascii);
-  Format.fprintf Format.std_formatter
-    "@.==============================================================================@. ";
-  ()
-
-let lambda_to_cmm ~ppf_dump:ppf ~prefixname ~filename:_ ~keep_symbol_tables
+let lambda_to_cmm ~ppf_dump:ppf ~prefixname ~filename ~keep_symbol_tables
     (program : Lambda.program) =
   let compilation_unit = program.compilation_unit in
   let module_block_size_in_words = program.main_module_block_size in
@@ -203,13 +162,13 @@ let lambda_to_cmm ~ppf_dump:ppf ~prefixname ~filename:_ ~keep_symbol_tables
         raw_flambda, offsets, cmx, code
       | Normal, Normal ->
         let round = 0 in
-        (* Hacky temporary debug solution *)
-        if !Flambda_backend_flags.validate then
-          debug "tests13_simple2.fl";
         let { Simplify.unit = flambda; exported_offsets; cmx; all_code } =
           Profile.record_call ~accumulate:true "simplify" (fun () ->
               Simplify.run ~cmx_loader ~round raw_flambda)
         in
+        (* Run the validator *)
+        if !Flambda_backend_flags.validate
+        then validate filename raw_flambda flambda;
         (if Flambda_features.inlining_report ()
         then
           let output_prefix = Printf.sprintf "%s.%d" prefixname round in

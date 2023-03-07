@@ -29,8 +29,6 @@
     -open
     Flambda2_terms
     -open
-    Flambda2_simplify
-    -open
     Flambda2_lattices
     -open
     Flambda2_parser
@@ -44,8 +42,6 @@
    ocamloptcomp
    flambda2_cmx
    flambda2_parser
-   flambda2_simplify
-   flambda2_simplify_shared
    flambda2_algorithms
    flambda2_terms
 ))

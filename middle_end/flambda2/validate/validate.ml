@@ -887,14 +887,3 @@ and normalize_named (var: Bound_for_let.t) (body : named)
        (Static (Bound_codelike.create phi), exp)
      | _ -> Misc.fatal_error "Expected bound static variables")
   | Prim v -> (var, Eval_prim.eval v)
-
-let simulation_relation src tgt =
-  let {Simplify.unit = tgt; _} = tgt in
-  let src_core = Flambda_unit.body src |> flambda_expr_to_core in
-  let tgt_core = Flambda_unit.body tgt |> flambda_expr_to_core in
-  Equiv.core_eq src_core tgt_core
-
-(** Top-level validator *)
-let validate ~cmx_loader ~round src =
-  let tgt = Simplify.run ~cmx_loader ~round src in
-  simulation_relation src tgt
