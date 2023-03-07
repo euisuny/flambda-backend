@@ -664,8 +664,6 @@ and normalize_static_const_group (phi : Bound_codelike.Pattern.t list)
   in
   let phi_consts = List.combine phi consts
   in
-  Format.fprintf Format.std_formatter "[BEFORE]@.%a@." print
-    (Named (Static_consts consts));
   let set_of_closures, static_consts =
     List.partition (fun (_, x) -> is_static_set_of_closures x) phi_consts
   in
@@ -729,10 +727,6 @@ and normalize_static_const_group (phi : Bound_codelike.Pattern.t list)
         (fun x -> match x with
            | Bound_codelike.Pattern.Code _ -> false | _ -> true) phi
     in
-    Format.fprintf Format.std_formatter
-      "[After]@.%a@.@.-----------------------------------@."
-      print (Named (Static_consts consts));
-
     (phi, Named (Static_consts consts)))
 
 (* N.B. This normalization is rather inefficient;
