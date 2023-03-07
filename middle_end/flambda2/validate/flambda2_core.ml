@@ -1088,7 +1088,7 @@ module Core_continuation_handler = struct
         f params body1 body2)
 end
 
-module  Core_letcont_body = struct
+module Core_letcont_body = struct
   module A = Name_abstraction.Make (Bound_continuation) (T0)
   type t = (Bound_continuation.t, core_exp) Name_abstraction.t
   let create = A.create

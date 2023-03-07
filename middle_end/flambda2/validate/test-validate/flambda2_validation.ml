@@ -1,5 +1,5 @@
 open! Translate
-open! Validate
+open! Normalize
 
 let get_module_info = Flambda2.get_module_info
 

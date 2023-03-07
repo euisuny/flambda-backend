@@ -428,14 +428,22 @@ and equiv_cont_handler_map env
 
 and equiv_continuation_expr env (e1 : continuation_expr) (e2 : continuation_expr) : eq =
   match e1, e2 with
-  | Cont_id _, Cont_id _ -> true (* TODO *)
+  | Cont_id e1, Cont_id e2 ->
+    Apply_expr.Result_continuation.equal e1 e2
   | Handler e1, Handler e2 -> equiv_cont_handler env e1 e2
   | _, _ -> false
 
+(* TODO & FIXME : There is a bug with substituting in the right continuations *)
 and equiv_exn_continuation_expr env
       (e1 : exn_continuation_expr) (e2 : exn_continuation_expr) : eq =
   match e1, e2 with
-  | Cont_id _, Cont_id _ -> true (* TODO *)
+  | Cont_id _e1, Cont_id _e2 -> true
+    (* if Continuation.equal e1 e2 then true
+     * else
+     *   (Format.fprintf Format.std_formatter "%a <> %a"
+     *      Continuation.print e1
+     *      Continuation.print e2;
+     *    false) *)
   | Handler e1, Handler e2 -> equiv_cont_handler env e1 e2
   | _, _ -> false
 
@@ -462,9 +470,7 @@ and equiv_cont _env (e1 : Continuation.t) (e2 : Continuation.t) : eq =
   | Toplevel_return, Toplevel_return -> true
   | Normal_or_exn, Normal_or_exn
   | Return, Return
-  | Define_root_symbol, Define_root_symbol -> true
-  (* TODO *)
-  (* Continuation.equal e1 e2 *)
+  | Define_root_symbol, Define_root_symbol -> Continuation.equal e1 e2
   | (Normal_or_exn | Return | Define_root_symbol | Toplevel_return), _ -> false
 
 and equiv_lambda env (e1 : lambda_expr) (e2 : lambda_expr) : eq =

@@ -40,8 +40,8 @@ let run_validator filename : Outcome.t =
   let src_core = Translate.flambda_unit_to_core fl_output in
   let tgt_core = Translate.flambda_unit_to_core simplify_result in
 
-  let src_core = src_core |> Validate.normalize in
-  let tgt_core = tgt_core |> Validate.normalize in
+  let src_core = src_core |> Normalize.normalize in
+  let tgt_core = tgt_core |> Normalize.normalize in
 
   try
     (if Equiv.core_eq src_core tgt_core then

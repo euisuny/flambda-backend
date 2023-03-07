@@ -2,8 +2,6 @@ open! Flambda
 open! Flambda2_core
 open! Translate
 
-let _std_print = Format.fprintf Format.std_formatter "@.TERM:%a@." print
-
 (** Normalization
 
     - CBV-style reduction for [let] and [letcont] expressions
