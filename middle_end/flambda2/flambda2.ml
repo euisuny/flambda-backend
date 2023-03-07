@@ -99,10 +99,10 @@ let print_flexpect name main_dump_ppf ~raw_flambda:old_unit new_unit =
 
 let validate filename (src : Flambda_unit.t) (res : Flambda_unit.t) =
   let src_core =
-    Translate.flambda_unit_to_core src |> Validate.normalize
+    Translate.flambda_unit_to_core src |> Normalize.normalize
   in
   let res_core =
-    Translate.flambda_unit_to_core res |> Validate.normalize
+    Translate.flambda_unit_to_core res |> Normalize.normalize
   in
   if (Equiv.core_eq src_core res_core)
   then
