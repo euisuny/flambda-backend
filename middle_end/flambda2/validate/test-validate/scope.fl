@@ -1,0 +1,12 @@
+let $y = Block 0 (1) in
+let code size(1) f_0 (x) my_closure my_region my_depth -> k * k1 =
+  cont k ($y)
+in
+let code size(1) g_0 (x) my_closure my_region my_depth -> k * k1 =
+  let $y = Block 0 (2) in
+  cont k ($y)
+in
+let $camlLet__first_const6 = Block 0 () in
+(let Pmakeblock = %Block 0 (42) in
+ let f = closure f_0 @f in
+ cont done (Pmakeblock))
