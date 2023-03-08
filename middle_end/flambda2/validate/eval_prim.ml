@@ -2,24 +2,27 @@ open! Flambda2_core
 module P = Flambda_primitive
 open! Translate
 
-let eval_nullary (_v : P.nullary_primitive) : named =
-  failwith "[Primitive eval] eval_nullary"
+let eval_nullary (v : P.nullary_primitive) : named =
+  Prim (Nullary v)
 
 let eval_unary (v : P.unary_primitive) (arg : core_exp) : named =
   match v with
+  (* [Project_function_slot] and [Project_value_slot] is resolved during
+     instantiating closures in the normalization process *)
+  | Project_value_slot _ | Project_function_slot _ ->
+    Prim (Unary (v, arg))
   | Untag_immediate ->
     (match arg with
      | Named (Prim (Unary (Tag_immediate, Named (Prim (Unary (Is_int a, e)))))) ->
        (Prim (Unary (Is_int a, e)))
      | _ -> (Prim (Unary (v, arg))))
-  | (Get_tag | Array_length | Int_as_pointer | Boolean_not
+  | (Int_arith _ | Get_tag | Array_length | Int_as_pointer | Boolean_not
     | Reinterpret_int64_as_float | Tag_immediate
     | Is_boxed_float | Is_flat_float_array | Begin_try_region
     | End_region | Obj_dup | Duplicate_block _ | Duplicate_array _
     | Is_int _ | Bigarray_length _ | String_length _
-    | Opaque_identity _ | Int_arith (_,_) | Float_arith _
-    | Num_conv _ | Unbox_number _ | Box_number (_, _)
-    | Project_function_slot _ | Project_value_slot _) ->
+    | Opaque_identity _ | Float_arith _
+    | Num_conv _ | Unbox_number _ | Box_number (_, _)) ->
     (Prim (Unary (v, arg)))
 
 let simple_tagged_immediate ~(const : Simple.t) : Targetint_31_63.t option =
@@ -50,7 +53,6 @@ let eval_binary
              | Static_const (Block (_, _, l)) ->
                List.nth l (Targetint_31_63.to_int i)
              | _ -> failwith "[Primitive eval] Unimplemented_block_load")
-
           | None -> Named (Prim (Binary (v, arg1, arg2))))
        else
          Named (Prim (Binary (v, arg1, arg2)))
