@@ -16,3 +16,12 @@ in
     let field_0 = %block_load tag(0) size(1) (module_block, 0) in
     let $camlArith = Block 0 (field_0) in
     cont done ($camlArith)
+===>
+let code f_0 deleted in
+let code size(0) newer_version_of(f_0)
+      f_0_1 (x) my_closure my_region my_depth -> k * k1 =
+  cont k (1)
+in
+let $camlArith__f_1 = closure f_0_1 @f in
+let $camlArith = Block 0 ($camlArith__f_1) in
+cont done ($camlArith)

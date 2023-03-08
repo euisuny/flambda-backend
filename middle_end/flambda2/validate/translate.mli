@@ -16,6 +16,8 @@ open! Flambda2_core
 
 val simple_to_core : Simple.t -> core_exp
 
+val prim_to_core : Flambda_primitive.t -> primitive
+
 val flambda_expr_to_core : Flambda.expr -> core_exp
 
 val flambda_unit_to_core : Flambda_unit.t -> core_exp

@@ -98,7 +98,7 @@ module type Number_kind_common = sig
 
   val these_unboxed : Num.Set.t -> Flambda2_types.t
 
-  val term_unboxed : Num.t -> Flambda.Named.t
+  val term_unboxed : Num.t -> Flambda2_core.named
 end
 
 module type Number_kind = sig
@@ -242,7 +242,7 @@ module For_tagged_immediates : Int_number_kind = struct
   let these_unboxed = T.these_tagged_immediates
 
   let term_unboxed imm =
-    Named.create_simple (Simple.const (Reg_width_const.tagged_immediate imm))
+    Flambda2_core.Simple (Simple.const (Reg_width_const.tagged_immediate imm))
 end
 
 module For_naked_immediates : Int_number_kind = struct
@@ -307,7 +307,7 @@ module For_naked_immediates : Int_number_kind = struct
   let these_unboxed = T.these_naked_immediates
 
   let term_unboxed imm =
-    Named.create_simple (Simple.const (Reg_width_const.naked_immediate imm))
+    Flambda2_core.Simple (Simple.const (Reg_width_const.naked_immediate imm))
 end
 
 module For_floats : Boxable_number_kind = struct
@@ -354,7 +354,7 @@ module For_floats : Boxable_number_kind = struct
   let box = T.box_float
 
   let term_unboxed f =
-    Named.create_simple (Simple.const (Reg_width_const.naked_float f))
+    Flambda2_core.Simple (Simple.const (Reg_width_const.naked_float f))
 end
 
 module For_int32s : Boxable_int_number_kind = struct
@@ -423,7 +423,7 @@ module For_int32s : Boxable_int_number_kind = struct
   let box = T.box_int32
 
   let term_unboxed i =
-    Named.create_simple (Simple.const (Reg_width_const.naked_int32 i))
+    Flambda2_core.Simple (Simple.const (Reg_width_const.naked_int32 i))
 end
 
 module For_int64s : Boxable_int_number_kind = struct
@@ -492,7 +492,7 @@ module For_int64s : Boxable_int_number_kind = struct
   let box = T.box_int64
 
   let term_unboxed i =
-    Named.create_simple (Simple.const (Reg_width_const.naked_int64 i))
+    Flambda2_core.Simple (Simple.const (Reg_width_const.naked_int64 i))
 end
 
 module For_nativeints : Boxable_int_number_kind = struct
@@ -562,5 +562,5 @@ module For_nativeints : Boxable_int_number_kind = struct
   let box = T.box_nativeint
 
   let term_unboxed i =
-    Named.create_simple (Simple.const (Reg_width_const.naked_nativeint i))
+    Flambda2_core.Simple (Simple.const (Reg_width_const.naked_nativeint i))
 end
