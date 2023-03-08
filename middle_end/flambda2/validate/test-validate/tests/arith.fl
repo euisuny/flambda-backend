@@ -1,0 +1,14 @@
+let $camlArith__empty_block10 = Block 0 () in
+(let Paddint = 2 + 3 in
+ let Pmulint = Paddint * 1 in
+ let prim = %phys_eq (Pmulint, 2) in
+ let Pintcomp = %Tag_imm prim in
+ let untagged = %untag_imm Pintcomp in
+ switch untagged
+   | 0 -> k1 (1)
+   | 1 -> k1 (0))
+  where k1 (switch_result) =
+    cont k ($camlArith__empty_block10)
+  where k define_root_symbol (module_block) =
+    let $camlArith = Block 0 () in
+    cont done ($camlArith)

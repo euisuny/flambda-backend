@@ -33,6 +33,13 @@
 
  (rule
  (alias runtest)
+  (deps arith.fl)
+  (action
+   (progn
+   (run ../tools/flvalidate.exe arith.fl))))
+
+ (rule
+ (alias runtest)
   (deps lengthapply.fl)
   (action
    (progn
