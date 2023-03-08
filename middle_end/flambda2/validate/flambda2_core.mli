@@ -287,6 +287,10 @@ val apply_fix : (core_exp -> core_exp) ->
   (Continuation.t -> exn_continuation_expr) ->
   apply_expr -> core_exp
 val apply_cont_fix : (core_exp -> core_exp) -> apply_cont_expr -> core_exp
+val apply_cont_fix' :
+  (core_exp -> core_exp) ->
+  (Continuation.t -> Continuation.t) ->
+  apply_cont_expr -> core_exp
 val lambda_fix : (core_exp -> core_exp) -> lambda_expr -> core_exp
 val switch_fix : (core_exp -> core_exp) -> switch_expr -> core_exp
 

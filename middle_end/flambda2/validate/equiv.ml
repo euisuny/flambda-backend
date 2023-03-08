@@ -342,19 +342,15 @@ and equiv_named env named1 named2 : eq =
   | Prim prim1, Prim prim2 ->
     equiv_primitives env prim1 prim2
   | Slot (_, Function_slot slot1), Slot (_, Function_slot slot2) ->
-    (* equiv_simple env (Simple.var var1) (Simple.var var2) && *)
     equiv_function_slots env slot1 slot2
   | Slot (_, Value_slot slot1), Slot (_, Value_slot slot2) ->
-    (* equiv_simple env (Simple.var var1) (Simple.var var2) && *)
     equiv_value_slots env slot1 slot2
   | Closure_expr (_, slot1, set1), Closure_expr (_, slot2, set2) ->
-    (* equiv_simple env (Simple.var phi1) (Simple.var phi2) && *)
     equiv_function_slots env slot1 slot2 &&
     equiv_set_of_closures env set1 set2
   | Set_of_closures set1, Set_of_closures set2 ->
     equiv_set_of_closures env set1 set2
   | Rec_info _, Rec_info _ -> true
-    (* equiv_rec_info env rec_info_expr1 rec_info_expr2 *)
   | Static_consts const1, Static_consts const2 ->
     (List.combine const1 const2 |>
      List.fold_left (fun x (e1, e2) -> x && equiv_static_consts env e1 e2) true)
@@ -436,13 +432,7 @@ and equiv_continuation_expr env (e1 : continuation_expr) (e2 : continuation_expr
 and equiv_exn_continuation_expr env
       (e1 : exn_continuation_expr) (e2 : exn_continuation_expr) : eq =
   match e1, e2 with
-  | Cont_id e1, Cont_id e2 ->
-    if Continuation.equal e1 e2 then true
-    else
-      (Format.fprintf Format.std_formatter "%a <> %a"
-         Continuation.print e1
-         Continuation.print e2;
-       false)
+  | Cont_id e1, Cont_id e2 -> Continuation.equal e1 e2
   | Handler e1, Handler e2 -> equiv_cont_handler env e1 e2
   | _, _ -> false
 

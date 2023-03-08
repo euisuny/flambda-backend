@@ -1249,6 +1249,13 @@ let apply_fix (f : core_exp -> core_exp)
      continuation; exn_continuation;
      apply_args = List.map f apply_args;}
 
+let apply_cont_fix' (f : core_exp -> core_exp)
+      (f_cont : Continuation.t -> Continuation.t)
+      ({k; args} : apply_cont_expr) =
+  Apply_cont
+    {k = f_cont k;
+     args = List.map f args}
+
 let apply_cont_fix (f : core_exp -> core_exp)
       ({k; args} : apply_cont_expr) =
   Apply_cont

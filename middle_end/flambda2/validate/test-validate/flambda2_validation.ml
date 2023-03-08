@@ -112,6 +112,13 @@ let normalize_term file : unit =
   let {Simplify.unit = simplify_result ; _ } =
     Simplify.run ~cmx_loader ~round:0 fl_output in
 
+  Format.fprintf Format.std_formatter
+    "@.[Flambda_unit exprs]-------------------------------------------------------@.@.";
+  Format.fprintf Format.std_formatter "%a@." Flambda_unit.print fl_output;
+  Format.fprintf Format.std_formatter
+    "---------------------------↓↓--[simplify]--↓↓-------------------------------@.";
+  Format.fprintf Format.std_formatter "%a@.@." Flambda_unit.print simplify_result;
+
   let src_core = flambda_unit_to_core fl_output in
   let tgt_core = flambda_unit_to_core simplify_result in
 
@@ -135,11 +142,11 @@ let normalize_term file : unit =
     "@..............................[α-equivalent?:%s]............................."
     (alpha_eq |> Equiv.eq_string |> String.uppercase_ascii);
   Format.fprintf Format.std_formatter
-    "@.==============================================================================@. ";
+    "@.==============================================================================@.";
   ()
 
 (** Top-level driver for alpha equivalence checker and verbose validator tests **)
 let () =
   (* alpha_equivalence_test_suite (); *)
-  (* normalize_term "tests11.fl"; *)
+  (* normalize_term "apply_noinline.fl"; *)
   ()
