@@ -14,13 +14,43 @@ module A = Number_adjuncts
 let eval_nullary (v : P.nullary_primitive) : named =
   Prim (Nullary v)
 
+module Unary_int_arith (I : A.Int_number_kind) = struct
+  let simplify (op : P.unary_int_arith_op) (original_term: named) ~(arg:Simple.t) : named =
+    match I.to_elem arg with
+    | Some arg ->
+      let f =
+        match op with
+        | Neg -> I.Num.neg
+        | Swap_byte_endianness -> I.Num.swap_byte_endianness
+      in
+      I.term_unboxed (f arg)
+    | None -> original_term
+end
+
+module Unary_int_arith_tagged_immediate = Unary_int_arith (A.For_tagged_immediates)
+module Unary_int_arith_naked_immediate = Unary_int_arith (A.For_naked_immediates)
+module Unary_int_arith_naked_int32 = Unary_int_arith (A.For_int32s)
+module Unary_int_arith_naked_int64 = Unary_int_arith (A.For_int64s)
+module Unary_int_arith_naked_nativeint = Unary_int_arith (A.For_nativeints)
+
 let eval_unary (v : P.unary_primitive) (arg : core_exp) : named =
   match v with
   (* [Project_function_slot] and [Project_value_slot] is resolved during
      instantiating closures in the normalization process *)
   | Project_value_slot _ | Project_function_slot _ ->
     Prim (Unary (v, arg))
-  | Int_arith _ -> failwith "Unimplemented int arith"
+  | Int_arith (kind, op) ->
+    (match arg with
+     | Named (Simple s1) ->
+       ((match kind with
+         | Tagged_immediate -> Unary_int_arith_tagged_immediate.simplify op
+         | Naked_immediate -> Unary_int_arith_naked_immediate.simplify op
+         | Naked_int32 -> Unary_int_arith_naked_int32.simplify op
+         | Naked_int64 -> Unary_int_arith_naked_int64.simplify op
+         | Naked_nativeint -> Unary_int_arith_naked_nativeint.simplify op)
+                (Prim (Unary (v, arg))) ~arg:s1)
+     | _ -> Prim (Unary (v, arg)))
+  | Float_arith _ -> failwith "Unimplemented arith"
   | Untag_immediate ->
     (match arg with
      | Named (Prim (Unary (Tag_immediate, Named (Prim (Unary (Is_int a, e)))))) ->
@@ -31,7 +61,7 @@ let eval_unary (v : P.unary_primitive) (arg : core_exp) : named =
     | Is_boxed_float | Is_flat_float_array | Begin_try_region
     | End_region | Obj_dup | Duplicate_block _ | Duplicate_array _
     | Is_int _ | Bigarray_length _ | String_length _
-    | Opaque_identity _ | Float_arith _
+    | Opaque_identity _
     | Num_conv _ | Unbox_number _ | Box_number (_, _)) ->
     (Prim (Unary (v, arg)))
 
@@ -968,11 +998,6 @@ let rec eval (v : primitive) : core_exp =
   | Unary (v, arg) ->
     Named (eval_unary v (f_arg arg))
   | Binary (op, arg1, arg2) ->
-    Format.fprintf Format.std_formatter "%a@. [simplified prim]%a@. @."
-      print_prim v
-      print (f_arg arg1)
-    ;
-
     eval_binary op (f_arg arg1) (f_arg arg2)
   | Ternary (v, arg1, arg2, arg3) ->
     Named (eval_ternary v (f_arg arg1) (f_arg arg2) (f_arg arg3))
