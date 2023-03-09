@@ -68,6 +68,8 @@ module type Number_kind_common = sig
     Flambda2_types.t ->
     Num.Set.t Flambda2_types.meet_shortcut
 
+  val to_elem : Simple.t -> Num.t option
+
   val this_unboxed : Num.t -> Flambda2_types.t
 
   val these_unboxed : Num.Set.t -> Flambda2_types.t

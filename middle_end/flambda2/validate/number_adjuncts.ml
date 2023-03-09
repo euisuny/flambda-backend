@@ -21,6 +21,13 @@ module Float_by_bit_pattern = Numeric_types.Float_by_bit_pattern
 module Int32 = Numeric_types.Int32
 module Int64 = Numeric_types.Int64
 
+let ( let* ) o f =
+  match o with
+  | None -> None
+  | Some x -> f x
+
+let return x = Some x
+
 (* CR vlaviron: I'm not sure what bit width we should use for naked immediates.
    My intuition is that we should not do arbitrary arithmetic operations on
    naked immediates at all, so no option is more correct than the other.
@@ -93,6 +100,8 @@ module type Number_kind_common = sig
     Flambda2_types.Typing_env.t ->
     Flambda2_types.t ->
     Num.Set.t Flambda2_types.meet_shortcut
+
+  val to_elem : Simple.t -> Num.t option
 
   val this_unboxed : Num.t -> Flambda2_types.t
 
@@ -231,6 +240,17 @@ module For_tagged_immediates : Int_number_kind = struct
     let to_naked_nativeint t = Targetint_31_63.to_targetint t
   end
 
+  let to_elem (simple : Simple.t) : Targetint_31_63.t option =
+    let* constant =
+      Simple.pattern_match' simple
+        ~var:(fun _ ~coercion:_ -> None)
+        ~symbol:(fun _ ~coercion:_ -> None)
+        ~const:(fun t -> return t)
+    in
+    match Int_ids.Const.descr constant with
+    | Tagged_immediate i -> return i
+    | _ -> None
+
   let standard_int_or_float_kind : K.Standard_int_or_float.t = Tagged_immediate
 
   let standard_int_kind : K.Standard_int.t = Tagged_immediate
@@ -296,6 +316,17 @@ module For_naked_immediates : Int_number_kind = struct
     let to_naked_nativeint = Targetint_31_63.to_targetint
   end
 
+  let to_elem (simple : Simple.t) : Targetint_31_63.t option =
+    let* constant =
+      Simple.pattern_match' simple
+        ~var:(fun _ ~coercion:_ -> None)
+        ~symbol:(fun _ ~coercion:_ -> None)
+        ~const:(fun t -> return t)
+    in
+    match Int_ids.Const.descr constant with
+    | Naked_immediate i -> return i
+    | _ -> None
+
   let standard_int_or_float_kind : K.Standard_int_or_float.t = Naked_immediate
 
   let standard_int_kind : K.Standard_int.t = Naked_immediate
@@ -336,6 +367,17 @@ module For_floats : Boxable_number_kind = struct
 
     let to_naked_nativeint t = Targetint_32_64.of_float (to_float t)
   end
+
+  let to_elem (simple : Simple.t) =
+    let* constant =
+      Simple.pattern_match' simple
+        ~var:(fun _ ~coercion:_ -> None)
+        ~symbol:(fun _ ~coercion:_ -> None)
+        ~const:(fun t -> return t)
+    in
+    match Int_ids.Const.descr constant with
+    | Naked_float i -> return i
+    | _ -> None
 
   let standard_int_or_float_kind : K.Standard_int_or_float.t = Naked_float
 
@@ -403,6 +445,17 @@ module For_int32s : Boxable_int_number_kind = struct
 
     let to_naked_nativeint t = Targetint_32_64.of_int32 t
   end
+
+  let to_elem (simple : Simple.t) =
+    let* constant =
+      Simple.pattern_match' simple
+        ~var:(fun _ ~coercion:_ -> None)
+        ~symbol:(fun _ ~coercion:_ -> None)
+        ~const:(fun t -> return t)
+    in
+    match Int_ids.Const.descr constant with
+    | Naked_int32 i -> return i
+    | _ -> None
 
   let standard_int_or_float_kind : K.Standard_int_or_float.t = Naked_int32
 
@@ -473,6 +526,17 @@ module For_int64s : Boxable_int_number_kind = struct
     let to_naked_nativeint t = Targetint_32_64.of_int64 t
   end
 
+  let to_elem (simple : Simple.t) =
+    let* constant =
+      Simple.pattern_match' simple
+        ~var:(fun _ ~coercion:_ -> None)
+        ~symbol:(fun _ ~coercion:_ -> None)
+        ~const:(fun t -> return t)
+    in
+    match Int_ids.Const.descr constant with
+    | Naked_int64 i -> return i
+    | _ -> None
+
   let standard_int_or_float_kind : K.Standard_int_or_float.t = Naked_int64
 
   let standard_int_kind : K.Standard_int.t = Naked_int64
@@ -542,6 +606,17 @@ module For_nativeints : Boxable_int_number_kind = struct
 
     let to_naked_nativeint t = t
   end
+
+  let to_elem (simple : Simple.t) =
+    let* constant =
+      Simple.pattern_match' simple
+        ~var:(fun _ ~coercion:_ -> None)
+        ~symbol:(fun _ ~coercion:_ -> None)
+        ~const:(fun t -> return t)
+    in
+    match Int_ids.Const.descr constant with
+    | Naked_nativeint i -> return i
+    | _ -> None
 
   let standard_int_or_float_kind : K.Standard_int_or_float.t = Naked_nativeint
 

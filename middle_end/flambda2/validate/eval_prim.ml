@@ -70,7 +70,6 @@ let eval_block_load v arg1 arg2 =
       Named (Prim (Binary (v, arg1, arg2)))
   | _, _ -> Named (Prim (Binary (v, arg1, arg2))))
 
-
 module K = Flambda_kind
 module T = Flambda2_types
 
@@ -98,6 +97,10 @@ module type Binary_arith_like_sig = sig
   val result_kind : K.t
 
   val term : Result.t -> Flambda2_core.named
+
+  val to_lhs_elem : Simple.t -> Lhs.t option
+
+  val to_rhs_elem : Simple.t -> Rhs.t option
 
   val prover_lhs : T.Typing_env.t -> T.t -> Lhs.Set.t T.meet_shortcut
 
@@ -132,6 +135,10 @@ end = struct
   let arg_kind = I.standard_int_or_float_kind
 
   let result_kind = K.Standard_int_or_float.to_kind arg_kind
+
+  let to_lhs_elem = I.to_elem
+
+  let to_rhs_elem = I.to_elem
 
   let prover_lhs = I.unboxed_prover
 
@@ -259,9 +266,7 @@ module Binary_arith_like (N : Binary_arith_like_sig) : sig
     N.op ->
     named ->
     arg1:Simple.t ->
-    arg1_ty:Flambda2_types.t ->
     arg2:Simple.t ->
-    arg2_ty:Flambda2_types.t ->
     Flambda2_core.named
 end = struct
   module Possible_result = struct
@@ -305,25 +310,17 @@ end = struct
     end)
   end
 
-  let simplify op original_term
-        ~arg1 ~arg1_ty ~arg2 ~arg2_ty : Flambda2_core.named =
+  let simplify op original_term ~arg1 ~arg2 : Flambda2_core.named =
     let module PR = Possible_result in
-    let typing_env =
-      Flambda2_types.Typing_env.create
-        ~resolver:(fun _ -> None)
-        ~get_imported_names:(fun _ -> failwith "foo")
-    in
-    let proof1 = N.prover_lhs typing_env arg1_ty in
-    let proof2 = N.prover_rhs typing_env arg2_ty in
     let kind = N.result_kind in
     let check_possible_results ~possible_results : Flambda2_core.named =
-        (* let named : Flambda2_core.named =
-         *   match PR.Set.get_singleton possible_results with
-         *   | Some (Exactly i) -> N.term i
-         *   | Some (Prim prim) -> (Flambda2_core.Prim prim)
-         *   | Some (Simple simple) -> Flambda2_core.Simple simple
-         *   | None -> original_term
-         * in *)
+        let named : Flambda2_core.named =
+          match PR.Set.get_singleton possible_results with
+          | Some (Exactly i) -> N.term i
+          | Some (Prim prim) -> (Flambda2_core.Prim prim)
+          | Some (Simple simple) -> Flambda2_core.Simple simple
+          | None -> original_term
+        in
         let ty =
           let is =
             List.filter_map
@@ -341,7 +338,7 @@ end = struct
             | Some (Exactly _) | Some (Prim _) | None -> N.unknown op
         in
         match T.get_alias_exn ty with
-        | exception Not_found -> Misc.fatal_error "Not found"
+        | exception Not_found -> named
         | simple -> Flambda2_core.Simple simple
     in
     let only_one_side_known op nums ~folder ~other_side : Flambda2_core.named =
@@ -384,35 +381,34 @@ end = struct
       | Some results -> check_possible_results ~possible_results:results
       | None -> Misc.fatal_error "No possible results"
     in
-    match proof1, proof2 with
-    | Known_result nums1, Known_result nums2 ->
-      assert (not (N.Lhs.Set.is_empty nums1));
-      assert (not (N.Rhs.Set.is_empty nums2));
+    match N.to_lhs_elem arg1, N.to_rhs_elem arg2 with
+    | Some arg1, Some arg2 ->
+      let nums1 = N.Lhs.Set.singleton arg1 in
+      let nums2 = N.Rhs.Set.singleton arg2 in
       let all_pairs = N.cross_product nums1 nums2 in
       let possible_results =
-        N.Pair.Set.fold
-          (fun (i1, i2) possible_results ->
-            match N.op op i1 i2 with
-            | None -> possible_results
-            | Some result -> PR.Set.add (Exactly result) possible_results)
-          all_pairs PR.Set.empty
+      N.Pair.Set.fold
+        (fun (i1, i2) possible_results ->
+          match N.op op i1 i2 with
+          | None -> possible_results
+          | Some result -> PR.Set.add (Exactly result) possible_results)
+        all_pairs PR.Set.empty
       in
       check_possible_results ~possible_results
-    | Known_result nums1, Need_meet ->
-      assert (not (N.Lhs.Set.is_empty nums1));
+    | Some arg, None ->
+      let nums1 = N.Lhs.Set.singleton arg in
       only_one_side_known
         (fun i -> N.op_rhs_unknown op ~lhs:i)
         nums1 ~folder:N.Lhs.Set.fold ~other_side:arg2
-    | Need_meet, Known_result nums2 ->
-      assert (not (N.Rhs.Set.is_empty nums2));
+    | None, Some arg ->
+      let nums2 = N.Rhs.Set.singleton arg in
       only_one_side_known
         (fun i -> N.op_lhs_unknown op ~rhs:i)
         nums2 ~folder:N.Rhs.Set.fold ~other_side:arg1
-    | Invalid, _ | _, Invalid | Need_meet, Need_meet ->
+    | _, _ ->
       original_term
 end
 [@@inline always]
-
 
 module Int_ops_for_binary_arith_tagged_immediate =
   Int_ops_for_binary_arith (A.For_tagged_immediates)
@@ -433,28 +429,50 @@ module Binary_int_arith_int64 =
 module Binary_int_arith_nativeint =
   Binary_arith_like (Int_ops_for_binary_arith_nativeint)
 
-let to_flambda2_type : Flambda_kind.Standard_int.t -> Flambda2_types.t =
-  fun x ->
-    Flambda2_types.bottom (Flambda_kind.Standard_int.to_kind x)
+(* NOTE: Because the physical equality uses type information in a significant way,
+   we might need to implement a similar downwards accumulator here *)
+(* let eval_phys_equal x _ _ _ = x *)
+      (* original_term *)
+      (* (op: P.equality_comparison) ~arg1_ty ~arg2_ty = *)
+  (* This primitive is only used for arguments of kind [Value]. *)
+  (* Note: We don't compare the arguments themselves for equality. Instead, we
+     know that [simplify_simple] always returns alias types, so we let the
+     prover do the matching. *)
+  (* match T.prove_physical_equality typing_env arg1_ty arg2_ty with
+   * | Proved bool ->
+   *   let result = match op with Eq -> bool | Neq -> not bool in
+   *     Simple (Simple.untagged_const_bool result)
+   * | Unknown -> original_term *)
 
+(* Trying to see if we can get the evaluation without having information from
+   the typing environment... *)
 let eval_binary
       (v : P.binary_primitive) (arg1 : core_exp) (arg2 : core_exp) : core_exp =
   match v with
   | Int_arith (kind, op) ->
     (match arg1, arg2 with
      | Named (Simple s1), Named (Simple s2) ->
-       let ty = to_flambda2_type kind
-       in
+       (* let ty = to_flambda2_type kind
+        * in *)
         Named ((match kind with
         | Tagged_immediate -> Binary_int_arith_tagged_immediate.simplify op
         | Naked_immediate -> Binary_int_arith_naked_immediate.simplify op
         | Naked_int32 -> Binary_int_arith_int32.simplify op
         | Naked_int64 -> Binary_int_arith_int64.simplify op
         | Naked_nativeint -> Binary_int_arith_nativeint.simplify op)
-       (Prim (Binary (v, arg1, arg2)))
-        ~arg1:s1 ~arg1_ty:ty ~arg2:s2 ~arg2_ty:ty)
+       (Prim (Binary (v, arg1, arg2))) ~arg1:s1 ~arg2:s2)
     | _, _ -> Named (Prim (Binary (v, arg1, arg2))))
-
+  | Phys_equal _op ->
+    (* (match arg1, arg2 with
+     *  | Named (Simple s1), Named (Simple s2) ->
+     *    let arg1_ty = s1 in
+     *    let arg2_ty = s2 in
+     *    let result =
+     *      eval_phys_equal (Prim (Binary (v, arg1, arg2))) op ~arg1_ty ~arg2_ty
+     *    in
+     *    Named result
+     *  | _, _ -> *)
+    Named (Prim (Binary (v, arg1, arg2)))
   | Block_load (Values {tag = Known _; size = _; field_kind = _},
                 (Immutable | Immutable_unique)) ->
     eval_block_load v arg1 arg2
@@ -463,7 +481,6 @@ let eval_binary
   | Array_load (_,_)
   | String_or_bigstring_load (_,_)
   | Bigarray_load (_,_,_)
-  | Phys_equal _
   | Int_shift (_,_)
   | Int_comp (_,_)
   | Float_arith _
@@ -504,10 +521,27 @@ let eval_variadic (v : P.variadic_primitive) (args : core_exp list) : named =
   | Make_array _ ->
     Misc.fatal_error "[Primitive eval]: eval_variadic_make_array_unspported"
 
-let eval (v : primitive) : core_exp =
+let rec eval (v : primitive) : core_exp =
+  let f_arg arg =
+    (match arg with
+    | Named (Prim arg) -> eval arg
+    | _ -> arg)
+  in
   match v with
   | Nullary v -> Named (eval_nullary v)
-  | Unary (v, arg) -> Named (eval_unary v arg)
-  | Binary (v, arg1, arg2) -> eval_binary v arg1 arg2
-  | Ternary (v, arg1, arg2, arg3) -> Named (eval_ternary v arg1 arg2 arg3)
-  | Variadic (v, args) -> Named (eval_variadic v args)
+  | Unary (v, arg) ->
+    Named (eval_unary v (f_arg arg))
+  | Binary (op, arg1, arg2) ->
+    Format.fprintf Format.std_formatter "%a@. [simplified prim]%a@. @."
+      print_prim v
+      print (f_arg arg1)
+    ;
+
+    eval_binary op (f_arg arg1) (f_arg arg2)
+  | Ternary (v, arg1, arg2, arg3) ->
+    Named (eval_ternary v (f_arg arg1) (f_arg arg2) (f_arg arg3))
+  | Variadic (v, args) ->
+    let args =
+      List.map f_arg args
+    in
+    Named (eval_variadic v args)
