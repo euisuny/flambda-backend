@@ -33,6 +33,27 @@ module Unary_int_arith_naked_int32 = Unary_int_arith (A.For_int32s)
 module Unary_int_arith_naked_int64 = Unary_int_arith (A.For_int64s)
 module Unary_int_arith_naked_nativeint = Unary_int_arith (A.For_nativeints)
 
+let to_elem (simple : Simple.t) =
+  let* constant =
+    Simple.pattern_match' simple
+      ~var:(fun _ ~coercion:_ -> None)
+      ~symbol:(fun _ ~coercion:_ -> None)
+      ~const:(fun t -> return t)
+  in
+  match Int_ids.Const.descr constant with
+  | Naked_float i -> return i
+  | _ -> None
+
+let eval_float_arith_op (op : P.unary_float_arith_op) original_term arg =
+  let module F = Numeric_types.Float_by_bit_pattern in
+  match to_elem arg with
+  | Some arg ->
+    let f =
+      match op with Abs -> F.IEEE_semantics.abs | Neg -> F.IEEE_semantics.neg
+    in
+    Simple (Simple.const (Reg_width_const.naked_float (f arg)))
+  | _ -> original_term
+
 let eval_unary (v : P.unary_primitive) (arg : core_exp) : named =
   match v with
   (* [Project_function_slot] and [Project_value_slot] is resolved during
@@ -50,7 +71,11 @@ let eval_unary (v : P.unary_primitive) (arg : core_exp) : named =
          | Naked_nativeint -> Unary_int_arith_naked_nativeint.simplify op)
                 (Prim (Unary (v, arg))) ~arg:s1)
      | _ -> Prim (Unary (v, arg)))
-  | Float_arith _ -> failwith "Unimplemented arith"
+  | Float_arith op ->
+    (match arg with
+     | Named (Simple s1) ->
+       eval_float_arith_op op (Prim (Unary (v, arg))) s1
+     | _ -> Prim (Unary (v, arg)))
   | Untag_immediate ->
     (match arg with
      | Named (Prim (Unary (Tag_immediate, Named (Prim (Unary (Is_int a, e)))))) ->
