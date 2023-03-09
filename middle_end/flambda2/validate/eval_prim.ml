@@ -3,6 +3,12 @@ open! Flambda2_core
 module P = Flambda_primitive
 open! Translate
 
+let ( let* ) o f =
+  match o with
+  | None -> None
+  | Some x -> f x
+
+let return x = Some x
 module A = Number_adjuncts
 
 let eval_nullary (v : P.nullary_primitive) : named =
@@ -429,20 +435,126 @@ module Binary_int_arith_int64 =
 module Binary_int_arith_nativeint =
   Binary_arith_like (Int_ops_for_binary_arith_nativeint)
 
-(* NOTE: Because the physical equality uses type information in a significant way,
-   we might need to implement a similar downwards accumulator here *)
-(* let eval_phys_equal x _ _ _ = x *)
-      (* original_term *)
-      (* (op: P.equality_comparison) ~arg1_ty ~arg2_ty = *)
-  (* This primitive is only used for arguments of kind [Value]. *)
-  (* Note: We don't compare the arguments themselves for equality. Instead, we
-     know that [simplify_simple] always returns alias types, so we let the
-     prover do the matching. *)
-  (* match T.prove_physical_equality typing_env arg1_ty arg2_ty with
-   * | Proved bool ->
-   *   let result = match op with Eq -> bool | Neq -> not bool in
-   *     Simple (Simple.untagged_const_bool result)
-   * | Unknown -> original_term *)
+module Int_ops_for_binary_shift (I : A.Int_number_kind) : sig
+  include Binary_arith_like_sig with type op = P.int_shift_op
+end = struct
+  module Lhs = I.Num
+  module Rhs = Targetint_31_63
+  module Result = I.Num
+
+  type op = P.int_shift_op
+
+  let arg_kind = I.standard_int_or_float_kind
+
+  let result_kind = K.Standard_int_or_float.to_kind arg_kind
+
+  let to_lhs_elem = I.to_elem
+
+  let to_rhs_elem simple =
+    let* constant =
+      Simple.pattern_match' simple
+        ~var:(fun _ ~coercion:_ -> None)
+        ~symbol:(fun _ ~coercion:_ -> None)
+        ~const:(fun t -> return t)
+    in
+    match Int_ids.Const.descr constant with
+    | Tagged_immediate i -> return i
+    | Naked_immediate i -> return i
+    | _ -> None
+
+  let prover_lhs = I.unboxed_prover
+
+  let prover_rhs = T.meet_naked_immediates
+
+  let unknown _ =
+    match arg_kind with
+    | Tagged_immediate -> T.any_tagged_immediate
+    | Naked_immediate -> T.any_naked_immediate
+    | Naked_float -> T.any_naked_float
+    | Naked_int32 -> T.any_naked_int32
+    | Naked_int64 -> T.any_naked_int64
+    | Naked_nativeint -> T.any_naked_nativeint
+
+  let these = I.these_unboxed
+
+  let term = I.term_unboxed
+
+  (* CR-someday mshinwell: One day this should maybe be in a standard library *)
+  module Pair = struct
+    type nonrec t = Lhs.t * Rhs.t
+
+    include Container_types.Make_pair (Lhs) (Rhs)
+  end
+
+  let cross_product set1 set2 =
+    Lhs.Set.fold
+      (fun elt1 result ->
+        Rhs.Set.fold
+          (fun elt2 result -> Pair.Set.add (elt1, elt2) result)
+          set2 result)
+      set1 Pair.Set.empty
+
+  module Num = I.Num
+
+  let op (op : P.int_shift_op) n1 n2 =
+    let always_some f = Some (f n1 n2) in
+    match op with
+    | Lsl -> always_some Num.shift_left
+    | Lsr -> always_some Num.shift_right_logical
+    | Asr -> always_some Num.shift_right
+
+  let op_lhs_unknown (op : P.int_shift_op) ~rhs :
+      Num.t binary_arith_outcome_for_one_side_only =
+    let module O = Targetint_31_63 in
+    let rhs = rhs in
+    match op with
+    | Lsl | Lsr | Asr ->
+      (* Shifting either way by [Targetint_32_64.size] or above, or by a
+         negative amount, is undefined.
+
+         However note that we cannot produce [Invalid] unless the code is type
+         unsafe, which it is not here. (Otherwise a GADT match might be reduced
+         to only one possible case which it would be wrong to take.) *)
+      if O.equal rhs O.zero then The_other_side else Cannot_simplify
+
+  let op_rhs_unknown (op : P.int_shift_op) ~lhs :
+      Num.t binary_arith_outcome_for_one_side_only =
+    (* In these cases we are giving a semantics for some cases where the
+       right-hand side may be less than zero or greater than or equal to
+       [Targetint_32_64.size]. These cases have undefined semantics, as above;
+       however, it seems fine to give them a semantics since there is benefit to
+       doing so in this particular case. (This is not the case for the situation
+       in [op_lhs_unknown], above, where there would be no such benefit.) *)
+    match op with
+    | Lsl | Lsr ->
+      if Num.equal lhs Num.zero then Exactly Num.zero else Cannot_simplify
+    | Asr ->
+      if Num.equal lhs Num.zero
+      then Exactly Num.zero
+      else if Num.equal lhs Num.minus_one
+      then Exactly Num.minus_one
+      else Cannot_simplify
+end
+[@@inline always]
+
+module Int_ops_for_binary_shift_tagged_immediate =
+  Int_ops_for_binary_shift (A.For_tagged_immediates)
+module Int_ops_for_binary_shift_naked_immediate =
+  Int_ops_for_binary_shift (A.For_naked_immediates)
+module Int_ops_for_binary_shift_int32 = Int_ops_for_binary_shift (A.For_int32s)
+module Int_ops_for_binary_shift_int64 = Int_ops_for_binary_shift (A.For_int64s)
+module Int_ops_for_binary_shift_nativeint =
+  Int_ops_for_binary_shift (A.For_nativeints)
+module Binary_int_shift_tagged_immediate =
+  Binary_arith_like (Int_ops_for_binary_shift_tagged_immediate)
+module Binary_int_shift_naked_immediate =
+  Binary_arith_like (Int_ops_for_binary_shift_naked_immediate)
+module Binary_int_shift_int32 =
+  Binary_arith_like (Int_ops_for_binary_shift_int32)
+module Binary_int_shift_int64 =
+  Binary_arith_like (Int_ops_for_binary_shift_int64)
+module Binary_int_shift_nativeint =
+  Binary_arith_like (Int_ops_for_binary_shift_nativeint)
 
 (* Trying to see if we can get the evaluation without having information from
    the typing environment... *)
@@ -452,8 +564,6 @@ let eval_binary
   | Int_arith (kind, op) ->
     (match arg1, arg2 with
      | Named (Simple s1), Named (Simple s2) ->
-       (* let ty = to_flambda2_type kind
-        * in *)
         Named ((match kind with
         | Tagged_immediate -> Binary_int_arith_tagged_immediate.simplify op
         | Naked_immediate -> Binary_int_arith_naked_immediate.simplify op
@@ -461,18 +571,19 @@ let eval_binary
         | Naked_int64 -> Binary_int_arith_int64.simplify op
         | Naked_nativeint -> Binary_int_arith_nativeint.simplify op)
        (Prim (Binary (v, arg1, arg2))) ~arg1:s1 ~arg2:s2)
-    | _, _ -> Named (Prim (Binary (v, arg1, arg2))))
-  | Phys_equal _op ->
-    (* (match arg1, arg2 with
-     *  | Named (Simple s1), Named (Simple s2) ->
-     *    let arg1_ty = s1 in
-     *    let arg2_ty = s2 in
-     *    let result =
-     *      eval_phys_equal (Prim (Binary (v, arg1, arg2))) op ~arg1_ty ~arg2_ty
-     *    in
-     *    Named result
-     *  | _, _ -> *)
-    Named (Prim (Binary (v, arg1, arg2)))
+     | _, _ -> Named (Prim (Binary (v, arg1, arg2))))
+  | Int_shift (kind, op) ->
+    (match arg1, arg2 with
+     | Named (Simple s1), Named (Simple s2) ->
+       Named ((match kind with
+         | Tagged_immediate -> Binary_int_shift_tagged_immediate.simplify op
+         | Naked_immediate -> Binary_int_shift_naked_immediate.simplify op
+         | Naked_int32 -> Binary_int_shift_int32.simplify op
+         | Naked_int64 -> Binary_int_shift_int64.simplify op
+         | Naked_nativeint -> Binary_int_shift_nativeint.simplify op)
+                (Prim (Binary (v, arg1, arg2))) ~arg1:s1 ~arg2:s2)
+     | _, _ -> Named (Prim (Binary (v, arg1, arg2))))
+  | Int_comp (_,_)
   | Block_load (Values {tag = Known _; size = _; field_kind = _},
                 (Immutable | Immutable_unique)) ->
     eval_block_load v arg1 arg2
@@ -481,8 +592,7 @@ let eval_binary
   | Array_load (_,_)
   | String_or_bigstring_load (_,_)
   | Bigarray_load (_,_,_)
-  | Int_shift (_,_)
-  | Int_comp (_,_)
+  | Phys_equal _
   | Float_arith _
   | Float_comp _ -> Named (Prim (Binary (v, arg1, arg2)))
 
