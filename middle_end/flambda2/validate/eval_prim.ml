@@ -83,7 +83,7 @@ type 'a binary_arith_outcome_for_one_side_only =
   | Exactly of 'a
   | The_other_side
   | Negation_of_the_other_side
-  (* | Float_negation_of_the_other_side *)
+  | Float_negation_of_the_other_side
   | Cannot_simplify
   | Invalid
 
@@ -376,9 +376,9 @@ end = struct
                   Unary (Int_arith (standard_int_kind, Neg), other_side)
                 in
                 Some (PR.Set.add (Prim (Translate.prim_to_core prim)) possible_results)
-              (* | Float_negation_of_the_other_side ->
-               *   let prim : P.t = Unary (Float_arith Neg, other_side) in
-               *   Some (PR.Set.add (Prim (Translate.prim_to_core prim)) possible_results) *)
+              | Float_negation_of_the_other_side ->
+                let prim : P.t = Unary (Float_arith Neg, other_side) in
+                Some (PR.Set.add (Prim (Translate.prim_to_core prim)) possible_results)
               | Cannot_simplify -> None
               | _ -> Some possible_results))
           nums (Some PR.Set.empty)
@@ -556,6 +556,312 @@ module Binary_int_shift_int64 =
 module Binary_int_shift_nativeint =
   Binary_arith_like (Int_ops_for_binary_shift_nativeint)
 
+module Int_ops_for_binary_comp (I : A.Int_number_kind) : sig
+  include
+    Binary_arith_like_sig
+      with type op = P.signed_or_unsigned P.comparison_behaviour
+end = struct
+  module Lhs = I.Num
+  module Rhs = I.Num
+  module Result = Targetint_31_63
+
+  type op = P.signed_or_unsigned P.comparison_behaviour
+
+  let arg_kind = I.standard_int_or_float_kind
+
+  let result_kind = K.naked_immediate
+
+  let to_lhs_elem = I.to_elem
+  let to_rhs_elem = I.to_elem
+
+  let prover_lhs = I.unboxed_prover
+
+  let prover_rhs = I.unboxed_prover
+
+  let unknown (op : op) =
+    match op with
+    | Yielding_bool _ -> T.these_naked_immediates Targetint_31_63.all_bools
+    | Yielding_int_like_compare_functions _signedness ->
+      T.these_naked_immediates Targetint_31_63.zero_one_and_minus_one
+
+  let these = T.these_naked_immediates
+
+  let term imm : named =
+    Simple (Simple.const (Reg_width_const.naked_immediate imm))
+
+  module Pair = I.Num.Pair
+
+  let cross_product = I.Num.cross_product
+
+  module Num = I.Num
+
+  let op (op : P.signed_or_unsigned P.comparison_behaviour) n1 n2 =
+    match op with
+    | Yielding_bool op -> (
+      let bool b = Targetint_31_63.bool b in
+      match op with
+      | Eq -> Some (bool (Num.compare n1 n2 = 0))
+      | Neq -> Some (bool (Num.compare n1 n2 <> 0))
+      | Lt Signed -> Some (bool (Num.compare n1 n2 < 0))
+      | Gt Signed -> Some (bool (Num.compare n1 n2 > 0))
+      | Le Signed -> Some (bool (Num.compare n1 n2 <= 0))
+      | Ge Signed -> Some (bool (Num.compare n1 n2 >= 0))
+      | Lt Unsigned -> Some (bool (Num.compare_unsigned n1 n2 < 0))
+      | Gt Unsigned -> Some (bool (Num.compare_unsigned n1 n2 > 0))
+      | Le Unsigned -> Some (bool (Num.compare_unsigned n1 n2 <= 0))
+      | Ge Unsigned -> Some (bool (Num.compare_unsigned n1 n2 >= 0)))
+    | Yielding_int_like_compare_functions signed_or_unsigned -> (
+      match signed_or_unsigned with
+      | Signed ->
+        let int i = Targetint_31_63.of_int i in
+        let c = Num.compare n1 n2 in
+        if c < 0
+        then Some (int (-1))
+        else if c = 0
+        then Some (int 0)
+        else Some (int 1)
+      | Unsigned ->
+        let int i = Targetint_31_63.of_int i in
+        let c = Num.compare_unsigned n1 n2 in
+        if c < 0
+        then Some (int (-1))
+        else if c = 0
+        then Some (int 0)
+        else Some (int 1))
+
+  let op_lhs_unknown _op ~rhs:_ = Cannot_simplify
+
+  let op_rhs_unknown _op ~lhs:_ = Cannot_simplify
+end
+[@@inline always]
+
+module Int_ops_for_binary_comp_tagged_immediate =
+  Int_ops_for_binary_comp (A.For_tagged_immediates)
+module Int_ops_for_binary_comp_naked_immediate =
+  Int_ops_for_binary_comp (A.For_naked_immediates)
+module Int_ops_for_binary_comp_int32 = Int_ops_for_binary_comp (A.For_int32s)
+module Int_ops_for_binary_comp_int64 = Int_ops_for_binary_comp (A.For_int64s)
+module Int_ops_for_binary_comp_nativeint =
+  Int_ops_for_binary_comp (A.For_nativeints)
+module Binary_int_comp_tagged_immediate =
+  Binary_arith_like (Int_ops_for_binary_comp_tagged_immediate)
+module Binary_int_comp_naked_immediate =
+  Binary_arith_like (Int_ops_for_binary_comp_naked_immediate)
+module Binary_int_comp_int32 = Binary_arith_like (Int_ops_for_binary_comp_int32)
+module Binary_int_comp_int64 = Binary_arith_like (Int_ops_for_binary_comp_int64)
+module Binary_int_comp_nativeint =
+  Binary_arith_like (Int_ops_for_binary_comp_nativeint)
+
+module Float_by_bit_pattern = Numeric_types.Float_by_bit_pattern
+module Float_ops_for_binary_arith : sig
+  include Binary_arith_like_sig with type op = P.binary_float_arith_op
+end = struct
+  module F = Float_by_bit_pattern
+  module Lhs = F
+  module Rhs = F
+  module Result = F
+
+  type op = P.binary_float_arith_op
+
+  let arg_kind = K.Standard_int_or_float.Naked_float
+
+  let result_kind = K.naked_float
+
+  let to_elem (simple : Simple.t) =
+    let* constant =
+      Simple.pattern_match' simple
+        ~var:(fun _ ~coercion:_ -> None)
+        ~symbol:(fun _ ~coercion:_ -> None)
+        ~const:(fun t -> return t)
+    in
+    match Int_ids.Const.descr constant with
+    | Naked_float i -> return i
+    | _ -> None
+
+  let to_lhs_elem = to_elem
+  let to_rhs_elem = to_elem
+
+  let prover_lhs = T.meet_naked_floats
+
+  let prover_rhs = T.meet_naked_floats
+
+  let unknown _ = T.any_naked_float
+
+  let these = T.these_naked_floats
+
+  let term f =
+    Simple (Simple.const (Reg_width_const.naked_float f))
+
+  module Pair = F.Pair
+
+  let cross_product = F.cross_product
+
+  let op (op : op) n1 n2 =
+    let always_some f = Some (f n1 n2) in
+    match op with
+    | Add -> always_some F.IEEE_semantics.add
+    | Sub -> always_some F.IEEE_semantics.sub
+    | Mul -> always_some F.IEEE_semantics.mul
+    | Div -> always_some F.IEEE_semantics.div
+
+  type symmetric_op =
+    | Add
+    | Mul
+
+  (* To be certain of correctness we restrict identities on floating-point
+     numbers to those that preserve the _bit pattern_. *)
+
+  let symmetric_op_one_side_unknown (op : symmetric_op) ~this_side :
+      F.t binary_arith_outcome_for_one_side_only =
+    match op with
+    | Add ->
+      (* You might think that "x + 0" has the same representation as "x".
+         However it doesn't in the case where that constant zero is +0 and x is
+         equal to -0. *)
+      Cannot_simplify
+    | Mul ->
+      if F.equal this_side F.one
+      then
+        The_other_side
+        [@z3 check_float_binary_neutral `Mul 1.0 `Right]
+        [@z3 check_float_binary_neutral `Mul 1.0 `Left]
+      else if F.equal this_side F.minus_one
+      then
+        Float_negation_of_the_other_side
+        [@z3 check_float_binary_opposite `Mul (-1.0) `Left]
+        [@z3 check_float_binary_opposite `Mul (-1.0) `Right]
+      else Cannot_simplify
+
+  let op_lhs_unknown (op : op) ~rhs : F.t binary_arith_outcome_for_one_side_only
+      =
+    match op with
+    | Add -> symmetric_op_one_side_unknown Add ~this_side:rhs
+    | Mul -> symmetric_op_one_side_unknown Mul ~this_side:rhs
+    | Sub -> Cannot_simplify
+    | Div ->
+      if F.equal rhs F.one
+      then The_other_side [@z3 check_float_binary_neutral `Div 1.0 `Right]
+      else if F.equal rhs F.minus_one
+      then
+        Float_negation_of_the_other_side
+        [@z3 check_float_binary_opposite `Div (-1.0) `Right]
+      else Cannot_simplify
+
+  let op_rhs_unknown (op : op) ~lhs : F.t binary_arith_outcome_for_one_side_only
+      =
+    match op with
+    | Add -> symmetric_op_one_side_unknown Add ~this_side:lhs
+    | Mul -> symmetric_op_one_side_unknown Mul ~this_side:lhs
+    | Sub -> Cannot_simplify
+    | Div -> Cannot_simplify
+end
+
+module Binary_float_arith = Binary_arith_like (Float_ops_for_binary_arith)
+
+module Float_ops_for_binary_comp : sig
+  include Binary_arith_like_sig with type op = unit P.comparison_behaviour
+end = struct
+  module F = Float_by_bit_pattern
+  module Lhs = F
+  module Rhs = F
+  module Result = Targetint_31_63
+
+  type op = unit P.comparison_behaviour
+
+  let arg_kind = K.Standard_int_or_float.Naked_float
+
+  let result_kind = K.naked_immediate
+
+  let to_elem (simple : Simple.t) =
+    let* constant =
+      Simple.pattern_match' simple
+        ~var:(fun _ ~coercion:_ -> None)
+        ~symbol:(fun _ ~coercion:_ -> None)
+        ~const:(fun t -> return t)
+    in
+    match Int_ids.Const.descr constant with
+    | Naked_float i -> return i
+    | _ -> None
+
+  let to_lhs_elem = to_elem
+  let to_rhs_elem = to_elem
+
+  let prover_lhs = T.meet_naked_floats
+
+  let prover_rhs = T.meet_naked_floats
+
+  let unknown (op : op) =
+    match op with
+    | Yielding_bool _ -> T.these_naked_immediates Targetint_31_63.all_bools
+    | Yielding_int_like_compare_functions () ->
+      T.these_naked_immediates Targetint_31_63.zero_one_and_minus_one
+
+  let these = T.these_naked_immediates
+
+  let term imm : named =
+    Simple (Simple.const (Reg_width_const.naked_immediate imm))
+
+  module Pair = F.Pair
+
+  let cross_product = F.cross_product
+
+  let op (op : op) n1 n2 =
+    match op with
+    | Yielding_bool op -> (
+      let has_nan = F.is_any_nan n1 || F.is_any_nan n2 in
+      let bool b = Targetint_31_63.bool b in
+      match op with
+      | Eq -> Some (bool (F.IEEE_semantics.equal n1 n2))
+      | Neq -> Some (bool (not (F.IEEE_semantics.equal n1 n2)))
+      | Lt () ->
+        if has_nan
+        then Some (bool false)
+        else Some (bool (F.IEEE_semantics.compare n1 n2 < 0))
+      | Gt () ->
+        if has_nan
+        then Some (bool false)
+        else Some (bool (F.IEEE_semantics.compare n1 n2 > 0))
+      | Le () ->
+        if has_nan
+        then Some (bool false)
+        else Some (bool (F.IEEE_semantics.compare n1 n2 <= 0))
+      | Ge () ->
+        if has_nan
+        then Some (bool false)
+        else Some (bool (F.IEEE_semantics.compare n1 n2 >= 0)))
+    | Yielding_int_like_compare_functions () ->
+      let int i = Targetint_31_63.of_int i in
+      let c = F.IEEE_semantics.compare n1 n2 in
+      if c < 0
+      then Some (int (-1))
+      else if c = 0
+      then Some (int 0)
+      else Some (int 1)
+
+  let result_of_comparison_with_nan (op : unit P.comparison) =
+    match op with
+    | Neq -> Exactly Targetint_31_63.bool_true
+    | Eq | Lt () | Gt () | Le () | Ge () -> Exactly Targetint_31_63.bool_false
+
+  let op_lhs_unknown (op : op) ~rhs : _ binary_arith_outcome_for_one_side_only =
+    match op with
+    | Yielding_bool op ->
+      if F.is_any_nan rhs
+      then result_of_comparison_with_nan op
+      else Cannot_simplify
+    | Yielding_int_like_compare_functions () -> Cannot_simplify
+
+  let op_rhs_unknown (op : op) ~lhs : _ binary_arith_outcome_for_one_side_only =
+    match op with
+    | Yielding_bool op ->
+      if F.is_any_nan lhs
+      then result_of_comparison_with_nan op
+      else Cannot_simplify
+    | Yielding_int_like_compare_functions () -> Cannot_simplify
+end
+
+module Binary_float_comp = Binary_arith_like (Float_ops_for_binary_comp)
+
 (* Trying to see if we can get the evaluation without having information from
    the typing environment... *)
 let eval_binary
@@ -583,7 +889,29 @@ let eval_binary
          | Naked_nativeint -> Binary_int_shift_nativeint.simplify op)
                 (Prim (Binary (v, arg1, arg2))) ~arg1:s1 ~arg2:s2)
      | _, _ -> Named (Prim (Binary (v, arg1, arg2))))
-  | Int_comp (_,_)
+  | Int_comp (kind, op) ->
+    (match arg1, arg2 with
+     | Named (Simple s1), Named (Simple s2) ->
+       Named ((match kind with
+         | Tagged_immediate -> Binary_int_comp_tagged_immediate.simplify op
+         | Naked_immediate -> Binary_int_comp_naked_immediate.simplify op
+         | Naked_int32 -> Binary_int_comp_int32.simplify op
+         | Naked_int64 -> Binary_int_comp_int64.simplify op
+         | Naked_nativeint -> Binary_int_comp_nativeint.simplify op)
+                (Prim (Binary (v, arg1, arg2))) ~arg1:s1 ~arg2:s2)
+     | _, _ -> Named (Prim (Binary (v, arg1, arg2))))
+  | Float_arith op ->
+    (match arg1, arg2 with
+     | Named (Simple s1), Named (Simple s2) ->
+       Named (Binary_float_arith.simplify op
+                (Prim (Binary (v, arg1, arg2))) ~arg1:s1 ~arg2:s2)
+     | _, _ -> Named (Prim (Binary (v, arg1, arg2))))
+  | Float_comp op ->
+    (match arg1, arg2 with
+     | Named (Simple s1), Named (Simple s2) ->
+       Named (Binary_float_comp.simplify op
+                (Prim (Binary (v, arg1, arg2))) ~arg1:s1 ~arg2:s2)
+     | _, _ -> Named (Prim (Binary (v, arg1, arg2))))
   | Block_load (Values {tag = Known _; size = _; field_kind = _},
                 (Immutable | Immutable_unique)) ->
     eval_block_load v arg1 arg2
@@ -592,9 +920,7 @@ let eval_binary
   | Array_load (_,_)
   | String_or_bigstring_load (_,_)
   | Bigarray_load (_,_,_)
-  | Phys_equal _
-  | Float_arith _
-  | Float_comp _ -> Named (Prim (Binary (v, arg1, arg2)))
+  | Phys_equal _ -> Named (Prim (Binary (v, arg1, arg2)))
 
 let eval_ternary (_v : P.ternary_primitive)
       (_arg1 : core_exp) (_arg2 : core_exp) (_arg3 : core_exp) : named =
