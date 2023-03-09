@@ -58,7 +58,9 @@ let eval_unary (v : P.unary_primitive) (arg : core_exp) : named =
   match v with
   (* [Project_function_slot] and [Project_value_slot] is resolved during
      instantiating closures in the normalization process *)
-  | Project_value_slot _ | Project_function_slot _ ->
+  | Project_value_slot _ | Project_function_slot _
+  | Box_number _ | Unbox_number _
+  | Tag_immediate ->
     Prim (Unary (v, arg))
   | Int_arith (kind, op) ->
     (match arg with
@@ -82,12 +84,12 @@ let eval_unary (v : P.unary_primitive) (arg : core_exp) : named =
        (Prim (Unary (Is_int a, e)))
      | _ -> (Prim (Unary (v, arg))))
   | ( Get_tag | Array_length | Int_as_pointer | Boolean_not
-    | Reinterpret_int64_as_float | Tag_immediate
+    | Reinterpret_int64_as_float
     | Is_boxed_float | Is_flat_float_array | Begin_try_region
     | End_region | Obj_dup | Duplicate_block _ | Duplicate_array _
     | Is_int _ | Bigarray_length _ | String_length _
     | Opaque_identity _
-    | Num_conv _ | Unbox_number _ | Box_number (_, _)) ->
+    | Num_conv _ ) ->
     (Prim (Unary (v, arg)))
 
 let simple_tagged_immediate ~(const : Simple.t) : Targetint_31_63.t option =
@@ -917,11 +919,64 @@ end
 
 module Binary_float_comp = Binary_arith_like (Float_ops_for_binary_comp)
 
+type simple_type =
+  | Var of Variable.t
+  | Symbol of Symbol.t
+  | Naked_immediate of Targetint_31_63.t
+  | Tagged_immediate of Targetint_31_63.t
+  | Naked_float of Numeric_types.Float_by_bit_pattern.t
+  | Naked_int32 of Int32.t
+  | Naked_int64 of Int64.t
+  | Naked_nativeint of Targetint_32_64.t
+
+let simple_with_type (s : Simple.t) : simple_type =
+  Simple.pattern_match' s
+    ~var:(fun v ~coercion:_ -> Var v)
+    ~symbol:(fun s ~coercion:_ -> Symbol s)
+    ~const:(fun x ->
+      match Int_ids.Const.descr x with
+      | Naked_immediate i -> Naked_immediate i
+      | Tagged_immediate i -> Tagged_immediate i
+      | Naked_float i -> Naked_float i
+      | Naked_int32 i -> Naked_int32 i
+      | Naked_int64 i -> Naked_int64 i
+      | Naked_nativeint i -> Naked_nativeint i)
+
+let eval_phys_equal (op : P.equality_comparison) original_term arg1 arg2 =
+  let arg1 = simple_with_type arg1 in
+  let arg2 = simple_with_type arg2 in
+  let equal =
+    (match arg1, arg2 with
+     | Var v1, Var v2 ->
+       Some (Variable.equal v1 v2)
+      | Symbol s1, Symbol s2 ->
+        Some (Symbol.equal s1 s2)
+      | Symbol _, _ | _, Symbol _ | Var _, _ | _, Var _ -> None
+      | Naked_immediate i1, Naked_immediate i2 ->
+        Some (i1 <= i2 && i2 <= i1)
+      | Tagged_immediate i1, Tagged_immediate i2 ->
+        Some (i1 <= i2 && i2 <= i1)
+      | Naked_float i1, Naked_float i2 ->
+        Some (Float_by_bit_pattern.IEEE_semantics.equal i1 i2)
+      | Naked_int32 i1, Naked_int32 i2 -> Some (Int32.equal i1 i2)
+      | Naked_int64 i1, Naked_int64 i2 -> Some (Int64.equal i1 i2)
+      | _, _ -> Some false)
+  in
+  match equal, op with
+  | None, _ -> original_term
+  | Some equal, Eq -> Named (Simple (Simple.untagged_const_bool equal))
+  | Some equal, Neq -> Named (Simple (Simple.untagged_const_bool (not equal)))
+
 (* Trying to see if we can get the evaluation without having information from
    the typing environment... *)
 let eval_binary
       (v : P.binary_primitive) (arg1 : core_exp) (arg2 : core_exp) : core_exp =
   match v with
+  | Phys_equal op ->
+    (match arg1, arg2 with
+     | Named (Simple s1), Named (Simple s2) ->
+       eval_phys_equal op (Named (Prim (Binary (v, arg1, arg2)))) s1 s2
+     | _, _ -> Named (Prim (Binary (v, arg1, arg2))))
   | Int_arith (kind, op) ->
     (match arg1, arg2 with
      | Named (Simple s1), Named (Simple s2) ->
@@ -974,8 +1029,7 @@ let eval_binary
   | Block_load (_, _)
   | Array_load (_,_)
   | String_or_bigstring_load (_,_)
-  | Bigarray_load (_,_,_)
-  | Phys_equal _ -> Named (Prim (Binary (v, arg1, arg2)))
+  | Bigarray_load (_,_,_) -> Named (Prim (Binary (v, arg1, arg2)))
 
 let eval_ternary (_v : P.ternary_primitive)
       (_arg1 : core_exp) (_arg2 : core_exp) (_arg3 : core_exp) : named =
