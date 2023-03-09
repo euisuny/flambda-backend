@@ -10,6 +10,8 @@ let ( let* ) o f =
 
 let return x = Some x
 module A = Number_adjuncts
+module K = Flambda_kind
+module T = Flambda2_types
 
 let eval_nullary (v : P.nullary_primitive) : named =
   Prim (Nullary v)
@@ -44,6 +46,42 @@ let to_elem (simple : Simple.t) =
   | Naked_float i -> return i
   | _ -> None
 
+module Make_simplify_int_conv (N : A.Number_kind) = struct
+  let simplify ~(dst : K.Standard_int_or_float.t) ~original_term ~arg =
+    if K.Standard_int_or_float.equal N.standard_int_or_float_kind dst
+    then
+      (Simple arg)
+    else
+      let module Num = N.Num in
+      match N.to_elem arg with
+      | Some arg ->
+        (match dst with
+         | Tagged_immediate ->
+           Simple (Simple.const (Int_ids.Const.tagged_immediate (Num.to_immediate arg)))
+         | Naked_immediate ->
+           Simple (Simple.const (Int_ids.Const.naked_immediate (Num.to_immediate arg)))
+         | Naked_float ->
+           Simple (Simple.const (Int_ids.Const.naked_float (Num.to_naked_float arg)))
+         | Naked_int32 ->
+           Simple (Simple.const (Int_ids.Const.naked_int32 (Num.to_naked_int32 arg)))
+         | Naked_int64 ->
+           Simple (Simple.const (Int_ids.Const.naked_int64 (Num.to_naked_int64 arg)))
+         | Naked_nativeint ->
+           Simple (Simple.const (Int_ids.Const.naked_nativeint (Num.to_naked_nativeint arg)))
+        )
+      | None -> original_term
+end
+
+module Simplify_int_conv_tagged_immediate =
+  Make_simplify_int_conv (A.For_tagged_immediates)
+module Simplify_int_conv_naked_immediate =
+  Make_simplify_int_conv (A.For_naked_immediates)
+module Simplify_int_conv_naked_float = Make_simplify_int_conv (A.For_floats)
+module Simplify_int_conv_naked_int32 = Make_simplify_int_conv (A.For_int32s)
+module Simplify_int_conv_naked_int64 = Make_simplify_int_conv (A.For_int64s)
+module Simplify_int_conv_naked_nativeint =
+  Make_simplify_int_conv (A.For_nativeints)
+
 let eval_float_arith_op (op : P.unary_float_arith_op) original_term arg =
   let module F = Numeric_types.Float_by_bit_pattern in
   match to_elem arg with
@@ -73,6 +111,18 @@ let eval_unary (v : P.unary_primitive) (arg : core_exp) : named =
          | Naked_nativeint -> Unary_int_arith_naked_nativeint.simplify op)
                 (Prim (Unary (v, arg))) ~arg:s1)
      | _ -> Prim (Unary (v, arg)))
+  | Num_conv { src; dst } ->
+    (match arg with
+     | Named (Simple s1) ->
+       (match src with
+        | Tagged_immediate -> Simplify_int_conv_tagged_immediate.simplify ~dst
+        | Naked_immediate -> Simplify_int_conv_naked_immediate.simplify ~dst
+        | Naked_float -> Simplify_int_conv_naked_float.simplify ~dst
+        | Naked_int32 -> Simplify_int_conv_naked_int32.simplify ~dst
+        | Naked_int64 -> Simplify_int_conv_naked_int64.simplify ~dst
+        | Naked_nativeint -> Simplify_int_conv_naked_nativeint.simplify ~dst)
+         ~original_term:(Prim (Unary (v, arg))) ~arg:s1
+     | _ -> Prim (Unary (v, arg)))
   | Float_arith op ->
     (match arg with
      | Named (Simple s1) ->
@@ -89,7 +139,7 @@ let eval_unary (v : P.unary_primitive) (arg : core_exp) : named =
     | End_region | Obj_dup | Duplicate_block _ | Duplicate_array _
     | Is_int _ | Bigarray_length _ | String_length _
     | Opaque_identity _
-    | Num_conv _ ) ->
+    ) ->
     (Prim (Unary (v, arg)))
 
 let simple_tagged_immediate ~(const : Simple.t) : Targetint_31_63.t option =
@@ -132,9 +182,6 @@ let eval_block_load v arg1 arg2 =
     else
       Named (Prim (Binary (v, arg1, arg2)))
   | _, _ -> Named (Prim (Binary (v, arg1, arg2))))
-
-module K = Flambda_kind
-module T = Flambda2_types
 
 type 'a binary_arith_outcome_for_one_side_only =
   | Exactly of 'a
