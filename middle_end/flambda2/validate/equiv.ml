@@ -46,7 +46,7 @@ module Env = struct
 
   let add_value_slot t value_slot1 value_slot2 =
     t.value_slots <- Value_slot.Map.add value_slot1 value_slot2 t.value_slots;
-    t.value_slots
+    t.value_slots_rev
       <- Value_slot.Map.add value_slot2 value_slot1 t.value_slots_rev
 
   let find_symbol t sym = Symbol.Map.find_opt sym t.symbols
