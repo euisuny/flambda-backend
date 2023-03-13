@@ -96,9 +96,6 @@ let subst_function_expr env (fn_expr : function_expr) =
   | Id id -> Id (subst_code_id env id)
   | Exp _ -> fn_expr
 
-let _subst_code_id (env : Env.t) code_id =
-  Env.find_code_id env code_id |> Option.value ~default:code_id
-
 (** Equality between two programs given a context **)
 (* For now, following a naive alpha-equivalence equality from [compare/compare]
     (without the discriminant) *)
