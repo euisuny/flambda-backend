@@ -40,7 +40,7 @@ module Env = struct
   let add_function_slot t function_slot1 function_slot2 =
     t.function_slots
       <- Function_slot.Map.add function_slot1 function_slot2 t.function_slots;
-    t.function_slots
+    t.function_slots_rev
       <- Function_slot.Map.add function_slot2 function_slot1
            t.function_slots_rev
 
