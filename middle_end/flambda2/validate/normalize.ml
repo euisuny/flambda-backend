@@ -425,7 +425,8 @@ let rec normalize (e:core_exp) : core_exp =
 and normalize_switch scrutinee arms : core_exp =
   (* if the scrutinee is exactly one of the arms, simplify *)
   match scrutinee with
-  | Named (Simple s) -> (
+  | Named (Prim (Unary (Untag_immediate, (Named (Simple s))))) |
+    Named (Simple s) -> (
       let constant =
         Simple.pattern_match' s
           ~var:(fun _ ~coercion:_ -> None)

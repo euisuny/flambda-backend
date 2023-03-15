@@ -148,6 +148,12 @@ let eval_unary (v : P.unary_primitive) (arg : core_exp) : named =
        (Prim (Unary (Is_int a, e)))
      | Named (Prim (Unary (Tag_immediate, Named (Prim (Unary (Get_tag, e)))))) ->
        (Prim (Unary (Get_tag, e)))
+     | Named (Prim (Unary (Tag_immediate,
+                           Named (Prim (Binary (Int_comp (c, x), a1, a2)))))) ->
+       (Prim (Binary (Int_comp (c, x), a1, a2)))
+     | Named (Prim (Unary (Tag_immediate,
+                           Named (Prim (Binary (Phys_equal c, a1, a2)))))) ->
+       (Prim (Binary (Phys_equal c, a1, a2)))
      | Named (Prim (Unary (Tag_immediate, Named (Simple a)))) ->
        (let constant =
           Simple.pattern_match' a
@@ -1055,7 +1061,10 @@ let eval_binary
      | _, _ -> Named (Prim (Binary (v, arg1, arg2))))
   | Int_arith (kind, op) ->
     (match arg1, arg2 with
-     | Named (Simple s1), Named (Simple s2) ->
+     | Named (Simple s1),
+       (Named (Simple s2) |
+        Named (Prim (Unary (Tag_immediate, (Named (Simple s2))))) |
+        Named (Prim (Unary (Untag_immediate, (Named (Simple s2)))))) ->
         Named ((match kind with
         | Tagged_immediate -> Binary_int_arith_tagged_immediate.simplify op
         | Naked_immediate -> Binary_int_arith_naked_immediate.simplify op
@@ -1066,7 +1075,10 @@ let eval_binary
      | _, _ -> Named (Prim (Binary (v, arg1, arg2))))
   | Int_shift (kind, op) ->
     (match arg1, arg2 with
-     | Named (Simple s1), Named (Simple s2) ->
+     | Named (Simple s1),
+       (Named (Simple s2) |
+        Named (Prim (Unary (Tag_immediate, (Named (Simple s2))))) |
+        Named (Prim (Unary (Untag_immediate, (Named (Simple s2)))))) ->
        Named ((match kind with
          | Tagged_immediate -> Binary_int_shift_tagged_immediate.simplify op
          | Naked_immediate -> Binary_int_shift_naked_immediate.simplify op
