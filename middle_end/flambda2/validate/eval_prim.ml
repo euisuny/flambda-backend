@@ -133,6 +133,10 @@ let eval_unary (v : P.unary_primitive) (arg : core_exp) : named =
      | _ -> Prim (Unary (v, arg)))
   | Untag_immediate ->
     (match arg with
+     | Named (Prim (Unary (Tag_immediate, Named (Prim (Unary (Is_int a, e)))))) ->
+       (Prim (Unary (Is_int a, e)))
+     | Named (Prim (Unary (Tag_immediate, Named (Prim (Unary (Get_tag, e)))))) ->
+       (Prim (Unary (Get_tag, e)))
      | Named (Prim (Unary (Tag_immediate, Named (Simple a)))) ->
        (let constant =
           Simple.pattern_match' a
