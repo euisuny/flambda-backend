@@ -414,11 +414,33 @@ let rec normalize (e:core_exp) : core_exp =
       ~f:(fun x e ->
         Lambda (Core_lambda.create x (normalize e)))
   | Switch {scrutinee; arms} ->
-    Switch
-      {scrutinee = normalize scrutinee;
-            arms = Targetint_31_63.Map.map normalize arms}
+    let scrutinee = normalize scrutinee
+    in
+    let arms = Targetint_31_63.Map.map normalize arms
+    in
+    normalize_switch scrutinee arms
   | Named _
   | Invalid _ -> e
+
+and normalize_switch scrutinee arms : core_exp =
+  (* if the scrutinee is exactly one of the arms, simplify *)
+  match scrutinee with
+  | Named (Simple s) -> (
+      let constant =
+        Simple.pattern_match' s
+          ~var:(fun _ ~coercion:_ -> None)
+          ~symbol:(fun _ ~coercion:_ -> None)
+          ~const:(fun t -> Some t)
+      in
+      match constant with
+      | Some constant ->
+        (match Int_ids.Const.descr constant with
+         | Naked_immediate i | Tagged_immediate i ->
+           (Targetint_31_63.Map.find i arms)
+         | _ -> Switch {scrutinee; arms})
+      | None -> Switch {scrutinee; arms}
+    )
+  | _ -> Switch {scrutinee; arms}
 
 and normalize_let let_abst body : core_exp =
   let x, e1, e2 =

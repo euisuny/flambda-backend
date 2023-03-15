@@ -92,21 +92,13 @@ let eval_float_arith_op (op : P.unary_float_arith_op) original_term arg =
     Simple (Simple.const (Reg_width_const.naked_float (f arg)))
   | _ -> original_term
 
-(* let* constant =
- *   Simple.pattern_match' simple
- *     ~var:(fun _ ~coercion:_ -> None)
- *     ~symbol:(fun _ ~coercion:_ -> None)
- *     ~const:(fun t -> return t)
- * in
- * match Int_ids.Const.descr constant with *)
-
 let eval_unary (v : P.unary_primitive) (arg : core_exp) : named =
   match v with
   (* [Project_function_slot] and [Project_value_slot] is resolved during
      instantiating closures in the normalization process *)
   | Project_value_slot _ | Project_function_slot _
-  | Box_number _ | Unbox_number _
-  | Tag_immediate -> Prim (Unary (v, arg))
+  | Box_number _ | Unbox_number _ ->
+    Prim (Unary (v, arg))
   | Int_arith (kind, op) ->
     (match arg with
      | Named (Simple s1) ->
@@ -135,11 +127,12 @@ let eval_unary (v : P.unary_primitive) (arg : core_exp) : named =
      | Named (Simple s1) ->
        eval_float_arith_op op (Prim (Unary (v, arg))) s1
      | _ -> Prim (Unary (v, arg)))
-  (* TODO: Double-check *)
+  | Tag_immediate ->
+    (match arg with
+     | Named (Prim (Unary (Untag_immediate, Named a))) -> a
+     | _ -> Prim (Unary (v, arg)))
   | Untag_immediate ->
     (match arg with
-     | Named (Prim (Unary (Tag_immediate, Named (Prim (Unary (Is_int a, e)))))) ->
-       (Prim (Unary (Is_int a, e)))
      | Named (Prim (Unary (Tag_immediate, Named (Simple a)))) ->
        (let constant =
           Simple.pattern_match' a
@@ -150,8 +143,8 @@ let eval_unary (v : P.unary_primitive) (arg : core_exp) : named =
         match constant with
         | Some constant ->
           (match Int_ids.Const.descr constant with
-          | Naked_immediate _ -> (Simple a)
-          | _ -> (Prim (Unary (v, arg))))
+           | Naked_immediate _ | Tagged_immediate _ -> (Simple a)
+           | _ -> (Prim (Unary (v, arg))))
         | None -> (Prim (Unary (v, arg))))
      | _ -> (Prim (Unary (v, arg))))
   | ( Get_tag | Array_length | Int_as_pointer | Boolean_not
@@ -510,7 +503,7 @@ end = struct
       in
       match possible_results with
       | Some results -> check_possible_results ~possible_results:results
-      | None -> Misc.fatal_error "No possible results"
+      | None -> original_term
     in
     match N.to_lhs_elem arg1, N.to_rhs_elem arg2 with
     | Some arg1, Some arg2 ->
@@ -1099,9 +1092,9 @@ let eval_binary
   | String_or_bigstring_load (_,_)
   | Bigarray_load (_,_,_) -> Named (Prim (Binary (v, arg1, arg2)))
 
-let eval_ternary (_v : P.ternary_primitive)
-      (_arg1 : core_exp) (_arg2 : core_exp) (_arg3 : core_exp) : named =
-  failwith "[Primitive eval] eval_ternary"
+let eval_ternary (v : P.ternary_primitive)
+      (arg1 : core_exp) (arg2 : core_exp) (arg3 : core_exp) : named =
+  Prim (Ternary (v, arg1, arg2, arg3))
 
 let eval_variadic (v : P.variadic_primitive) (args : core_exp list) : named =
   match v with
@@ -1114,18 +1107,22 @@ let eval_variadic (v : P.variadic_primitive) (args : core_exp list) : named =
       | Value ->
           let constant =
             Simple.pattern_match' n
-              ~var:(fun _ ~coercion:_ -> Misc.fatal_error "No variables allowed")
-              ~symbol:(fun _ ~coercion:_ -> Misc.fatal_error "No symbols allowed")
-              ~const:(fun t -> t)
+              ~var:(fun _ ~coercion:_ -> None)
+              ~symbol:(fun _ ~coercion:_ -> None)
+              ~const:(fun t -> Some t)
           in
-          (match Int_ids.Const.descr constant with
-            | Tagged_immediate i ->
-              let block = (Block (tag, Immutable, [tagged_immediate_to_core i]))
-              in
-              Flambda2_core.Static_consts [(Static_const block)]
-            | (Naked_immediate _ | Naked_float _
-              | Naked_int32 _ | Naked_int64 _ | Naked_nativeint _) ->
-              failwith "[Primitive eval] Unimplemented constant")
+          (match constant with
+           | Some constant ->
+             (match Int_ids.Const.descr constant with
+              | Tagged_immediate i ->
+                let block = (Block (tag, Immutable, [tagged_immediate_to_core i]))
+                in
+                Flambda2_core.Static_consts [(Static_const block)]
+              | (Naked_immediate _ | Naked_float _
+                | Naked_int32 _ | Naked_int64 _ | Naked_nativeint _) ->
+                failwith "[Primitive eval] Unimplemented constant")
+           | None -> Prim (Variadic (v, args))
+          )
         | (Naked_number _ | Region | Rec_info) ->
           failwith "[Primitive eval] Unimplemented_eval: making block for non-value kind")
     | _ -> Prim (Variadic (v, args)))
