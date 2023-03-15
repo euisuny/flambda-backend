@@ -92,14 +92,21 @@ let eval_float_arith_op (op : P.unary_float_arith_op) original_term arg =
     Simple (Simple.const (Reg_width_const.naked_float (f arg)))
   | _ -> original_term
 
+(* let* constant =
+ *   Simple.pattern_match' simple
+ *     ~var:(fun _ ~coercion:_ -> None)
+ *     ~symbol:(fun _ ~coercion:_ -> None)
+ *     ~const:(fun t -> return t)
+ * in
+ * match Int_ids.Const.descr constant with *)
+
 let eval_unary (v : P.unary_primitive) (arg : core_exp) : named =
   match v with
   (* [Project_function_slot] and [Project_value_slot] is resolved during
      instantiating closures in the normalization process *)
   | Project_value_slot _ | Project_function_slot _
   | Box_number _ | Unbox_number _
-  | Tag_immediate ->
-    Prim (Unary (v, arg))
+  | Tag_immediate -> Prim (Unary (v, arg))
   | Int_arith (kind, op) ->
     (match arg with
      | Named (Simple s1) ->
@@ -128,10 +135,24 @@ let eval_unary (v : P.unary_primitive) (arg : core_exp) : named =
      | Named (Simple s1) ->
        eval_float_arith_op op (Prim (Unary (v, arg))) s1
      | _ -> Prim (Unary (v, arg)))
+  (* TODO: Double-check *)
   | Untag_immediate ->
     (match arg with
      | Named (Prim (Unary (Tag_immediate, Named (Prim (Unary (Is_int a, e)))))) ->
        (Prim (Unary (Is_int a, e)))
+     | Named (Prim (Unary (Tag_immediate, Named (Simple a)))) ->
+       (let constant =
+          Simple.pattern_match' a
+            ~var:(fun _ ~coercion:_ -> None)
+            ~symbol:(fun _ ~coercion:_ -> None)
+            ~const:(fun t -> return t)
+        in
+        match constant with
+        | Some constant ->
+          (match Int_ids.Const.descr constant with
+          | Naked_immediate _ -> (Simple a)
+          | _ -> (Prim (Unary (v, arg))))
+        | None -> (Prim (Unary (v, arg))))
      | _ -> (Prim (Unary (v, arg))))
   | ( Get_tag | Array_length | Int_as_pointer | Boolean_not
     | Reinterpret_int64_as_float
