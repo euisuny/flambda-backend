@@ -97,8 +97,19 @@ let eval_unary (v : P.unary_primitive) (arg : core_exp) : named =
   (* [Project_function_slot] and [Project_value_slot] is resolved during
      instantiating closures in the normalization process *)
   | Project_value_slot _ | Project_function_slot _
-  | Box_number _ | Unbox_number _ ->
+  | Unbox_number _ ->
     Prim (Unary (v, arg))
+  | Box_number (Naked_float, _alloc_mode) ->
+    (match arg with
+     | Named (Prim (Unary
+        (Reinterpret_int64_as_float,
+        Named (Prim (Unary (Unbox_number Naked_int64,
+        Named (Static_consts [Static_const (Boxed_int64 (Const a))]))))))) ->
+       (Static_consts [Static_const (Boxed_float (Const (
+          Numeric_types.Float_by_bit_pattern.of_bits a)))])
+     | _ -> Prim (Unary (v, arg))
+    )
+  | Box_number _ -> Prim (Unary (v, arg))
   | Int_arith (kind, op) ->
     (match arg with
      | Named (Simple s1) ->
@@ -1102,13 +1113,15 @@ let eval_ternary (v : P.ternary_primitive)
 
 let eval_variadic (v : P.variadic_primitive) (args : core_exp list) : named =
   match v with
+  | Make_block (Values (tag, _kind), Immutable_unique, _alloc_mode) ->
+    (Static_consts [Static_const (Block (tag, Immutable_unique, args))])
   | Make_block (Values (tag, [kind]), _mut, _alloc_mode) ->
     (match args with
     | [Named (Simple n)] ->
-      (* Reduce make block to immutable block *)
-      (* LATER : generalize for taking in a list of arguments *)
+    (* Reduce make block to immutable block *)
+    (* LATER : generalize for taking in a list of arguments *)
       (match Flambda_kind.With_subkind.kind kind with
-      | Value ->
+        | Value ->
           let constant =
             Simple.pattern_match' n
               ~var:(fun _ ~coercion:_ -> None)
@@ -1116,8 +1129,8 @@ let eval_variadic (v : P.variadic_primitive) (args : core_exp list) : named =
               ~const:(fun t -> Some t)
           in
           (match constant with
-           | Some constant ->
-             (match Int_ids.Const.descr constant with
+          | Some constant ->
+            (match Int_ids.Const.descr constant with
               | Tagged_immediate i ->
                 let block = (Block (tag, Immutable, [tagged_immediate_to_core i]))
                 in
@@ -1125,11 +1138,13 @@ let eval_variadic (v : P.variadic_primitive) (args : core_exp list) : named =
               | (Naked_immediate _ | Naked_float _
                 | Naked_int32 _ | Naked_int64 _ | Naked_nativeint _) ->
                 failwith "[Primitive eval] Unimplemented constant")
-           | None -> Prim (Variadic (v, args))
+          | None -> Prim (Variadic (v, args))
           )
         | (Naked_number _ | Region | Rec_info) ->
           failwith "[Primitive eval] Unimplemented_eval: making block for non-value kind")
     | _ -> Prim (Variadic (v, args)))
+  | Make_block (Values (tag, _kind), Immutable, _alloc_mode) ->
+    (Static_consts [Static_const (Block (tag, Immutable, args))])
   | Make_block _ ->
     Prim (Variadic (v, args))
   | Make_array _ ->
