@@ -301,44 +301,12 @@ and subst_code_id (bound : Code_id.t) ~(let_body : core_exp) (e : named) : core_
 
 and subst_block_like
       ~(bound : Symbol.t) ~(let_body : core_exp) (e : named) : core_exp =
-  match e with
-  | Simple v ->
-    if Simple.equal v (Simple.symbol bound) then let_body else Named e
-  | Prim e ->
-    prim_fix
-      (subst_pattern_static ~bound:(Bound_codelike.Pattern.block_like bound)
-         ~let_body) e
-  | Static_consts l ->
-    subst_block_like_static_const_group ~bound ~let_body l
-  | Slot _ | Closure_expr _ | Set_of_closures _ | Rec_info _ -> Named e
-
-and subst_block_like_static_const_group
-      ~(bound: Symbol.t) ~(let_body : core_exp) (e : static_const_group)
-  : core_exp =
-  Named (Static_consts
-           (List.map (subst_block_like_static_const_or_code ~bound ~let_body) e))
-
-and subst_block_like_static_const_or_code
-      ~(bound: Symbol.t) ~(let_body : core_exp) (e : static_const_or_code)
-  : static_const_or_code =
-  match e with
-  | Static_const const ->
-    Static_const (subst_block_like_static_const ~bound ~let_body const)
-  | (Code _ | Deleted_code) -> e
-
-and subst_block_like_static_const
-      ~(bound: Symbol.t) ~(let_body : core_exp) (e : static_const)
-  : static_const =
-  match e with
-  | Block (tag, mut, args) ->
-    let args =
-      List.map
-        (subst_pattern_static
-           ~bound:(Bound_codelike.Pattern.block_like bound) ~let_body)
-        args
-    in
-    Block (tag, mut, args)
-  | _ -> e
+  core_fmap
+    (fun _ v ->
+       if Simple.equal v (Simple.symbol bound) then
+         let_body else Named (Simple v))
+    (fun x -> Cont_id x)
+    (fun x -> Cont_id x) () (Named e)
 
 (* ∀ p i, p ∈ params -> params[i] = p -> e [p \ args[i]] *)
 (* There can be partial applications: don't try to do [List.combine] to avoid
