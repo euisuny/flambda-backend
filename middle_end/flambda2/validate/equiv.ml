@@ -75,26 +75,13 @@ let subst_symbol (env : Env.t) symbol =
 let subst_function_slot (env : Env.t) slot =
   Env.find_function_slot env slot |> Option.value ~default:slot
 
-let subst_name env n =
+let _subst_name env n =
   Name.pattern_match n
     ~var:(fun _ -> n)
     ~symbol:(fun s -> Name.symbol (subst_symbol env s))
 
-let subst_simple env s =
-  match s with
-  | Id s ->
-    Id (Simple.pattern_match s
-      ~const:(fun _ -> s)
-      ~name:(fun n ~coercion:_ -> Simple.name (subst_name env n)))
-  | Exp _ -> s
-
-let subst_code_id env code_id =
+let _subst_code_id env code_id =
   Env.find_code_id env code_id |> Option.value ~default:code_id
-
-let subst_function_expr env (fn_expr : function_expr) =
-  match fn_expr with
-  | Id id -> Id (subst_code_id env id)
-  | Exp _ -> fn_expr
 
 (** Equality between two programs given a context **)
 (* For now, following a naive alpha-equivalence equality from [compare/compare]
@@ -120,8 +107,8 @@ let equiv_names env name1 name2 : eq =
         Name.pattern_match name2
           ~var:(fun _ ->
             unequal
-              (Named (Simple (Simple.name name1)))
-              (Named (Simple (Simple.name name2))))
+              (Named (Literal (Simple (Simple.name name1))))
+              (Named (Literal (Simple (Simple.name name2)))))
           ~symbol:(fun symbol2 -> equiv_symbols env symbol1 symbol2))
   in
   if result then result
@@ -139,12 +126,12 @@ let equiv_value_slots env value_slot1 value_slot2 : eq =
       match Env.find_value_slot_rev env value_slot2 with
       | Some _ ->
         unequal
-          (Named (Slot (Variable.create "", Value_slot value_slot1)))
-          (Named (Slot (Variable.create "", Value_slot value_slot2)))
+          (Named (Literal (Slot (Variable.create "", Value_slot value_slot1))))
+          (Named (Literal (Slot (Variable.create "", Value_slot value_slot2))))
       | None -> Env.add_value_slot env value_slot1 value_slot2;
         unequal
-          (Named (Slot (Variable.create "", Value_slot value_slot1)))
-          (Named (Slot (Variable.create "", Value_slot value_slot2)))
+          (Named (Literal (Slot (Variable.create "", Value_slot value_slot1))))
+          (Named (Literal (Slot (Variable.create "", Value_slot value_slot2))))
 
 let zip_fold l1 l2 ~f ~acc =
   List.combine l1 l2 |> List.fold_left f acc
@@ -160,30 +147,23 @@ let equiv_code_ids _ _ _ = true
 let rec equiv (env:Env.t) e1 e2 : eq =
   match e1, e2 with
   | Named (Closure_expr (_, slot1, {function_decls;_})), Lambda _ ->
-    let e1 =
-      Function_slot.Lmap.find slot1 function_decls.in_order
-    in
-    (match e1 with
-    | Id _ -> false
-    | Exp e1 -> equiv env e1 e2)
+    let e1 = Function_slot.Lmap.find slot1 function_decls in
+    equiv env e1 e2
   | Lambda _, Named (Closure_expr (_, slot1, {function_decls;_}))  ->
-    let e2 =
-      Function_slot.Lmap.find slot1 function_decls.in_order
-    in
-    (match e2 with
-     | Id _ -> false
-     | Exp e2 -> equiv env e1 e2)
+    let e2 = Function_slot.Lmap.find slot1 function_decls in
+    equiv env e1 e2
   | Named v1, Named v2 -> equiv_named env v1 v2
   | Let e1, Let e2 -> equiv_let env e1 e2
   | Let_cont e1, Let_cont e2 -> equiv_let_cont env e1 e2
   | Apply e1, Apply e2 -> equiv_apply env e1 e2
   | Apply_cont e1, Apply_cont e2 -> equiv_apply_cont env e1 e2
   | Lambda e1, Lambda e2 -> equiv_lambda env e1 e2
+  | Handler e1, Handler e2 -> equiv_handler env e1 e2
   | Switch e1, Switch e2 -> equiv_switch env e1 e2
   | Invalid _, Invalid _ -> true
-  | (Named (Simple _ | Cont _ | Prim _ | Slot _ | Closure_expr _ | Set_of_closures _
+  | (Named (Literal _ | Prim _ | Closure_expr _ | Set_of_closures _
            | Static_consts _ | Rec_info _) | Let _ | Let_cont _ | Apply _ |
-     Apply_cont _ | Switch _ | Invalid _ | Lambda _), _ ->
+     Apply_cont _ | Switch _ | Invalid _ | Lambda _ | Handler _), _ ->
     unequal e1 e2
 
 (* [let_expr] *)
@@ -278,28 +258,16 @@ and equiv_function_slots env slot1 slot2 =
     | Some _ -> false
     | None -> Env.add_function_slot env slot1 slot2; true
 
-and equiv_function_decl env exp1 exp2 =
-  match exp1, exp2 with
-  | Id id1, Id id2 -> equiv_code_ids env id1 id2
-  | Exp exp1, Exp exp2 -> equiv env exp1 exp2
-  | (Id _ | Exp _), _ -> false
-
 and equiv_set_of_closures env
   (set1 : set_of_closures) (set2 : set_of_closures) : eq =
   (* Unify value and function slots *)
   (* Comparing value slots *)
   let value_slots_by_value set =
     Value_slot.Map.bindings (set.value_slots)
-    |> List.map (fun (var, value) ->
-      subst_simple env value, var)
+    |> List.map (fun (var, value) -> value, var)
   in
-  let compare (value1, _var1) (value2, _var2) =
-    (match value1, value2 with
-      | Id value1, Id value2 ->
-        Simple.compare value1 value2
-      | Exp exp1, Exp exp2 ->
-        if equiv env exp1 exp2 then 0 else 1
-      | (Id _ | Exp _), _ -> 1)
+  let compare (exp1, _var1) (exp2, _var2) =
+    if equiv env exp1 exp2 then 0 else 1
   in
   let value_slots_eq =
     zip_sort_fold (value_slots_by_value set1) (value_slots_by_value set2)
@@ -310,11 +278,11 @@ and equiv_set_of_closures env
   in
   (* Comparing function slots *)
   let function_slots_and_fun_decls_by_code_id (set : set_of_closures)
-      : (function_expr * (Function_slot.t * function_expr)) list =
-    let map = (set.function_decls).funs in
-    Function_slot.Map.bindings map
+      : (core_exp * (Function_slot.t * core_exp)) list =
+    let map = set.function_decls in
+    Function_slot.Lmap.bindings map
     |> List.map (fun (function_slot, code_id) ->
-      subst_function_expr env code_id, (function_slot, code_id))
+      code_id, (function_slot, code_id))
   in
   let function_slots_eq =
     zip_fold
@@ -323,24 +291,33 @@ and equiv_set_of_closures env
       ~f:(fun acc ((_, (slot1, decl1)), (_, (slot2, decl2))) ->
         acc &&
         equiv_function_slots env slot1 slot2 &&
-        equiv_function_decl env decl1 decl2)
+        equiv env decl1 decl2)
       ~acc: true
   in
   value_slots_eq && function_slots_eq
 
-(* N.B. ignore Phi slots assigned *)
-and equiv_named env named1 named2 : eq =
-  match named1, named2 with
+and equiv_literal env literal1 literal2 : eq =
+  match literal1, literal2 with
   | Simple simple1, Simple simple2 ->
     equiv_simple env simple1 simple2
-  | Cont cont1, Cont cont2 ->
-    equiv_cont env cont1 cont2
-  | Prim prim1, Prim prim2 ->
-    equiv_primitives env prim1 prim2
+  | (Cont cont1, Cont cont2 | Res_cont (Return cont1), Res_cont (Return cont2))
+    -> equiv_cont env cont1 cont2
   | Slot (_, Function_slot slot1), Slot (_, Function_slot slot2) ->
     equiv_function_slots env slot1 slot2
   | Slot (_, Value_slot slot1), Slot (_, Value_slot slot2) ->
     equiv_value_slots env slot1 slot2
+  | Res_cont Never_returns, Res_cont Never_returns -> true
+  | Code_id code1, Code_id code2 -> equiv_code_ids env code1 code2
+  | (Simple _ | Cont _ | Slot (_, (Function_slot _ | Value_slot _))
+    | Res_cont (Never_returns | Return _) | Code_id _), _ -> false
+
+(* N.B. ignore Phi slots assigned *)
+and equiv_named env named1 named2 : eq =
+  match named1, named2 with
+  | Literal literal1, Literal literal2 ->
+    equiv_literal env literal1 literal2
+  | Prim prim1, Prim prim2 ->
+    equiv_primitives env prim1 prim2
   | Closure_expr (_, slot1, set1), Closure_expr (_, slot2, set2) ->
     equiv_function_slots env slot1 slot2 &&
     equiv_set_of_closures env set1 set2
@@ -350,7 +327,7 @@ and equiv_named env named1 named2 : eq =
   | Static_consts const1, Static_consts const2 ->
     (List.combine const1 const2 |>
      List.fold_left (fun x (e1, e2) -> x && equiv_static_consts env e1 e2) true)
-  | (Simple _ | Cont _ | Prim _ | Slot (_, Function_slot _ | _, Value_slot _) |
+  | (Literal _ | Prim _ |
      Set_of_closures _ | Rec_info _ | Static_consts _ | Closure_expr _), _ ->
     unequal (Named named1) (Named named2)
 
@@ -418,25 +395,11 @@ and equiv_cont_handler_map env
       (map1 : continuation_handler_map) (map2 : continuation_handler_map) =
   Continuation.Map.equal (equiv_cont_handler env) map1 map2
 
-and equiv_res_continuation_expr env (e1 : res_continuation_expr) (e2 : res_continuation_expr) : eq =
-  match e1, e2 with
-  | Cont_id e1, Cont_id e2 ->
-    Apply_expr.Result_continuation.equal e1 e2
-  | Handler e1, Handler e2 -> equiv_cont_handler env e1 e2
-  | (Cont_id _ | Handler _), (Cont_id _ | Handler _) -> false
-
-and equiv_continuation_expr env
-      (e1 : continuation_expr) (e2 : continuation_expr) : eq =
-  match e1, e2 with
-  | Cont_id e1, Cont_id e2 -> Continuation.equal e1 e2
-  | Handler e1, Handler e2 -> equiv_cont_handler env e1 e2
-  | (Cont_id _ | Handler _), (Cont_id _ | Handler _) -> false
-
 (* [apply] *)
 and equiv_apply env (e1 : apply_expr) (e2 : apply_expr) : eq =
   let equiv_conts =
-    equiv_res_continuation_expr env (e1.continuation) (e2.continuation) &&
-    equiv_continuation_expr env (e1.exn_continuation) (e2.exn_continuation) in
+    equiv env (e1.continuation) (e2.continuation) &&
+    equiv env (e1.exn_continuation) (e2.exn_continuation) in
   let callee = equiv env (e1.callee) (e2.callee) in
   let args =
     zip_fold (e1.apply_args) (e2.apply_args)
@@ -463,6 +426,10 @@ and equiv_lambda env (e1 : lambda_expr) (e2 : lambda_expr) : eq =
     ~f:(fun
          ~return_continuation:_ ~exn_continuation:_ _params e1 e2 ->
          equiv env e1 e2)
+
+and equiv_handler env (e1 : continuation_handler) (e2 : continuation_handler) : eq =
+  Core_continuation_handler.pattern_match_pair e1 e2
+    (fun _ e1 e2 -> equiv env e1 e2)
 
 (* [switch] *)
 and equiv_switch env

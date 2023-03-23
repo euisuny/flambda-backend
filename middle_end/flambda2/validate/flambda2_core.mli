@@ -12,18 +12,11 @@ type core_exp =
   | Apply of apply_expr
   | Apply_cont of apply_cont_expr
   | Lambda of lambda_expr (* A lambda for code expressions *)
+  | Handler of continuation_handler
   | Switch of switch_expr
   | Invalid of { message : string }
 
 and lambda_expr = (Bound_for_lambda.t, core_exp) Name_abstraction.t
-
-and 'a id_or_exp =
-  | Id of 'a
-  | Exp of core_exp
-
-and 'a id_or_cont =
-  | Cont_id of 'a
-  | Handler of continuation_handler
 
 (** Let expressions [let x = e1 in e2]
 
@@ -33,11 +26,16 @@ and let_expr =
   { let_abst : (Bound_for_let.t, core_exp) Name_abstraction.t;
     expr_body : core_exp; }
 
-and named =
+and literal =
   | Simple of Simple.t
   | Cont of Continuation.t
-  | Prim of primitive
+  | Res_cont of Apply_expr.Result_continuation.t
   | Slot of (Variable.t * slot)
+  | Code_id of Code_id.t
+
+and named =
+  | Literal of literal
+  | Prim of primitive
   | Closure_expr of (Variable.t * Function_slot.t * set_of_closures)
   | Set_of_closures of set_of_closures
   | Static_consts of static_const_group
@@ -49,16 +47,9 @@ and slot =
 
 and set_of_closures =
   { function_decls : function_declarations;
-    value_slots : value_expr Value_slot.Map.t;
-    alloc_mode : Alloc_mode.For_allocations.t }
+    value_slots : core_exp Value_slot.Map.t}
 
-and function_declarations =
-  { funs : function_expr Function_slot.Map.t;
-    in_order : function_expr Function_slot.Lmap.t}
-
-and value_expr = Simple.t id_or_exp
-
-and function_expr = Code_id.t id_or_exp
+and function_declarations = core_exp Function_slot.Lmap.t
 
 and primitive =
   | Nullary of P.nullary_primitive
@@ -129,13 +120,9 @@ and continuation_handler =
 
 and apply_expr =
   { callee: core_exp;
-    continuation: res_continuation_expr;
-    exn_continuation: continuation_expr;
+    continuation: core_exp;
+    exn_continuation: core_exp;
     apply_args: core_exp list; }
-
-and res_continuation_expr = Apply_expr.Result_continuation.t id_or_cont
-
-and continuation_expr = Continuation.t id_or_cont
 
 and apply_cont_expr =
   { k : core_exp;
@@ -185,11 +172,6 @@ val must_be_set_of_closures : core_exp -> set_of_closures option
 val must_be_static_set_of_closures : static_const -> set_of_closures option
 
 val must_have_closure : core_exp -> set_of_closures option
-
-val fmap_id_or_exp :
-  'a id_or_exp -> ('a -> 'b) -> (core_exp -> core_exp) -> 'b id_or_exp
-
-val merge_id_or_exp : 'a id_or_exp -> ('a -> 'b) -> (core_exp -> 'b) -> 'b
 
 module T0 : sig
   type t = core_exp
@@ -316,40 +298,26 @@ val print_bound_pattern : Format.formatter -> Bound_for_let.t -> unit
 val apply_renaming : core_exp -> Renaming.t -> core_exp
 
 val lambda_to_handler : lambda_expr -> continuation_handler
-val function_decl_create : function_expr Function_slot.Lmap.t -> function_declarations
 
-val core_fmap :
-  ('a -> Simple.t -> core_exp) ->
-  (Apply_expr.Result_continuation.t -> res_continuation_expr) ->
-  (Continuation.t -> continuation_expr) ->
-  (Continuation.t -> core_exp) ->
-  'a -> core_exp -> core_exp
+val core_fmap : ('a -> literal -> core_exp) -> 'a -> core_exp -> core_exp
 
 (* Fixpoint functions for core expressions *)
 val let_fix : (core_exp -> core_exp) -> let_expr -> core_exp
 val let_cont_fix : (core_exp -> core_exp) -> let_cont_expr -> core_exp
-val apply_fix : (core_exp -> core_exp) ->
-  (Apply_expr.Result_continuation.t -> res_continuation_expr) ->
-  (Continuation.t -> continuation_expr) ->
-  apply_expr -> core_exp
+val apply_fix : (core_exp -> core_exp) -> apply_expr -> core_exp
 val apply_cont_fix : (core_exp -> core_exp) -> apply_cont_expr -> core_exp
 val lambda_fix : (core_exp -> core_exp) -> lambda_expr -> core_exp
+val handler_fix : (core_exp -> core_exp) -> continuation_handler -> core_exp
 val switch_fix : (core_exp -> core_exp) -> switch_expr -> core_exp
 
 val named_fix :
   (core_exp -> core_exp) ->
-  ('a -> Simple.t -> core_exp) ->
-  (Continuation.t -> core_exp) ->
+  ('a -> literal -> core_exp) ->
   'a -> named -> core_exp
 val set_of_closures_fix :
   (core_exp -> core_exp) ->
-  ('a -> Simple.t -> core_exp) -> 'a -> set_of_closures -> set_of_closures
+  set_of_closures -> set_of_closures
 val prim_fix : (core_exp -> core_exp) -> primitive -> core_exp
 val static_const_group_fix :
   (core_exp -> core_exp) ->
-  ('a -> Simple.t -> core_exp) -> 'a -> static_const_group -> core_exp
-val static_const_group_fix' :
-  (core_exp -> core_exp) ->
-  ('a -> Simple.t -> core_exp) ->
-  ('a -> Code_id.t -> function_expr) ->
-  'a -> static_const_group -> core_exp
+  static_const_group -> core_exp

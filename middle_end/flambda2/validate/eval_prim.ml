@@ -48,15 +48,15 @@ let to_elem (simple : Simple.t) =
     | Naked_nativeint _) -> None
 
 module Make_simplify_int_conv (N : A.Number_kind) = struct
-  let simplify ~(dst : K.Standard_int_or_float.t) ~original_term ~arg =
+  let simplify ~(dst : K.Standard_int_or_float.t) ~(original_term : named) ~arg =
     if K.Standard_int_or_float.equal N.standard_int_or_float_kind dst
     then
-      (Simple arg)
+      (Literal (Simple arg))
     else
       let module Num = N.Num in
       match N.to_elem arg with
       | Some arg ->
-        (match dst with
+        Literal (match dst with
          | Tagged_immediate ->
            Simple (Simple.const (Int_ids.Const.tagged_immediate (Num.to_immediate arg)))
          | Naked_immediate ->
@@ -83,56 +83,21 @@ module Simplify_int_conv_naked_int64 = Make_simplify_int_conv (A.For_int64s)
 module Simplify_int_conv_naked_nativeint =
   Make_simplify_int_conv (A.For_nativeints)
 
-let eval_float_arith_op (op : P.unary_float_arith_op) original_term arg =
+let eval_float_arith_op (op : P.unary_float_arith_op) (original_term : named) arg =
   let module F = Numeric_types.Float_by_bit_pattern in
   match to_elem arg with
   | Some arg ->
     let f =
       match op with Abs -> F.IEEE_semantics.abs | Neg -> F.IEEE_semantics.neg
     in
-    Simple (Simple.const (Reg_width_const.naked_float (f arg)))
+    Literal (Simple (Simple.const (Reg_width_const.naked_float (f arg))))
   | _ -> original_term
 
 let eval_untag_immediate (arg : core_exp) : named =
   let v = P.Untag_immediate in
   (match must_be_tagged_immediate arg with
-  | Some (Prim (Unary (Is_int a, e))) -> Prim (Unary (Is_int a, e))
-  | Some (Prim (Unary (Get_tag, e))) -> (Prim (Unary (Get_tag, e)))
-  | Some (Prim (Binary (Int_comp (c, x), a1, a2))) ->
-    (Prim (Binary (Int_comp (c, x), a1, a2)))
-  | Some (Prim (Binary (Phys_equal c, a1, a2))) ->
-    (Prim (Binary (Phys_equal c, a1, a2)))
-  | Some (Simple a) ->
-    (let constant =
-      Simple.pattern_match' a
-        ~var:(fun _ ~coercion:_ -> None)
-        ~symbol:(fun _ ~coercion:_ -> None)
-        ~const:(fun t -> return t)
-    in
-    match constant with
-    | Some constant ->
-      (match Int_ids.Const.descr constant with
-        | Naked_immediate _ | Tagged_immediate _ -> (Simple a)
-        | (Naked_float _ | Naked_int32 _ | Naked_int64 _ | Naked_nativeint _) ->
-          (Prim (Unary (v, arg))))
-    | None -> (Prim (Unary (v, arg))))
-  | (Some
-    (Prim
-      (Nullary _
-      | Unary
-          ((Box_number _ | Duplicate_array _ | Duplicate_block _ | String_length _
-            | Int_as_pointer | Opaque_identity _ | Int_arith _ | Num_conv _ | Boolean_not
-            | Reinterpret_int64_as_float | Float_arith _ | Array_length
-            | Bigarray_length _ | Unbox_number _ | Untag_immediate | Tag_immediate
-            | Is_boxed_float | Is_flat_float_array | Begin_try_region | End_region
-            | Project_function_slot _ | Project_value_slot _ | Obj_dup), _)
-      | Binary
-          ((Array_load _ | Block_load _ | String_or_bigstring_load _
-          | Bigarray_load _ | Int_arith _ | Int_shift _
-            | Float_arith _ | Float_comp _ ), _, _)
-      | Ternary _ | Variadic _)
-    | Cont _ | Slot _ | Closure_expr _ | Set_of_closures _ | Static_consts _
-    | Rec_info _) | None) -> Prim (Unary (v, arg)))
+   | Some a -> a
+   | None -> Prim (Unary (v, arg)))
 
 let reinterpret_int64_as_float (c : static_const_or_code) : static_const_or_code =
   match c with
@@ -168,7 +133,7 @@ let eval_box_number_naked_float v (arg : core_exp) : named =
           | Is_flat_float_array | Begin_try_region | End_region
           | Obj_dup), _)))
      | (Some (Prim (Nullary _ | Binary _ | Ternary _ | Variadic _)
-             |Simple _|Cont _|Slot _|Closure_expr _|Set_of_closures _
+             | Literal _ | Closure_expr _ | Set_of_closures _
              |Static_consts _ |Rec_info _) | None) -> Prim (Unary (v, arg)))
    | Some (Prim (Unary
     ((Tag_immediate | Untag_immediate | Duplicate_block _ | Duplicate_array _
@@ -179,8 +144,8 @@ let eval_box_number_naked_float v (arg : core_exp) : named =
       | Is_flat_float_array | Begin_try_region | End_region
       | Obj_dup), _)))
    | (Some (Prim (Nullary _ | Binary _ | Ternary _ | Variadic _)
-           |Simple _|Cont _|Slot _|Closure_expr _|Set_of_closures _
-           |Static_consts _ |Rec_info _) | None) ->
+           | Literal _ | Closure_expr _ | Set_of_closures _
+           | Static_consts _ |Rec_info _) | None) ->
      Prim (Unary (v, arg))
 
 let eval_unary (v : P.unary_primitive) (arg : core_exp) : named =
@@ -249,7 +214,7 @@ let simple_tagged_immediate ~(const : Simple.t) : Targetint_31_63.t option =
 
 let eval_block_load v (arg1 : named) (arg2 : Simple.t) =
   let default =
-    Named (Prim (Binary (v, Named arg1, Named (Simple arg2))))
+    Named (Prim (Binary (v, Named arg1, Named (Literal (Simple arg2)))))
   in
   (* [arg1] is the block, and [arg2] is the index *)
   match arg1, arg2 with
@@ -284,7 +249,7 @@ let eval_block_load v (arg1 : named) (arg2 : Simple.t) =
   | (Prim (Nullary _ | Unary _ | Binary _ | Ternary _
       | Variadic ((Make_block (_, (Mutable|Immutable_unique), _) | Make_array _),
                   _))
-    | Simple _ | Cont _ | Slot _ | Closure_expr _ | Set_of_closures _
+    | Literal _ | Closure_expr _ | Set_of_closures _
     | Rec_info _), _ ->
     default
 
@@ -538,7 +503,7 @@ end = struct
           match PR.Set.get_singleton possible_results with
           | Some (Exactly i) -> N.term i
           | Some (Prim prim) -> (Flambda2_core.Prim prim)
-          | Some (Simple simple) -> Flambda2_core.Simple simple
+          | Some (Simple simple) -> Literal (Flambda2_core.Simple simple)
           | None -> original_term
         in
         let ty =
@@ -559,7 +524,7 @@ end = struct
         in
         match T.get_alias_exn ty with
         | exception Not_found -> named
-        | simple -> Flambda2_core.Simple simple
+        | simple -> Literal (Flambda2_core.Simple simple)
     in
     let only_one_side_known op nums ~folder ~other_side : Flambda2_core.named =
       let possible_results =
@@ -801,7 +766,7 @@ end = struct
   let these = T.these_naked_immediates
 
   let term imm : named =
-    Simple (Simple.const (Reg_width_const.naked_immediate imm))
+    Literal (Simple (Simple.const (Reg_width_const.naked_immediate imm)))
 
   module Pair = I.Num.Pair
 
@@ -905,7 +870,7 @@ end = struct
   let these = T.these_naked_floats
 
   let term f =
-    Simple (Simple.const (Reg_width_const.naked_float f))
+    Literal (Simple (Simple.const (Reg_width_const.naked_float f)))
 
   module Pair = F.Pair
 
@@ -1015,7 +980,7 @@ end = struct
   let these = T.these_naked_immediates
 
   let term imm : named =
-    Simple (Simple.const (Reg_width_const.naked_immediate imm))
+    Literal (Simple (Simple.const (Reg_width_const.naked_immediate imm)))
 
   module Pair = F.Pair
 
@@ -1102,8 +1067,10 @@ let eval_phys_equal (op : P.equality_comparison) original_term arg1 arg2 =
   in
   match equal, op with
   | None, _ -> original_term
-  | Some equal, Eq -> Named (Simple (Simple.untagged_const_bool equal))
-  | Some equal, Neq -> Named (Simple (Simple.untagged_const_bool (not equal)))
+  | Some equal, Eq ->
+    Named (Literal (Simple (Simple.untagged_const_bool equal)))
+  | Some equal, Neq ->
+    Named (Literal (Simple (Simple.untagged_const_bool (not equal))))
 
 (* Trying to see if we can get the evaluation without having information from
    the typing environment... *)
@@ -1177,7 +1144,7 @@ let eval_variadic (v : P.variadic_primitive) (args : core_exp list) : named =
     (Static_consts [Static_const (Block (tag, Immutable_unique, args))])
   | Make_block (Values (tag, [kind]), _mut, _alloc_mode) ->
     (match args with
-    | [Named (Simple n)] ->
+    | [Named (Literal (Simple n))] ->
     (* Reduce make block to immutable block *)
     (* LATER : generalize for taking in a list of arguments *)
       (match Flambda_kind.With_subkind.kind kind with
@@ -1202,10 +1169,11 @@ let eval_variadic (v : P.variadic_primitive) (args : core_exp list) : named =
           )
         | (Naked_number _ | Region | Rec_info) ->
           failwith "[Primitive eval] Unimplemented_eval: making block for non-value kind")
-    | ([] | (Named (Simple _ | Cont _ | Prim _ | Slot _ | Closure_expr _
-                   | Set_of_closures _ | Static_consts _ | Rec_info _ )
+    | ([] |
+       (Named (Literal (Simple _ | Cont _ | Res_cont _ | Slot _ | Code_id _) | Prim _
+              | Closure_expr _ | Set_of_closures _ | Static_consts _ | Rec_info _ )
       | Let _ | Let_cont _ | Apply _ | Apply_cont _ | Lambda _ | Switch _
-      | Invalid _):: _) -> Prim (Variadic (v, args)))
+      | Handler _ | Invalid _):: _) -> Prim (Variadic (v, args)))
   | Make_block (Values (tag, _kind), Immutable, _alloc_mode) ->
     (Static_consts [Static_const (Block (tag, Immutable, args))])
   | Make_block ((Values _ | Naked_floats),
@@ -1218,10 +1186,10 @@ let rec eval (v : primitive) : core_exp =
   let f_arg (arg : core_exp) =
     (match arg with
     | Named (Prim arg) -> eval arg
-    | (Named (Cont _ | Simple _ | Slot _ | Closure_expr _ | Set_of_closures _ |
+    | (Named (Literal _ | Closure_expr _ | Set_of_closures _ |
               Static_consts _ | Rec_info _ )
-      | Let _ | Let_cont _ | Apply _ | Apply_cont _ | Lambda _ | Switch _ |
-      Invalid _) -> arg)
+      | Let _ | Let_cont _ | Apply _ | Apply_cont _ | Lambda _ | Switch _
+      | Handler _ | Invalid _) -> arg)
   in
   match v with
   | Nullary v -> Named (eval_nullary v)
