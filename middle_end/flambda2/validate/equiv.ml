@@ -181,7 +181,7 @@ let rec equiv (env:Env.t) e1 e2 : eq =
   | Lambda e1, Lambda e2 -> equiv_lambda env e1 e2
   | Switch e1, Switch e2 -> equiv_switch env e1 e2
   | Invalid _, Invalid _ -> true
-  | (Named (Simple _ | Prim _ | Slot _ | Closure_expr _ | Set_of_closures _
+  | (Named (Simple _ | Cont _ | Prim _ | Slot _ | Closure_expr _ | Set_of_closures _
            | Static_consts _ | Rec_info _) | Let _ | Let_cont _ | Apply _ |
      Apply_cont _ | Switch _ | Invalid _ | Lambda _), _ ->
     unequal e1 e2
@@ -333,6 +333,8 @@ and equiv_named env named1 named2 : eq =
   match named1, named2 with
   | Simple simple1, Simple simple2 ->
     equiv_simple env simple1 simple2
+  | Cont cont1, Cont cont2 ->
+    equiv_cont env cont1 cont2
   | Prim prim1, Prim prim2 ->
     equiv_primitives env prim1 prim2
   | Slot (_, Function_slot slot1), Slot (_, Function_slot slot2) ->
@@ -348,7 +350,7 @@ and equiv_named env named1 named2 : eq =
   | Static_consts const1, Static_consts const2 ->
     (List.combine const1 const2 |>
      List.fold_left (fun x (e1, e2) -> x && equiv_static_consts env e1 e2) true)
-  | (Simple _ | Prim _ | Slot (_, Function_slot _ | _, Value_slot _) |
+  | (Simple _ | Cont _ | Prim _ | Slot (_, Function_slot _ | _, Value_slot _) |
      Set_of_closures _ | Rec_info _ | Static_consts _ | Closure_expr _), _ ->
     unequal (Named named1) (Named named2)
 
@@ -416,15 +418,15 @@ and equiv_cont_handler_map env
       (map1 : continuation_handler_map) (map2 : continuation_handler_map) =
   Continuation.Map.equal (equiv_cont_handler env) map1 map2
 
-and equiv_continuation_expr env (e1 : continuation_expr) (e2 : continuation_expr) : eq =
+and equiv_res_continuation_expr env (e1 : res_continuation_expr) (e2 : res_continuation_expr) : eq =
   match e1, e2 with
   | Cont_id e1, Cont_id e2 ->
     Apply_expr.Result_continuation.equal e1 e2
   | Handler e1, Handler e2 -> equiv_cont_handler env e1 e2
   | (Cont_id _ | Handler _), (Cont_id _ | Handler _) -> false
 
-and equiv_exn_continuation_expr env
-      (e1 : exn_continuation_expr) (e2 : exn_continuation_expr) : eq =
+and equiv_continuation_expr env
+      (e1 : continuation_expr) (e2 : continuation_expr) : eq =
   match e1, e2 with
   | Cont_id e1, Cont_id e2 -> Continuation.equal e1 e2
   | Handler e1, Handler e2 -> equiv_cont_handler env e1 e2
@@ -433,8 +435,8 @@ and equiv_exn_continuation_expr env
 (* [apply] *)
 and equiv_apply env (e1 : apply_expr) (e2 : apply_expr) : eq =
   let equiv_conts =
-    equiv_continuation_expr env (e1.continuation) (e2.continuation) &&
-    equiv_exn_continuation_expr env (e1.exn_continuation) (e2.exn_continuation) in
+    equiv_res_continuation_expr env (e1.continuation) (e2.continuation) &&
+    equiv_continuation_expr env (e1.exn_continuation) (e2.exn_continuation) in
   let callee = equiv env (e1.callee) (e2.callee) in
   let args =
     zip_fold (e1.apply_args) (e2.apply_args)
@@ -445,7 +447,7 @@ and equiv_apply env (e1 : apply_expr) (e2 : apply_expr) : eq =
 and equiv_apply_cont env
       ({k = k1; args = args1} : apply_cont_expr)
       ({k = k2; args = args2} : apply_cont_expr) : eq =
-  equiv_cont env k1 k2 &&
+  equiv env k1 k2 &&
   zip_fold args1 args2 ~f:(fun x (e1, e2) -> x && equiv env e1 e2) ~acc:true
 
 and equiv_cont _env (e1 : Continuation.t) (e2 : Continuation.t) : eq =

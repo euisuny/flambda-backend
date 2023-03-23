@@ -18,6 +18,7 @@ let subst_var_slot_helper
        else Named (Simple v)))
     (fun x -> Cont_id x)
     (fun x -> Cont_id x)
+    (fun x -> Named (Cont x))
     (var, phi, slot) e2
 
 let subst_var_slot
@@ -31,7 +32,8 @@ let subst_var_slot
          subst_var_slot_helper var phi (Function_slot slot) acc)
       e2
       (List.combine vars in_order)
-  | (Named (Simple _ | Prim _ | Slot _ | Closure_expr _ | Static_consts _ | Rec_info _) |
+  | (Named (Simple _ | Cont _ | Prim _ | Slot _ | Closure_expr _ | Static_consts _
+           | Rec_info _) |
     Let _ | Let_cont _ | Apply _ | Apply_cont _ | Lambda _ | Switch _ | Invalid _ ) ->
     Misc.fatal_error "Expected set of closures"
 
@@ -44,6 +46,7 @@ let subst_static_slot_helper
        else Named (Simple v))
     (fun x -> Cont_id x)
     (fun x -> Cont_id x)
+    (fun x -> Named (Cont x))
     (sym, phi, slot) e2
 
 let subst_static_slot
@@ -288,7 +291,7 @@ and apply_to_core (e : Apply.t) : core_exp =
 
 and apply_cont_to_core (e : Apply_cont.t) : core_exp =
   Apply_cont {
-    k = Apply_cont_expr.continuation e;
+    k = Named (Cont (Apply_cont_expr.continuation e));
     args = Apply_cont_expr.args e |> List.map simple_to_core;}
 
 and switch_to_core (e : Switch.t) : core_exp =

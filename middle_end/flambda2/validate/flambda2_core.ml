@@ -12,7 +12,7 @@ type core_exp =
   | Let_cont of let_cont_expr
   | Apply of apply_expr
   | Apply_cont of apply_cont_expr
-  | Lambda of lambda_expr (* A "Named lambda" *)
+  | Lambda of lambda_expr (* A lambda for code expressions *)
   | Switch of switch_expr
   | Invalid of { message : string }
 
@@ -36,6 +36,7 @@ and let_expr =
 
 and named =
   | Simple of Simple.t
+  | Cont of Continuation.t
   | Prim of primitive
   | Slot of (Variable.t * slot)
   | Closure_expr of (Variable.t * Function_slot.t * set_of_closures)
@@ -128,16 +129,16 @@ and continuation_handler =
 
 and apply_expr =
   { callee: core_exp;
-    continuation: continuation_expr;
-    exn_continuation: exn_continuation_expr;
+    continuation: res_continuation_expr;
+    exn_continuation: continuation_expr;
     apply_args: core_exp list; }
 
-and continuation_expr = Apply_expr.Result_continuation.t id_or_cont
+and res_continuation_expr = Apply_expr.Result_continuation.t id_or_cont
 
-and exn_continuation_expr = Continuation.t id_or_cont
+and continuation_expr = Continuation.t id_or_cont
 
 and apply_cont_expr =
-  { k : Continuation.t;
+  { k : core_exp;
     args : core_exp list }
 
 and switch_expr =
@@ -223,16 +224,21 @@ let must_be_named (e : core_exp) : named option =
 let must_be_simple (e : core_exp) : Simple.t option =
   match e with
   | Named (Simple s) -> Some s
-  | (Named (Prim _ | Slot _ | Closure_expr _ | Set_of_closures _ |
+  | (Named (Prim _ | Cont _ | Slot _ | Closure_expr _ | Set_of_closures _ |
             Static_consts _ | Rec_info _ )
     | Let _ | Let_cont _ | Apply _ | Apply_cont _ | Lambda _ | Switch _
     | Invalid _) -> None
 
+let must_be_lambda (e : core_exp) : lambda_expr option =
+  match e with
+  | Lambda e -> Some e
+  | (Named _ | Let _ | Let_cont _ | Apply _ | Apply_cont _ | Switch _ | Invalid _) -> None
+
 let must_be_static_consts (e : core_exp) : static_const_group option  =
   match e with
   | Named (Static_consts g) -> Some g
-  | (Named (Simple _ | Prim _ | Slot _ | Closure_expr _ | Set_of_closures _
-           | Rec_info _ )
+  | (Named (Simple _ | Cont _ | Prim _ | Slot _ | Closure_expr _
+           | Set_of_closures _ | Rec_info _)
     | Let _ | Let_cont _ | Apply _ | Apply_cont _ | Lambda _ | Switch _
     | Invalid _) -> None
 
@@ -261,7 +267,7 @@ let must_be_simple_or_immediate (e : named) : Simple.t option =
               | Obj_dup), _)) -> None
   | (Prim (Nullary _ | Binary _ | Ternary _ | Variadic _)
     | Slot _ | Closure_expr _ | Set_of_closures _ | Static_consts _
-    | Rec_info _ ) -> None
+    | Cont _ | Rec_info _ ) -> None
 
 let must_be_simple_or_immediate (e : core_exp) : Simple.t option =
   match must_be_named e with
@@ -281,7 +287,7 @@ let must_be_tagged_immediate (e : named) : named option =
              | Obj_dup), _)) -> None
   | (Prim (Nullary _ | Binary _ | Ternary _ | Variadic _) | Simple _
     | Slot _ | Closure_expr _ | Set_of_closures _ | Static_consts _
-    | Rec_info _ ) -> None
+    | Cont _ | Rec_info _ ) -> None
 
 let must_be_tagged_immediate (e : core_exp) : named option =
   match must_be_named e with
@@ -300,7 +306,7 @@ let must_be_untagged_immediate (e : named) : named option =
              | Is_boxed_float | Is_flat_float_array | Begin_try_region | End_region
              | Obj_dup), _)) -> None
   | (Prim (Nullary _ | Binary _ | Ternary _ | Variadic _) | Simple _
-    | Slot _ | Closure_expr _ | Set_of_closures _ | Static_consts _
+    | Slot _ | Closure_expr _ | Set_of_closures _ | Static_consts _ | Cont _
     | Rec_info _ ) -> None
 
 let must_be_untagged_immediate (e : core_exp) : named option =
@@ -313,7 +319,7 @@ let must_be_function_slot_expr (e : named) :
   match e with
   | Slot (phi, Function_slot slot) -> Some (phi, slot)
   | (Slot (_, Value_slot _) | Simple _ | Prim _ | Closure_expr _
-    | Set_of_closures _ | Static_consts _ | Rec_info _) -> None
+    | Set_of_closures _ | Static_consts _ | Cont _ | Rec_info _) -> None
 
 let must_be_function_slot_expr (e : core_exp) :
   (Variable.t * Function_slot.t) option =
@@ -324,7 +330,8 @@ let must_be_function_slot_expr (e : core_exp) :
 let must_be_set_of_closures (e : named) =
   match e with
   | Set_of_closures e -> Some e
-  | (Simple _ | Prim _ | Slot _ | Closure_expr _ | Static_consts _ | Rec_info _)
+  | (Simple _ | Cont _ | Prim _ | Slot _ | Closure_expr _ | Static_consts _
+    | Rec_info _)
     -> None
 
 let must_be_set_of_closures (e : core_exp) =
@@ -335,7 +342,7 @@ let must_be_set_of_closures (e : core_exp) =
 let must_have_closure (e : named) : set_of_closures option =
   match e with
   | (Closure_expr (_, _, clo) | Set_of_closures clo) -> Some clo
-  | (Simple _ | Prim _ | Slot _ | Static_consts _ | Rec_info _) -> None
+  | (Simple _ | Cont _ | Prim _ | Slot _ | Static_consts _ | Rec_info _) -> None
 
 let must_have_closure (e : core_exp) =
   match must_be_named e with
@@ -381,6 +388,8 @@ and apply_renaming_named t renaming : named =
   match t with
   | Simple simple ->
     Simple (Simple.apply_renaming simple renaming)
+  | Cont cont ->
+    Cont (Renaming.apply_continuation renaming cont)
   | Prim prim ->
     Prim (apply_renaming_prim prim renaming)
   | Slot (var, slot) ->
@@ -620,7 +629,7 @@ and apply_renaming_apply
 
 (* renaming for [Apply_cont] *)
 and apply_renaming_apply_cont {k; args} renaming : apply_cont_expr =
-  let k = Renaming.apply_continuation renaming k in
+  let k = apply_renaming k renaming in
   let args = List.map (fun x -> apply_renaming x renaming) args in
   { k = k; args = args }
 
@@ -702,7 +711,10 @@ and print_named ppf (t : named) =
   match t with
   | Simple simple ->
     fprintf ppf "simple %a"
-    Simple.print simple;
+      Simple.print simple
+  | Cont k ->
+    fprintf ppf "%a"
+      Continuation.print k
   | Prim prim -> print_prim ppf prim;
   | Slot (var, Function_slot slot) ->
     fprintf ppf "slot(%a, %a)"
@@ -935,12 +947,12 @@ and print_handler ppf (t : continuation_handler) =
         print_params k
         print expr_body)
 
-and print_continuation_expr ppf (t : continuation_expr) =
+and print_res_continuation_expr ppf (t : res_continuation_expr) =
   merge_id_or_cont t
     (Apply_expr.Result_continuation.print ppf)
     (print_handler ppf)
 
-and print_exn_continuation_expr ppf (t : exn_continuation_expr) =
+and print_continuation_expr ppf (t : continuation_expr) =
   merge_id_or_cont t
     (Continuation.print ppf)
     (print_handler ppf)
@@ -949,15 +961,15 @@ and print_apply ppf
       ({callee; continuation; exn_continuation; apply_args} : apply_expr) =
   fprintf ppf "(callee:%a)@ (ret:%a)@ (exn:%a)@ "
     print callee
-    print_continuation_expr continuation
-    print_exn_continuation_expr exn_continuation;
+    print_res_continuation_expr continuation
+    print_continuation_expr exn_continuation;
   fprintf ppf "(args:";
   Format.pp_print_list ~pp_sep:Format.pp_print_space print ppf apply_args;
   fprintf ppf ")"
 
 and print_apply_cont ppf ({k ; args} : apply_cont_expr) =
-  fprintf ppf "%a@ "
-    print_cont k;
+  fprintf ppf "(%a)@ "
+    print k;
     fprintf ppf "(";
     Format.pp_print_list ~pp_sep:Format.pp_print_space print ppf args;
   fprintf ppf ")"
@@ -997,6 +1009,8 @@ and ids_for_export_let { let_abst; expr_body } =
 and ids_for_export_named (t : named) =
   match t with
   | Simple simple -> Ids_for_export.from_simple simple
+  | Cont k ->
+    Ids_for_export.add_continuation Ids_for_export.empty k
   | Closure_expr (var, _, set) ->
     Ids_for_export.add_variable
     (ids_for_export_set_of_closures set) var
@@ -1174,9 +1188,10 @@ and ids_for_export_apply
 
 (* ids for [Apply_cont] *)
 and ids_for_export_apply_cont { k; args } =
+  let continuation_ids = ids_for_export k in
   List.fold_left
     (fun ids arg -> Ids_for_export.union ids (ids_for_export arg))
-    (Ids_for_export.add_continuation Ids_for_export.empty k)
+    continuation_ids
     args
 
 and ids_for_export_lambda t =
@@ -1315,6 +1330,14 @@ module Core_lambda = struct
     A.pattern_match x ~f:(fun b e -> f b e)
 
   let create = A.create
+  let create_handler_lambda (params : Bound_parameters.t) (e : T0.t) =
+    (* Put a dummy fresh return and exception continuation here *)
+    let return_continuation = Continuation.create () in
+    let exn_continuation = Continuation.create () in
+    let bound =
+      Bound_for_lambda.create ~return_continuation ~exn_continuation ~params
+    in
+    create bound e
 
   let apply_renaming = apply_renaming_lambda
   let ids_for_export = ids_for_export_lambda
@@ -1349,6 +1372,10 @@ module Core_function_params_and_body = struct
               ~my_closure))
 end
 
+let lambda_to_handler (e : lambda_expr) : continuation_handler =
+  Core_lambda.pattern_match e
+    ~f:(fun {return_continuation=_;exn_continuation=_;params} e ->
+      Core_continuation_handler.create params e)
 
 let function_decl_create (in_order : function_expr Function_slot.Lmap.t) =
   { funs = Function_slot.Map.of_list (Function_slot.Lmap.bindings in_order);
@@ -1406,8 +1433,8 @@ let handler_fix (f : core_exp -> core_exp)
     (fun param exp -> Core_continuation_handler.create param (f exp))
 
 let apply_fix (f : core_exp -> core_exp)
-      (f_cont : Apply_expr.Result_continuation.t -> continuation_expr)
-      (f_exn_cont : Continuation.t -> exn_continuation_expr)
+      (f_cont : Apply_expr.Result_continuation.t -> res_continuation_expr)
+      (f_exn_cont : Continuation.t -> continuation_expr)
       ({callee; continuation; exn_continuation; apply_args} : apply_expr) =
   let continuation =
     match continuation with
@@ -1424,17 +1451,10 @@ let apply_fix (f : core_exp -> core_exp)
      continuation; exn_continuation;
      apply_args = List.map f apply_args;}
 
-let apply_cont_fix' (f : core_exp -> core_exp)
-      (f_cont : Continuation.t -> Continuation.t)
-      ({k; args} : apply_cont_expr) =
-  Apply_cont
-    {k = f_cont k;
-     args = List.map f args}
-
 let apply_cont_fix (f : core_exp -> core_exp)
       ({k; args} : apply_cont_expr) =
   Apply_cont
-    {k = k;
+    {k = f k;
      args = List.map f args}
 
 let lambda_fix (f : core_exp -> core_exp) (e : lambda_expr) =
@@ -1589,9 +1609,12 @@ let prim_fix (fix : core_exp -> core_exp) (e : primitive) =
     Named (Prim (Variadic (p, List.map fix list)))
 
 let named_fix (fix : core_exp -> core_exp)
-      (f : 'a -> Simple.t -> core_exp) arg (e : named) =
+      (f : 'a -> Simple.t -> core_exp)
+      (f_cont : Continuation.t -> core_exp)
+      arg (e : named) =
   match e with
   | Simple v -> f arg v
+  | Cont k -> f_cont k
   | Prim e -> prim_fix fix e
   | Closure_expr (phi, slot, clo) ->
     let {function_decls; value_slots; alloc_mode} =
@@ -1608,19 +1631,20 @@ let named_fix (fix : core_exp -> core_exp)
   | Slot _ | Rec_info _ -> Named e
 
 let rec core_fmap
-          (f : 'a -> Simple.t -> core_exp) f_res f_exn
+          (f : 'a -> Simple.t -> core_exp)
+          f_res f_exn f_cont
           (arg : 'a) (e : core_exp) : core_exp =
   match e with
   | Named e ->
-    named_fix (core_fmap f f_res f_exn arg) f arg e
+    named_fix (core_fmap f f_res f_exn f_cont arg) f f_cont arg e
   | Let e ->
-    let_fix (core_fmap f f_res f_exn arg) e
+    let_fix (core_fmap f f_res f_exn f_cont arg) e
   | Let_cont e ->
-    let_cont_fix (core_fmap f f_res f_exn arg) e
+    let_cont_fix (core_fmap f f_res f_exn f_cont arg) e
   | Apply e ->
-    apply_fix (core_fmap f f_res f_exn arg) f_res f_exn e
+    apply_fix (core_fmap f f_res f_exn f_cont arg) f_res f_exn e
   | Apply_cont e ->
-    apply_cont_fix (core_fmap f f_res f_exn arg) e
-  | Lambda e -> lambda_fix (core_fmap f f_res f_exn arg) e
-  | Switch e -> switch_fix (core_fmap f f_res f_exn arg) e
+    apply_cont_fix (core_fmap f f_res f_exn f_cont arg) e
+  | Lambda e -> lambda_fix (core_fmap f f_res f_exn f_cont arg) e
+  | Switch e -> switch_fix (core_fmap f f_res f_exn f_cont arg) e
   | Invalid _ -> e

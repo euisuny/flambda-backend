@@ -22,4 +22,6 @@ type t
 
 val create : Continuation.t list -> t
 
+val to_list : t -> Continuation.t list
+
 include Bindable.S with type t := t

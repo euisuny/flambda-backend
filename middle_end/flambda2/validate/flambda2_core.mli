@@ -11,12 +11,11 @@ type core_exp =
   | Let_cont of let_cont_expr
   | Apply of apply_expr
   | Apply_cont of apply_cont_expr
-  | Lambda of lambda_expr
+  | Lambda of lambda_expr (* A lambda for code expressions *)
   | Switch of switch_expr
   | Invalid of { message : string }
 
-and lambda_expr =
-  (Bound_for_lambda.t, core_exp) Name_abstraction.t
+and lambda_expr = (Bound_for_lambda.t, core_exp) Name_abstraction.t
 
 and 'a id_or_exp =
   | Id of 'a
@@ -36,6 +35,7 @@ and let_expr =
 
 and named =
   | Simple of Simple.t
+  | Cont of Continuation.t
   | Prim of primitive
   | Slot of (Variable.t * slot)
   | Closure_expr of (Variable.t * Function_slot.t * set_of_closures)
@@ -129,16 +129,16 @@ and continuation_handler =
 
 and apply_expr =
   { callee: core_exp;
-    continuation: continuation_expr;
-    exn_continuation: exn_continuation_expr;
+    continuation: res_continuation_expr;
+    exn_continuation: continuation_expr;
     apply_args: core_exp list; }
 
-and continuation_expr = Apply_expr.Result_continuation.t id_or_cont
+and res_continuation_expr = Apply_expr.Result_continuation.t id_or_cont
 
-and exn_continuation_expr = Continuation.t id_or_cont
+and continuation_expr = Continuation.t id_or_cont
 
 and apply_cont_expr =
-  { k : Continuation.t;
+  { k : core_exp;
     args : core_exp list }
 
 and switch_expr =
@@ -162,6 +162,8 @@ val is_static_set_of_closures : static_const_or_code -> bool
 val is_code : static_const_or_code -> bool
 
 val must_be_named : core_exp -> named option
+
+val must_be_lambda : core_exp -> lambda_expr option
 
 val must_be_static_consts : core_exp -> static_const_group option
 
@@ -266,6 +268,8 @@ module Core_lambda : sig
 
   val create : Bound_for_lambda.t -> T0.t -> t
 
+  val create_handler_lambda : Bound_parameters.t -> T0.t -> t
+
   val pattern_match :
     t -> f:(Bound_for_lambda.t -> T0.t -> 'a) -> 'a
 
@@ -311,32 +315,32 @@ val print_bound_pattern : Format.formatter -> Bound_for_let.t -> unit
 
 val apply_renaming : core_exp -> Renaming.t -> core_exp
 
+val lambda_to_handler : lambda_expr -> continuation_handler
 val function_decl_create : function_expr Function_slot.Lmap.t -> function_declarations
 
 val core_fmap :
   ('a -> Simple.t -> core_exp) ->
-  (Apply_expr.Result_continuation.t -> continuation_expr) ->
-  (Continuation.t -> exn_continuation_expr) ->
+  (Apply_expr.Result_continuation.t -> res_continuation_expr) ->
+  (Continuation.t -> continuation_expr) ->
+  (Continuation.t -> core_exp) ->
   'a -> core_exp -> core_exp
 
 (* Fixpoint functions for core expressions *)
 val let_fix : (core_exp -> core_exp) -> let_expr -> core_exp
 val let_cont_fix : (core_exp -> core_exp) -> let_cont_expr -> core_exp
 val apply_fix : (core_exp -> core_exp) ->
-  (Apply_expr.Result_continuation.t -> continuation_expr) ->
-  (Continuation.t -> exn_continuation_expr) ->
+  (Apply_expr.Result_continuation.t -> res_continuation_expr) ->
+  (Continuation.t -> continuation_expr) ->
   apply_expr -> core_exp
 val apply_cont_fix : (core_exp -> core_exp) -> apply_cont_expr -> core_exp
-val apply_cont_fix' :
-  (core_exp -> core_exp) ->
-  (Continuation.t -> Continuation.t) ->
-  apply_cont_expr -> core_exp
 val lambda_fix : (core_exp -> core_exp) -> lambda_expr -> core_exp
 val switch_fix : (core_exp -> core_exp) -> switch_expr -> core_exp
 
 val named_fix :
   (core_exp -> core_exp) ->
-  ('a -> Simple.t -> core_exp) -> 'a -> named -> core_exp
+  ('a -> Simple.t -> core_exp) ->
+  (Continuation.t -> core_exp) ->
+  'a -> named -> core_exp
 val set_of_closures_fix :
   (core_exp -> core_exp) ->
   ('a -> Simple.t -> core_exp) -> 'a -> set_of_closures -> set_of_closures

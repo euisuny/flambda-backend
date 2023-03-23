@@ -7,10 +7,15 @@ open! Translate
     - CBV-style reduction for [let] and [letcont] expressions
     - Assumes that the [typeopt/value_kind] flag is [false] *)
 
+(* The current compilation unit; initialized to dummy unit *)
+let comp_unit : Compilation_unit.t ref =
+  ref (Compilation_unit.create Compilation_unit.Prefix.empty
+         Compilation_unit.Name.dummy)
+
 (* Substitution funtions for β-reduction *)
 let rec apply_directed_renaming
       (cont_id: (Continuation.t * Continuation.t) list) (exp : core_exp): core_exp =
-  let f_res : Apply_expr.Result_continuation.t -> continuation_expr =
+  let f_res : Apply_expr.Result_continuation.t -> res_continuation_expr =
     (fun x ->
        match x with
        | Return id ->
@@ -25,16 +30,10 @@ let rec apply_directed_renaming
        | Some id -> Cont_id id
        | _ -> Cont_id id)
   in
-  let f_cont =
-    (fun id ->
-       match List.assoc_opt id cont_id with
-       | Some id -> id
-       | _ -> id)
-  in
   match exp with
   | Named e ->
     named_fix (apply_directed_renaming cont_id)
-      (fun _ x -> Named (Simple x)) () e
+      (fun _ x -> Named (Simple x)) (fun x -> Named (Cont x)) () e
   | Let e ->
     let_fix (apply_directed_renaming cont_id) e
   | Let_cont e ->
@@ -46,7 +45,7 @@ let rec apply_directed_renaming
       f_exn
       e
   | Apply_cont e ->
-    apply_cont_fix' (apply_directed_renaming cont_id) f_cont e
+    apply_cont_fix (apply_directed_renaming cont_id) e
   | Lambda e ->
     lambda_fix (apply_directed_renaming cont_id) e
   | Switch e ->
@@ -69,6 +68,7 @@ let rec subst_pattern ~(bound : Bound_for_let.t) ~(let_body : core_exp)
             if (Simple.equal s bound) then let_body else Named (Simple s))
           (fun x -> Cont_id x)
           (fun x -> Cont_id x)
+          (fun x -> Named (Cont x))
           (bound, let_body) e)
   | Static bound ->
     subst_static_list ~bound ~let_body e
@@ -130,7 +130,7 @@ and subst_singleton_set_of_closures_named ~bound ~clo (e : named) : core_exp =
     (match bound_closure with
      | None -> Named e
      | Some (k, _) -> Named (Closure_expr (phi, k, clo))))
-  | Slot (_, Value_slot _) | Rec_info _ -> Named e
+  | Cont _ | Slot (_, Value_slot _) | Rec_info _ -> Named e
 
 and subst_static_list ~(bound : Bound_codelike.t) ~let_body e : core_exp =
   let rec subst_static_list_ bound body e =
@@ -241,7 +241,9 @@ and subst_bound_set_of_closures (bound : Bound_var.t) ~let_body
           | None -> Named e)
      | None -> Named e
     )
-  | Slot (_, Value_slot _) |  Closure_expr _ | Set_of_closures _ | Rec_info _ -> Named e
+  | Cont _ | Slot (_, Value_slot _) |  Closure_expr _ | Set_of_closures _
+  | Rec_info _ -> Named e
+
 
 and subst_code_id_set_of_closures (bound : Code_id.t) ~(let_body : core_exp)
       {function_decls; value_slots; alloc_mode}
@@ -267,7 +269,7 @@ and subst_code_id_set_of_closures (bound : Code_id.t) ~(let_body : core_exp)
 
 and subst_code_id (bound : Code_id.t) ~(let_body : core_exp) (e : named) : core_exp =
   match e with
-  | Simple _ | Slot _ -> Named e
+  | Simple _ | Cont _ | Slot _ -> Named e
   | Prim e ->
     prim_fix
       (subst_pattern_static
@@ -296,7 +298,9 @@ and subst_block_like
        if Simple.equal v (Simple.symbol bound) then
          let_body else Named (Simple v))
     (fun x -> Cont_id x)
-    (fun x -> Cont_id x) () (Named e)
+    (fun x -> Cont_id x)
+    (fun x -> Named (Cont x))
+    () (Named e)
 
 (* ∀ p i, p ∈ params -> params[i] = p -> e [p \ args[i]] *)
 (* There can be partial applications: don't try to do [List.combine] to avoid
@@ -315,12 +319,13 @@ let subst_params
       | None -> Named (Simple s))
     (fun x -> Cont_id x)
     (fun x -> Cont_id x)
+    (fun x -> Named (Cont x))
     () e
 
 (* [LetCont-β] *)
 let rec subst_cont (cont_e1: core_exp) (k: Bound_continuation.t)
           (args: Bound_parameters.t) (cont_e2: core_exp) : core_exp =
-  let f_res (cont : Apply_expr.Result_continuation.t) : continuation_expr =
+  let f_res (cont : Apply_expr.Result_continuation.t) : res_continuation_expr =
     match cont with
     | Return cont ->
       if Continuation.equal cont k
@@ -328,26 +333,31 @@ let rec subst_cont (cont_e1: core_exp) (k: Bound_continuation.t)
       else Cont_id (Return cont)
     | Never_returns -> Cont_id cont
   in
-  let f_exn (cont : Continuation.t) : exn_continuation_expr =
+  let f_exn (cont : Continuation.t) : continuation_expr =
     if Continuation.equal cont k
     then Handler (Core_continuation_handler.create args cont_e2)
     else Cont_id cont
   in
   match cont_e1 with
-  | Named _ -> cont_e1
+  | Named (Cont cont) ->
+    if Continuation.equal cont k
+    then Lambda (Core_lambda.create_handler_lambda args cont_e2)
+    else cont_e1
+  | Named (Simple _ | Prim _ | Slot _ | Closure_expr _
+          | Set_of_closures _ | Static_consts _ | Rec_info _) -> cont_e1
   | Let e ->
     let_fix (fun e -> subst_cont e k args cont_e2) e
   | Let_cont e ->
     let_cont_fix (fun e -> subst_cont e k args cont_e2) e
   | Apply e ->
     apply_fix (fun e -> subst_cont e k args cont_e2) f_res f_exn e
-  | Apply_cont {k = cont; args = concrete_args} ->
-    if Continuation.equal cont k
-    then subst_params args cont_e2 concrete_args
-    else
-      Apply_cont
-        {k = cont;
-         args = List.map (fun x -> subst_cont x k args cont_e2) concrete_args}
+  | Apply_cont {k = e; args = concrete_args} ->
+    (* if Continuation.equal cont k
+     * then subst_params args cont_e2 concrete_args
+     * else *)
+    Apply_cont
+      {k = subst_cont e k args cont_e2;
+        args = List.map (fun x -> subst_cont x k args cont_e2) concrete_args}
   | Lambda e ->
     lambda_fix (fun e -> subst_cont e k args cont_e2) e
   | Switch e ->
@@ -415,6 +425,46 @@ and normalize_let let_abst body : core_exp =
         let x = v in e1 ⟶ e2 [x\v] *)
     subst_pattern ~bound:x ~let_body:e1 e2)
 
+and handler_map_to_closures (v : Bound_parameter.t list) (m : continuation_handler_map)
+  : set_of_closures =
+  (* for each continuation handler, create a new function slot and a
+     lambda expression *)
+  let in_order =
+    Continuation.Map.fold
+      (fun (key : Continuation.t) (e : continuation_handler)
+        (fun_decls: function_expr Function_slot.Lmap.t) ->
+       let lambda = Exp (Lambda (handler_to_lambda v e)) in
+       (* add handler as a lambda to set of function decls *)
+       let slot =
+         Function_slot.create !comp_unit ~name:(Continuation.name key)
+           Flambda_kind.With_subkind.any_value
+       in
+       Function_slot.Lmap.add slot lambda fun_decls) m
+    Function_slot.Lmap.empty
+  in
+  let function_decls =
+    { funs = Function_slot.Map.of_list (Function_slot.Lmap.bindings in_order);
+      in_order }
+  in
+  { function_decls;
+    value_slots = Value_slot.Map.empty;
+    alloc_mode = Alloc_mode.For_allocations.heap }
+
+and handler_to_lambda (v : Bound_parameter.t list) (m : continuation_handler)
+  : lambda_expr =
+  Core_continuation_handler.pattern_match m
+    (fun params body ->
+       let params =
+         (Bound_parameters.to_list params) @ v |> Bound_parameters.create
+       in
+       (* Put a dummy fresh return and exception continuation here *)
+       let return_continuation = Continuation.create () in
+       let exn_continuation = Continuation.create () in
+       let bound =
+         Bound_for_lambda.create ~return_continuation ~exn_continuation ~params
+       in
+       Core_lambda.create bound body)
+
 and normalize_let_cont (e:let_cont_expr) : core_exp =
   match e with
   | Non_recursive {handler; body} ->
@@ -428,7 +478,53 @@ and normalize_let_cont (e:let_cont_expr) : core_exp =
               result
            )
       )
-  | Recursive _handlers -> failwith "Unimplemented_recursive"
+  | Recursive handlers ->
+    (* e1 where rec k args = e2 *)
+    Core_recursive.pattern_match handlers
+      ~f:(fun bound_conts {continuation_map; body} ->
+        Core_continuation_map.pattern_match continuation_map
+          ~f:(fun params map ->
+            (* transform the map into a set of closures with corresponding
+               function slots *)
+            let clo =
+              handler_map_to_closures (Bound_parameters.to_list params) map
+            in
+            let phi = Variable.create "ϕ" in
+            (* substitute for each occurence of continuation in bound_cont,
+               the slot (phi, function_slot) *)
+            let in_order = clo.function_decls.in_order |> Function_slot.Lmap.bindings in
+            let in_order_with_cont =
+              List.combine (Bound_continuations.to_list bound_conts) in_order
+            in
+            let e2 =
+              List.fold_left
+                (fun acc (cont, (slot, _)) ->
+                   subst_cont_id cont (Named (Slot (phi, Function_slot slot))) acc)
+                body in_order_with_cont
+            in
+            let e1 = Named (Set_of_closures clo) in
+            let phi = Bound_var.create phi Name_mode.normal in
+            Core_let.create ~x:(Singleton phi) ~e1 ~e2))
+    |> normalize
+
+and subst_cont_id (cont : Continuation.t) (e1 : core_exp) (e2 : core_exp) =
+  match must_be_lambda e1 with
+  | Some lambda ->
+    let handler = lambda_to_handler lambda in
+    core_fmap (fun _ x -> Named (Simple x))
+      (fun (x : Apply_expr.Result_continuation.t) : res_continuation_expr ->
+        match x with
+        | Return k ->
+          if Continuation.equal cont k
+          then Handler handler
+          else Cont_id (Return cont)
+        | Never_returns -> Cont_id x)
+      (fun x ->
+         if Continuation.equal cont x
+         then Handler handler
+         else Cont_id x) (fun x -> Named (Cont x)) () e2
+  | None ->
+    Misc.fatal_error "Expected a lambda to be created from recursive continuations"
 
 and normalize_apply_no_beta_redex callee continuation exn_continuation apply_args =
   let continuation =
@@ -495,7 +591,8 @@ and normalize_apply callee continuation exn_continuation apply_args : core_exp =
   | Lambda expr ->
     normalize_apply_lambda expr continuation exn_continuation apply_args
   | (Named (Static_consts ((Code _ | Deleted_code | Static_const _)::_ | [])
-           | Simple _ | Prim _ | Slot _ | Set_of_closures _ | Rec_info _)
+           | Cont _ | Simple _ | Prim _ | Slot _ | Set_of_closures _
+           | Rec_info _)
     | Let _ | Let_cont _ | Apply _ | Apply_cont _ | Switch _ | Invalid _) ->
     normalize_apply_no_beta_redex callee continuation exn_continuation apply_args
 
@@ -510,8 +607,14 @@ and normalize_apply_cont k args : core_exp =
   (* [ApplyCont]
             args ⟶ args'
       --------------------------
-          k args ⟶ k args'       *)
-  Apply_cont {k = k; args = List.map normalize args}
+     k args ⟶ k args'       *)
+  let args = List.map normalize args in
+  match must_be_lambda k with
+  | Some lambda ->
+    let handler = lambda_to_handler lambda in
+    Core_continuation_handler.pattern_match handler
+      (fun params e -> subst_params params e args)
+  | None -> Apply_cont {k; args}
 
 and normalize_static_const (phi : Bound_for_let.t) (const : static_const) : static_const =
   match const with
@@ -680,6 +783,7 @@ and subst_my_closure (phi : Bound_for_let.t) (slot : Function_slot.t)
                         else (Named (Simple simple)))
                      (fun x -> Cont_id x)
                      (fun x -> Cont_id x)
+                     (fun x -> Named (Cont x))
                      () body
                  in
                 Core_lambda.create bound (subst_my_closure_body clo body)))))
@@ -749,8 +853,8 @@ and subst_my_closure_body_named
               | Num_conv _ | Boolean_not | Unbox_number _ | Box_number _
               | Is_boxed_float | Is_flat_float_array | Begin_try_region | End_region
               | Obj_dup), _) | Nullary _ | Binary _ | Ternary _ | Variadic _)
-    | Simple _ | Slot _ | Closure_expr _ | Set_of_closures _ | Static_consts _
-    | Rec_info _) -> Named e)
+    | Simple _ | Cont _ | Slot _ | Closure_expr _ | Set_of_closures _
+    | Static_consts _ | Rec_info _) -> Named e)
 
 and normalize_function_expr (fun_expr : function_expr) : function_expr =
   match fun_expr with
@@ -769,6 +873,7 @@ and normalize_named (var: Bound_for_let.t) (body : named)
   match body with
   | Simple _ (* A [Simple] is a register-sized value *)
   | Slot _
+  | Cont _
   | Rec_info _ (* Information about inlining recursive calls, an integer variable *) ->
     (var, Named (body))
   | Closure_expr (phi, slot, set) ->

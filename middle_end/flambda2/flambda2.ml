@@ -168,7 +168,9 @@ let lambda_to_cmm ~ppf_dump:ppf ~prefixname ~filename ~keep_symbol_tables
         in
         (* Run the validator *)
         if !Flambda_backend_flags.validate
-        then validate filename raw_flambda flambda;
+        then
+          Normalize.comp_unit := compilation_unit;
+          validate filename raw_flambda flambda;
         (if Flambda_features.inlining_report ()
         then
           let output_prefix = Printf.sprintf "%s.%d" prefixname round in

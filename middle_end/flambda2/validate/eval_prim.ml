@@ -131,8 +131,8 @@ let eval_untag_immediate (arg : core_exp) : named =
           | Bigarray_load _ | Int_arith _ | Int_shift _
             | Float_arith _ | Float_comp _ ), _, _)
       | Ternary _ | Variadic _)
-      | Slot _ | Closure_expr _ | Set_of_closures _ | Static_consts _ | Rec_info _)
-    | None) -> Prim (Unary (v, arg)))
+    | Cont _ | Slot _ | Closure_expr _ | Set_of_closures _ | Static_consts _
+    | Rec_info _) | None) -> Prim (Unary (v, arg)))
 
 let reinterpret_int64_as_float (c : static_const_or_code) : static_const_or_code =
   match c with
@@ -168,8 +168,8 @@ let eval_box_number_naked_float v (arg : core_exp) : named =
           | Is_flat_float_array | Begin_try_region | End_region
           | Obj_dup), _)))
      | (Some (Prim (Nullary _ | Binary _ | Ternary _ | Variadic _)
-            |Simple _|Slot _|Closure_expr _|Set_of_closures _|Static_consts _
-            |Rec_info _) | None) -> Prim (Unary (v, arg)))
+             |Simple _|Cont _|Slot _|Closure_expr _|Set_of_closures _
+             |Static_consts _ |Rec_info _) | None) -> Prim (Unary (v, arg)))
    | Some (Prim (Unary
     ((Tag_immediate | Untag_immediate | Duplicate_block _ | Duplicate_array _
       | Is_int _ | Get_tag | Array_length | Bigarray_length _ | String_length _
@@ -179,8 +179,8 @@ let eval_box_number_naked_float v (arg : core_exp) : named =
       | Is_flat_float_array | Begin_try_region | End_region
       | Obj_dup), _)))
    | (Some (Prim (Nullary _ | Binary _ | Ternary _ | Variadic _)
-           |Simple _|Slot _|Closure_expr _|Set_of_closures _|Static_consts _
-           |Rec_info _) | None) ->
+           |Simple _|Cont _|Slot _|Closure_expr _|Set_of_closures _
+           |Static_consts _ |Rec_info _) | None) ->
      Prim (Unary (v, arg))
 
 let eval_unary (v : P.unary_primitive) (arg : core_exp) : named =
@@ -284,7 +284,8 @@ let eval_block_load v (arg1 : named) (arg2 : Simple.t) =
   | (Prim (Nullary _ | Unary _ | Binary _ | Ternary _
       | Variadic ((Make_block (_, (Mutable|Immutable_unique), _) | Make_array _),
                   _))
-    | Simple _ | Slot _ | Closure_expr _ | Set_of_closures _ | Rec_info _), _ ->
+    | Simple _ | Cont _ | Slot _ | Closure_expr _ | Set_of_closures _
+    | Rec_info _), _ ->
     default
 
 let eval_block_load v (arg1 : core_exp) (arg2 : core_exp) =
@@ -1201,8 +1202,8 @@ let eval_variadic (v : P.variadic_primitive) (args : core_exp list) : named =
           )
         | (Naked_number _ | Region | Rec_info) ->
           failwith "[Primitive eval] Unimplemented_eval: making block for non-value kind")
-    | ([] | (Named (Simple _ | Prim _ | Slot _ | Closure_expr _ | Set_of_closures _
-             | Static_consts _ | Rec_info _ )
+    | ([] | (Named (Simple _ | Cont _ | Prim _ | Slot _ | Closure_expr _
+                   | Set_of_closures _ | Static_consts _ | Rec_info _ )
       | Let _ | Let_cont _ | Apply _ | Apply_cont _ | Lambda _ | Switch _
       | Invalid _):: _) -> Prim (Variadic (v, args)))
   | Make_block (Values (tag, _kind), Immutable, _alloc_mode) ->
@@ -1217,7 +1218,7 @@ let rec eval (v : primitive) : core_exp =
   let f_arg (arg : core_exp) =
     (match arg with
     | Named (Prim arg) -> eval arg
-    | (Named (Simple _ | Slot _ | Closure_expr _ | Set_of_closures _ |
+    | (Named (Cont _ | Simple _ | Slot _ | Closure_expr _ | Set_of_closures _ |
               Static_consts _ | Rec_info _ )
       | Let _ | Let_cont _ | Apply _ | Apply_cont _ | Lambda _ | Switch _ |
       Invalid _) -> arg)

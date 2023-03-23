@@ -48,6 +48,8 @@ let apply_renaming t renaming =
 let ids_for_export t =
   List.fold_left Ids_for_export.add_continuation Ids_for_export.empty t
 
+let to_list t = t
+
 let rename t = List.map Continuation.rename t
 
 let renaming t1 ~guaranteed_fresh:t2 =
