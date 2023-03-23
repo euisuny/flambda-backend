@@ -184,6 +184,12 @@ let must_be_literal (e : core_exp) : literal option =
           | Rec_info _)
     | None) -> None
 
+let must_be_cont (e : core_exp) : Continuation.t option =
+  match must_be_literal e with
+  | Some (Cont k | Res_cont (Return k)) -> Some k
+  | (Some (Res_cont Never_returns | Simple _ | Slot _ | Code_id _) | None) ->
+    None
+
 let must_be_simple (e : core_exp) : Simple.t option =
   match e with
   | Named (Literal (Simple s)) -> Some s

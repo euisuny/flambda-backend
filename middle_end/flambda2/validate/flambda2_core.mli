@@ -150,6 +150,8 @@ val is_code : static_const_or_code -> bool
 
 val must_be_named : core_exp -> named option
 
+val must_be_cont : core_exp -> Continuation.t option
+
 val must_be_lambda : core_exp -> lambda_expr option
 
 val must_be_static_consts : core_exp -> static_const_group option

@@ -12,6 +12,65 @@ let comp_unit : Compilation_unit.t ref =
   ref (Compilation_unit.create Compilation_unit.Prefix.empty
          Compilation_unit.Name.dummy)
 
+let rec does_not_occur (v : literal) acc (exp : core_exp) =
+  match exp with
+  | Invalid _ -> acc
+  | Named (Literal l) ->
+    (not (literal_contained v l) && acc)
+  | Named (Prim _| Closure_expr _ | Set_of_closures _ | Static_consts _
+          | Rec_info _) -> acc (* FIXME : do a deep pattern match here *)
+  | Let {let_abst; expr_body} ->
+    Core_let.pattern_match {let_abst; expr_body}
+      ~f:(fun ~x:_ ~e1 ~e2 ->
+        does_not_occur v acc e1 && does_not_occur v acc e2)
+  | Let_cont e ->
+    (match e with
+    | Non_recursive {handler; body} ->
+      let handler =
+        Core_continuation_handler.pattern_match handler
+          (fun _ exp -> does_not_occur v acc exp)
+      in
+      let body =
+        Core_letcont_body.pattern_match body
+          (fun _ exp -> does_not_occur v acc exp)
+      in
+      handler && body
+    | Recursive body ->
+      Core_recursive.pattern_match body
+        ~f:(fun _ {continuation_map; body} ->
+          Core_continuation_map.pattern_match continuation_map
+            ~f:(fun _ continuation_map ->
+              let continuation_map =
+                Continuation.Map.fold
+                  (fun _ x acc ->
+                     acc &&
+                      Core_continuation_handler.pattern_match x
+                        (fun _ exp -> does_not_occur v acc exp))
+                  continuation_map true
+              in
+              continuation_map &&
+              does_not_occur v acc body)))
+  | Apply {callee; continuation; exn_continuation; apply_args}->
+    does_not_occur v acc callee &&
+    does_not_occur v acc continuation &&
+    does_not_occur v acc exn_continuation &&
+    List.fold_left
+      (fun acc e -> acc && does_not_occur v acc e) true apply_args
+  | Apply_cont {k; args} ->
+    does_not_occur v acc k &&
+    List.fold_left
+      (fun acc e -> acc && does_not_occur v acc e) true args
+  | Lambda e ->
+    Core_lambda.pattern_match e
+      ~f:(fun _ e -> does_not_occur v acc e)
+  | Handler handler ->
+    Core_continuation_handler.pattern_match handler
+         (fun _ exp -> does_not_occur v acc exp)
+  | Switch {scrutinee; arms} ->
+    does_not_occur v acc scrutinee &&
+    Targetint_31_63.Map.fold
+      (fun _ x acc -> acc && does_not_occur v acc x) arms true
+
 (* Substitution funtions for β-reduction *)
 (* [Let-β]
       e[bound\let_body] *)
@@ -249,20 +308,40 @@ and subst_block_like
          Named (Literal v))
     () (Named e)
 
+let partial_combine l1 l2 =
+  let rec partial_combine (l1 : 'a list) (l2 : 'b list) acc
+  : ('a * 'b) list * 'a list =
+    (match l1, l2 with
+     | _, [] -> acc, l1
+     | x1 :: l1, x2 :: l2 ->
+       let (acc, b) = partial_combine l1 l2 acc
+       in
+       (x1, x2) :: acc, b
+     | [], _ -> Misc.fatal_error "Partial combine: Length mismatch")
+  in
+  partial_combine l1 l2 []
+
 (* ∀ p i, p ∈ params -> params[i] = p -> e [p \ args[i]] *)
 (* There can be partial applications: don't try to do [List.combine] to avoid
    fatal errors *)
 (* [Bound_parameters] are [Variable]s *)
 let subst_params
   (params : Bound_parameters.t) (e : core_exp) (args : core_exp list) =
-  let param_list =
-    Bound_parameters.to_list params |> List.map Bound_parameter.simple
+  let param_list = Bound_parameters.to_list params in
+  let param_args, remainder = partial_combine param_list args in
+  let e =
+    if remainder == []
+    then e
+    else
+      Handler
+        (Core_continuation_handler.create (Bound_parameters.create remainder) e)
   in
-  let param_args = List.combine param_list args in
+  let param_args =
+    List.map (fun (x, y) -> (Bound_parameter.simple x, y)) param_args in
   core_fmap
     (fun () s ->
-       match s with
-       | Simple s ->
+      match s with
+      | Simple s ->
           (match List.assoc_opt s param_args with
           | Some arg_v -> arg_v
           | None -> Named (Literal (Simple s)))
@@ -315,10 +394,7 @@ let rec normalize (e:core_exp) : core_exp =
   | Apply_cont {k ; args} ->
     (* The recursive call for [apply_cont] is done for the arguments *)
     normalize_apply_cont k args
-  | Lambda e ->
-    Core_lambda.pattern_match e
-      ~f:(fun x e ->
-        Lambda (Core_lambda.create x (normalize e)))
+  | Lambda e -> normalize_lambda e
   | Switch {scrutinee; arms} ->
     let scrutinee = normalize scrutinee
     in
@@ -333,6 +409,31 @@ let rec normalize (e:core_exp) : core_exp =
   | Named _
   | Handler _
   | Invalid _ -> e
+
+and normalize_lambda (e : lambda_expr) =
+  Core_lambda.pattern_match e
+    ~f:(fun {return_continuation; exn_continuation; params} e ->
+      let e = normalize e in
+      (* LATER: Remove unused arguments (uncomment this and add checking for
+         the application site for this lambda needs to have its argument removed
+         as well) *)
+      (* let params = Bound_parameters.to_list params in
+       * let params =
+       *   List.filter
+       *     (fun x ->
+       *         not (does_not_occur (Simple (Simple.var (Bound_parameter.var x))) true e))
+       *     params
+       *   |> Bound_parameters.create
+       * in
+       * if does_not_occur (Cont return_continuation) true e &&
+       *    does_not_occur (Cont exn_continuation) true e
+       * then
+       *   Handler (Core_continuation_handler.create params e)
+       * else *)
+      Lambda
+        (Core_lambda.create
+            {return_continuation;exn_continuation;params}
+            e))
 
 and normalize_switch scrutinee arms : core_exp =
   (* if the scrutinee is exactly one of the arms, simplify *)
@@ -451,66 +552,18 @@ and subst_cont_id (cont : Continuation.t) (e1 : core_exp) (e2 : core_exp) =
 and normalize_apply_no_beta_redex callee continuation exn_continuation apply_args =
   let continuation = normalize continuation in
   let exn_continuation = normalize exn_continuation in
-  Apply {callee;continuation;exn_continuation;apply_args}
-
-and does_not_occur (v : literal) acc (exp : core_exp) =
-  match exp with
-  | Invalid _ -> acc
-  | Named (Literal l) ->
-    (not (literal_contained v l) && acc)
-  | Named (Prim _| Closure_expr _ | Set_of_closures _ | Static_consts _
-          | Rec_info _) -> acc (* FIXME : do a deep pattern match here *)
-  | Let {let_abst; expr_body} ->
-    Core_let.pattern_match {let_abst; expr_body}
-      ~f:(fun ~x:_ ~e1 ~e2 ->
-        does_not_occur v acc e1 && does_not_occur v acc e2)
-  | Let_cont e ->
-    (match e with
-    | Non_recursive {handler; body} ->
-      let handler =
-        Core_continuation_handler.pattern_match handler
-          (fun _ exp -> does_not_occur v acc exp)
-      in
-      let body =
-        Core_letcont_body.pattern_match body
-          (fun _ exp -> does_not_occur v acc exp)
-      in
-      handler && body
-    | Recursive body ->
-      Core_recursive.pattern_match body
-        ~f:(fun _ {continuation_map; body} ->
-          Core_continuation_map.pattern_match continuation_map
-            ~f:(fun _ continuation_map ->
-              let continuation_map =
-                Continuation.Map.fold
-                  (fun _ x acc ->
-                     acc &&
-                      Core_continuation_handler.pattern_match x
-                        (fun _ exp -> does_not_occur v acc exp))
-                  continuation_map true
-              in
-              continuation_map &&
-              does_not_occur v acc body)))
-  | Apply {callee; continuation; exn_continuation; apply_args}->
-    does_not_occur v acc callee &&
-    does_not_occur v acc continuation &&
-    does_not_occur v acc exn_continuation &&
-    List.fold_left
-      (fun acc e -> acc && does_not_occur v acc e) true apply_args
-  | Apply_cont {k; args} ->
-    does_not_occur v acc k &&
-    List.fold_left
-      (fun acc e -> acc && does_not_occur v acc e) true args
-  | Lambda e ->
-    Core_lambda.pattern_match e
-      ~f:(fun _ e -> does_not_occur v acc e)
-  | Handler handler ->
-    Core_continuation_handler.pattern_match handler
-         (fun _ exp -> does_not_occur v acc exp)
-  | Switch {scrutinee; arms} ->
-    does_not_occur v acc scrutinee &&
-    Targetint_31_63.Map.fold
-      (fun _ x acc -> acc && does_not_occur v acc x) arms true
+  (* LATER (UNCOMMENT):
+     if the continuations are literal continuations, check for whether they are used
+   *  in the callee. if not, reduce the apply expr to an apply cont expr. *)
+  (* match must_be_cont continuation, must_be_cont exn_continuation with
+   * | Some k1, Some k2 ->
+   *   if does_not_occur (Cont k1) true callee &&
+   *      does_not_occur (Cont k2) true callee
+   *   then Apply_cont {k = callee; args = apply_args}
+   *   else
+   *     Apply {callee;continuation;exn_continuation;apply_args}
+   * | (Some _ | None), _ -> *)
+    Apply {callee;continuation;exn_continuation;apply_args}
 
 and normalize_apply_function_decls phi function_decls
       callee continuation exn_continuation apply_args =
