@@ -1,10 +1,9 @@
-let rec length x =
-  match x with
-  | [] -> 0
-  | a :: l -> 1 + length l
-
 let foo () =
-  let y = 3
-  in
-  let rec g x= f x + y
-  and f x = g x
+  let rec g (x : int) = g x
+  (* (*   (let rec k () = f () in
+   *  *   k ())
+   *  * and f () = g () *)
+   *   let y = g x
+   *   in x + y *)
+ in
+ g 2
