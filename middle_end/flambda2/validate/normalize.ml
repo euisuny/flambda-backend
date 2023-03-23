@@ -21,7 +21,7 @@ let rec subst_pattern ~(bound : Bound_for_let.t) ~(let_body : core_exp)
   | Singleton bound ->
     (match must_be_set_of_closures let_body with
      | Some clo ->
-       subst_singleton_set_of_closures ~bound ~clo e
+       subst_singleton_set_of_closures ~bound:(Bound_var.var bound) ~clo e
      | None ->
         core_fmap
           (fun (bound, let_body) s ->
@@ -36,7 +36,7 @@ let rec subst_pattern ~(bound : Bound_for_let.t) ~(let_body : core_exp)
   | Static bound ->
     subst_static_list ~bound ~let_body e
 
-and subst_singleton_set_of_closures ~(bound: Bound_var.t)
+and subst_singleton_set_of_closures ~(bound: Variable.t)
       ~(clo : set_of_closures) (e : core_exp) : core_exp =
   match e with
   | Named e -> subst_singleton_set_of_closures_named ~bound ~clo e
@@ -60,19 +60,16 @@ and subst_singleton_set_of_closures_named ~bound ~clo (e : named) : core_exp =
   let f bound (v : literal) =
     (match v with
     | Simple v ->
-      (if Simple.same v (Simple.var (Bound_var.var bound)) then
+      (if Simple.same v (Simple.var bound) then
           Named (Set_of_closures clo)
       else
         Named (Literal (Simple v)))
     | Slot (phi, Function_slot slot) ->
-      (let bound = Function_slot.Lmap.bindings clo.function_decls
-       in
-       (* try to find if any of the symbols being bound is the same as the variable v *)
-       let bound_closure =
-         List.find_opt (fun (x, _) -> x = slot) bound
-       in
+      (let decls = Function_slot.Lmap.bindings clo.function_decls in
+       let bound_closure = List.find_opt (fun (x, _) -> x = slot) decls in
        (match bound_closure with
-        | None -> Named e
+        | None ->
+          Named e
         | Some (k, _) -> Named (Closure_expr (phi, k, clo))))
     | (Cont _ | Res_cont _ | Slot (_, Value_slot _) | Code_id _) -> Named (Literal v))
   in
@@ -380,38 +377,25 @@ and handler_map_to_closures (phi : Variable.t) (v : Bound_parameter.t list)
          Function_slot.create !comp_unit ~name:(Continuation.name key)
            Flambda_kind.With_subkind.any_value
        in
-       let e = handler_to_lambda v e in
        let e =
-         Core_lambda.pattern_match
+         Core_continuation_handler.pattern_match
            e
-           ~f:(fun params e ->
-              Core_lambda.create params
+           (fun params e ->
+             let params =
+               (Bound_parameters.to_list params) @ v |> Bound_parameters.create
+             in
+              Core_continuation_handler.create params
                 (subst_cont_id key
                    (Named (Literal (Slot (phi, Function_slot slot)))) e))
        in
        (* for every occurence of [key] in [e], substitute
           with Slot(phi, Function_slot slot) *)
-       let lambda = Lambda e in
+       let lambda = Handler e in
        Function_slot.Lmap.add slot lambda fun_decls) m
     Function_slot.Lmap.empty
   in
   { function_decls = in_order;
     value_slots = Value_slot.Map.empty }
-
-and handler_to_lambda (v : Bound_parameter.t list) (m : continuation_handler)
-  : lambda_expr =
-  Core_continuation_handler.pattern_match m
-    (fun params body ->
-       let params =
-         (Bound_parameters.to_list params) @ v |> Bound_parameters.create
-       in
-       (* Put a dummy fresh return and exception continuation here *)
-       let return_continuation = Continuation.create () in
-       let exn_continuation = Continuation.create () in
-       let bound =
-         Bound_for_lambda.create ~return_continuation ~exn_continuation ~params
-       in
-       Core_lambda.create bound body)
 
 and normalize_let_cont (e:let_cont_expr) : core_exp =
   match e with
@@ -428,13 +412,13 @@ and normalize_let_cont (e:let_cont_expr) : core_exp =
       )
   | Recursive handlers ->
     (* e1 where rec k args = e2 *)
+    let phi = Variable.create "ϕ" in
     Core_recursive.pattern_match handlers
       ~f:(fun bound_conts {continuation_map; body} ->
         Core_continuation_map.pattern_match continuation_map
           ~f:(fun params map ->
             (* transform the map into a set of closures with corresponding
                function slots *)
-            let phi = Variable.create "ϕ" in
             let clo =
               handler_map_to_closures phi (Bound_parameters.to_list params) map
             in
@@ -451,10 +435,7 @@ and normalize_let_cont (e:let_cont_expr) : core_exp =
                      (Named (Literal (Slot (phi, Function_slot slot)))) acc)
                 body in_order_with_cont
             in
-            let e1 = Named (Set_of_closures clo) in
-            let phi = Bound_var.create phi Name_mode.normal in
-            Core_let.create ~x:(Singleton phi) ~e1 ~e2))
-    (* |> normalize *)
+            subst_singleton_set_of_closures ~bound:phi ~clo e2))
 
 and subst_cont_id (cont : Continuation.t) (e1 : core_exp) (e2 : core_exp) =
   core_fmap
@@ -472,17 +453,78 @@ and normalize_apply_no_beta_redex callee continuation exn_continuation apply_arg
   let exn_continuation = normalize exn_continuation in
   Apply {callee;continuation;exn_continuation;apply_args}
 
-and normalize_apply_function_decls function_decls
+and does_not_occur (v : literal) acc (exp : core_exp) =
+  match exp with
+  | Invalid _ -> acc
+  | Named (Literal l) ->
+    (not (literal_contained v l) && acc)
+  | Named (Prim _| Closure_expr _ | Set_of_closures _ | Static_consts _
+          | Rec_info _) -> acc (* FIXME : do a deep pattern match here *)
+  | Let {let_abst; expr_body} ->
+    Core_let.pattern_match {let_abst; expr_body}
+      ~f:(fun ~x:_ ~e1 ~e2 ->
+        does_not_occur v acc e1 && does_not_occur v acc e2)
+  | Let_cont e ->
+    (match e with
+    | Non_recursive {handler; body} ->
+      let handler =
+        Core_continuation_handler.pattern_match handler
+          (fun _ exp -> does_not_occur v acc exp)
+      in
+      let body =
+        Core_letcont_body.pattern_match body
+          (fun _ exp -> does_not_occur v acc exp)
+      in
+      handler && body
+    | Recursive body ->
+      Core_recursive.pattern_match body
+        ~f:(fun _ {continuation_map; body} ->
+          Core_continuation_map.pattern_match continuation_map
+            ~f:(fun _ continuation_map ->
+              let continuation_map =
+                Continuation.Map.fold
+                  (fun _ x acc ->
+                     acc &&
+                      Core_continuation_handler.pattern_match x
+                        (fun _ exp -> does_not_occur v acc exp))
+                  continuation_map true
+              in
+              continuation_map &&
+              does_not_occur v acc body)))
+  | Apply {callee; continuation; exn_continuation; apply_args}->
+    does_not_occur v acc callee &&
+    does_not_occur v acc continuation &&
+    does_not_occur v acc exn_continuation &&
+    List.fold_left
+      (fun acc e -> acc && does_not_occur v acc e) true apply_args
+  | Apply_cont {k; args} ->
+    does_not_occur v acc k &&
+    List.fold_left
+      (fun acc e -> acc && does_not_occur v acc e) true args
+  | Lambda e ->
+    Core_lambda.pattern_match e
+      ~f:(fun _ e -> does_not_occur v acc e)
+  | Handler handler ->
+    Core_continuation_handler.pattern_match handler
+         (fun _ exp -> does_not_occur v acc exp)
+  | Switch {scrutinee; arms} ->
+    does_not_occur v acc scrutinee &&
+    Targetint_31_63.Map.fold
+      (fun _ x acc -> acc && does_not_occur v acc x) arms true
+
+and normalize_apply_function_decls phi function_decls
       callee continuation exn_continuation apply_args =
   (* LATER: Do we need to handle cases other than singleton? *)
   match Function_slot.Lmap.get_singleton function_decls with
   | Some (_, Lambda exp) ->
-    normalize_apply_lambda exp continuation exn_continuation apply_args
+    if does_not_occur (Simple (Simple.var phi)) true (Lambda exp) then
+      normalize_apply_lambda exp continuation exn_continuation apply_args
+    else
+      normalize_apply_no_beta_redex callee continuation exn_continuation apply_args
   | (Some (_,
     (Named _ | Let _ | Let_cont _ | Apply _ | Apply_cont _ | Switch _
     | Handler _ | Invalid _)) | None) ->
-    normalize_apply_no_beta_redex
-      callee continuation exn_continuation apply_args
+    normalize_apply_no_beta_redex callee continuation exn_continuation apply_args
 
 and normalize_apply_lambda lambda_expr continuation exn_continuation apply_args =
   Core_lambda.pattern_match lambda_expr
@@ -508,9 +550,9 @@ and normalize_apply_lambda lambda_expr continuation exn_continuation apply_args 
 and normalize_apply callee continuation exn_continuation apply_args : core_exp =
   let apply_args = List.map normalize apply_args in
   match callee with
-  | Named (Closure_expr (_, _,
+  | Named (Closure_expr (phi, _,
                          {function_decls; value_slots = _})) ->
-    normalize_apply_function_decls function_decls
+    normalize_apply_function_decls phi function_decls
       callee continuation exn_continuation apply_args
   | Lambda expr ->
     normalize_apply_lambda expr continuation exn_continuation apply_args

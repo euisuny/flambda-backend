@@ -321,3 +321,5 @@ val prim_fix : (core_exp -> core_exp) -> primitive -> core_exp
 val static_const_group_fix :
   (core_exp -> core_exp) ->
   static_const_group -> core_exp
+
+val literal_contained : literal -> literal -> bool

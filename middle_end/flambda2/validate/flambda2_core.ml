@@ -1477,3 +1477,22 @@ let rec core_fmap
     handler_fix (core_fmap f arg) e
   | Switch e -> switch_fix (core_fmap f arg) e
   | Invalid _ -> e
+
+let literal_contained (literal1 : literal) (literal2 : literal) : bool =
+  match literal1, literal2 with
+  | Simple simple1, Simple simple2 ->
+    Simple.same simple1 simple2
+  | (Cont cont1, Cont cont2
+    | Res_cont (Return cont1), Res_cont (Return cont2))
+    -> Continuation.equal cont1 cont2
+  | Simple simple, Slot (phi, _) ->
+    Simple.same (Simple.var phi) simple
+  | Slot (_, Function_slot slot1), Slot (_, Function_slot slot2) ->
+    Function_slot.equal slot1 slot2
+  | Slot (_, Value_slot slot1), Slot (_, Value_slot slot2) ->
+    Value_slot.equal slot1 slot2
+  | Res_cont Never_returns, Res_cont Never_returns -> true
+  | Code_id code1, Code_id code2 ->
+    Code_id.name code1 == Code_id.name code2
+  | (Simple _ | Cont _ | Slot (_, (Function_slot _ | Value_slot _))
+    | Res_cont (Never_returns | Return _) | Code_id _), _ -> false
