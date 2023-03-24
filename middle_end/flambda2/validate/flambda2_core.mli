@@ -152,7 +152,11 @@ val must_be_named : core_exp -> named option
 
 val must_be_cont : core_exp -> Continuation.t option
 
+val must_be_slot : core_exp -> (Variable.t * slot) option
+
 val must_be_lambda : core_exp -> lambda_expr option
+
+val must_be_apply : core_exp -> apply_expr option
 
 val must_be_static_consts : core_exp -> static_const_group option
 

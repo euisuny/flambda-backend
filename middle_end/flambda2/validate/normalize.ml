@@ -258,7 +258,6 @@ and subst_bound_set_of_closures (bound : Bound_var.t) ~let_body
   | Literal (Res_cont _ | Code_id _ | Cont _ | Slot (_, Value_slot _))
   | Closure_expr _ | Set_of_closures _ | Rec_info _ -> Named e
 
-
 and subst_code_id_set_of_closures (bound : Code_id.t) ~(let_body : core_exp)
       {function_decls; value_slots}
   : set_of_closures =
@@ -395,6 +394,7 @@ let rec normalize (e:core_exp) : core_exp =
     (* The recursive call for [apply_cont] is done for the arguments *)
     normalize_apply_cont k args
   | Lambda e -> normalize_lambda e
+  | Handler e -> normalize_handler e
   | Switch {scrutinee; arms} ->
     let scrutinee = normalize scrutinee
     in
@@ -407,7 +407,6 @@ let rec normalize (e:core_exp) : core_exp =
      [named] expressions that are part of let-bound expressions for this
      reason.*)
   | Named _
-  | Handler _
   | Invalid _ -> e
 
 and normalize_lambda (e : lambda_expr) =
@@ -434,6 +433,12 @@ and normalize_lambda (e : lambda_expr) =
         (Core_lambda.create
             {return_continuation;exn_continuation;params}
             e))
+
+and normalize_handler (e : continuation_handler) =
+  Core_continuation_handler.pattern_match e
+    (fun param e ->
+       let e = normalize e in
+       Handler (Core_continuation_handler.create param e))
 
 and normalize_switch scrutinee arms : core_exp =
   (* if the scrutinee is exactly one of the arms, simplify *)
@@ -482,6 +487,7 @@ and handler_map_to_closures (phi : Variable.t) (v : Bound_parameter.t list)
          Core_continuation_handler.pattern_match
            e
            (fun params e ->
+             let e = normalize e in
              let params =
                (Bound_parameters.to_list params) @ v |> Bound_parameters.create
              in
@@ -549,9 +555,79 @@ and subst_cont_id (cont : Continuation.t) (e1 : core_exp) (e2 : core_exp) =
        | (Simple _ | Res_cont Never_returns | Slot _ | Code_id _) ->
          Named (Literal x)) () e2
 
+and normalize_fun_decls (decls : function_declarations) =
+  Function_slot.Lmap.mapi
+    (fun key x ->
+       match must_be_lambda x with
+       | Some x ->
+         (* Check if this is a direct loop *)
+         Core_lambda.pattern_match x
+           ~f:(fun
+                {return_continuation;
+                 exn_continuation;
+                 params}
+                e ->
+                let default =
+                  Lambda
+                    (Core_lambda.create
+                    {return_continuation;exn_continuation;params}
+                    e)
+                in
+                match must_be_apply e with
+                | Some
+                    {callee;
+                      continuation = continuation';
+                      exn_continuation = exn_continuation';
+                      apply_args} ->
+                  (* callee is to itself *)
+                  (match must_be_slot callee,
+                          must_be_cont continuation',
+                          must_be_cont exn_continuation'
+                    with
+                    | Some (_, Function_slot slot), Some cont, Some exn_cont ->
+                      if Function_slot.name slot =
+                         Function_slot.name key &&
+                        Continuation.equal cont return_continuation &&
+                        Continuation.equal exn_cont exn_continuation
+                      then
+                        Handler
+                          (Core_continuation_handler.create
+                             params
+                              (Apply_cont
+                                {k = callee;
+                                args = apply_args}))
+                      else default
+                    | (Some (_, (Value_slot _ | Function_slot _)) | None),
+                      (Some _ | None), (Some _ | None) ->
+                      default
+                   )
+                  | None -> default
+           )
+       | None -> x
+    ) decls
+
 and normalize_apply_no_beta_redex callee continuation exn_continuation apply_args =
-  let continuation = normalize continuation in
-  let exn_continuation = normalize exn_continuation in
+  let default =
+    Apply {callee;continuation;exn_continuation;apply_args}
+  in
+  match callee with
+  | Named (Closure_expr (phi, slot, {function_decls; value_slots})) ->
+    let function_decls =
+      normalize_fun_decls function_decls
+    in
+    (match Function_slot.Lmap.find_opt slot function_decls with
+     | Some (Handler _) ->
+       Apply_cont
+         { k = Named (Closure_expr (phi, slot, {function_decls; value_slots}));
+           args = apply_args }
+     | (Some (Named _ | Let _ | Let_cont _ | Apply _ | Apply_cont _ | Switch _
+              | Lambda _ | Invalid _) | None) -> default)
+  | (Named (Static_consts ((Code _ | Deleted_code | Static_const _)::_ | [])
+           | Literal _ | Prim _ | Set_of_closures _
+           | Rec_info _)
+    | Lambda _
+    | Handler _ | Let _ | Let_cont _ | Apply _ | Apply_cont _ | Switch _ | Invalid _) ->
+    default
   (* LATER (UNCOMMENT):
      if the continuations are literal continuations, check for whether they are used
    *  in the callee. if not, reduce the apply expr to an apply cont expr. *)
@@ -563,7 +639,6 @@ and normalize_apply_no_beta_redex callee continuation exn_continuation apply_arg
    *   else
    *     Apply {callee;continuation;exn_continuation;apply_args}
    * | (Some _ | None), _ -> *)
-    Apply {callee;continuation;exn_continuation;apply_args}
 
 and normalize_apply_function_decls phi function_decls
       callee continuation exn_continuation apply_args =
@@ -599,8 +674,10 @@ and normalize_apply_lambda lambda_expr continuation exn_continuation apply_args 
         in
         subst_params params exp apply_args |> normalize)
 
-(* LATER: We may want to reduce the callee before matching on it *)
 and normalize_apply callee continuation exn_continuation apply_args : core_exp =
+  let callee = normalize callee in
+  let continuation = normalize continuation in
+  let exn_continuation = normalize exn_continuation in
   let apply_args = List.map normalize apply_args in
   match callee with
   | Named (Closure_expr (phi, _,

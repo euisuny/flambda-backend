@@ -205,6 +205,12 @@ let must_be_lambda (e : core_exp) : lambda_expr option =
   | (Named _ | Let _ | Let_cont _ | Apply _ | Apply_cont _ | Switch _
     | Handler _ | Invalid _) -> None
 
+let must_be_apply (e : core_exp) : apply_expr option =
+  match e with
+  | Apply e -> Some e
+  | (Named _ | Let _ | Let_cont _ | Lambda _ | Apply_cont _ | Switch _
+    | Handler _ | Invalid _) -> None
+
 let must_be_static_consts (e : core_exp) : static_const_group option  =
   match must_be_named e with
   | Some (Static_consts g) -> Some g
@@ -282,6 +288,11 @@ let must_be_untagged_immediate (e : core_exp) : named option =
   match must_be_named e with
   | Some n -> must_be_untagged_immediate n
   | None -> None
+
+let must_be_slot (e : core_exp) : (Variable.t * slot) option =
+  match must_be_literal e with
+  | Some (Slot v) -> Some v
+  | (Some (Simple _ | Cont _ | Res_cont _ | Code_id _) | None) -> None
 
 let must_be_function_slot_expr (e : literal) :
   (Variable.t * Function_slot.t) option =
