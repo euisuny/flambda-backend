@@ -1,9 +1,6 @@
 let foo () =
-  let rec g (x : int) = g x
-  (* (*   (let rec k () = f () in
-   *  *   k ())
-   *  * and f () = g () *)
-   *   let y = g x
-   *   in x + y *)
+  let rec g (x : int) =
+    ignore (Sys.opaque_identity x);
+    g (x + 1)
  in
  g 2

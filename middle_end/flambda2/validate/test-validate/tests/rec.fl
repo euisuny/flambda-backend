@@ -1,12 +1,14 @@
-let $camlRec__first_const17 = Block 0 () in
-let code rec loopify(default tailrec) size(4)
-      g_1 (param) my_closure my_region my_depth -> k * k1 =
+let $camlRec__first_const19 = Block 0 () in
+let code rec loopify(default tailrec) size(6)
+      g_1 (x) my_closure my_region my_depth -> k * k1 =
   let next_depth = rec_info (succ my_depth) in
-  apply direct(g_1) my_closure (0) &my_region -> k * k1
+  let Popaque = %Opaque x in
+  let Paddint = x + 1 in
+  apply direct(g_1) my_closure (Paddint) &my_region -> k * k1
 in
-let code size(15) foo_0 (param) my_closure my_region my_depth -> k * k1 =
+let code size(17) foo_0 (param) my_closure my_region my_depth -> k * k1 =
   let g = closure g_1 @g in
-  apply direct(g_1) g (0) &my_region -> k * k1
+  apply direct(g_1) g (2) &my_region -> k * k1
 in
 (let foo = closure foo_0 @foo in
  let Pmakeblock = %Block 0 (foo) in
