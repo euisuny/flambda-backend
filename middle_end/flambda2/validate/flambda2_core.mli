@@ -150,6 +150,8 @@ val is_code : static_const_or_code -> bool
 
 val must_be_named : core_exp -> named option
 
+val must_be_prim : core_exp -> primitive option
+
 val must_be_cont : core_exp -> Continuation.t option
 
 val must_be_slot : core_exp -> (Variable.t * slot) option
@@ -169,6 +171,9 @@ val must_be_simple_or_immediate : core_exp -> Simple.t option
 val must_be_tagged_immediate : core_exp -> named option
 
 val must_be_untagged_immediate : core_exp -> named option
+
+val must_be_string_length :
+  core_exp -> (Flambda_primitive.string_or_bytes * core_exp) option
 
 val must_be_function_slot_expr :
   core_exp -> (Variable.t * Function_slot.t) option

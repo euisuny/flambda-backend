@@ -148,6 +148,28 @@ let eval_box_number_naked_float v (arg : core_exp) : named =
            | Static_consts _ |Rec_info _) | None) ->
      Prim (Unary (v, arg))
 
+let eval_string_length (sb : Flambda_primitive.string_or_bytes) (arg : core_exp) : named =
+  let default = Prim (Unary (String_length sb, arg)) in
+  (match must_be_static_consts arg with
+    | Some [s] ->
+      (match s with
+      | Static_const s ->
+        (match s with
+          | Immutable_string string ->
+            let length = String.length string |> Targetint_31_63.of_int in
+            let const = Simple.const (Int_ids.Const.const_int length) in
+            Prim (Unary (Untag_immediate, Named (Literal (Simple const))))
+          | Static_set_of_closures _ | Block _
+          | Boxed_float _ | Boxed_int32 _ | Boxed_int64 _
+          | Boxed_nativeint _
+          | Immutable_float_block _
+          | Immutable_float_array _
+          | Immutable_value_array _
+          | Empty_array
+          | Mutable_string _ -> default)
+      | Code _ | Deleted_code -> default)
+    | (Some [] | Some (_::_) | None) -> default)
+
 let eval_unary (v : P.unary_primitive) (arg : core_exp) : named =
   match v with
   (* [Project_function_slot] and [Project_value_slot] is resolved during
@@ -190,13 +212,15 @@ let eval_unary (v : P.unary_primitive) (arg : core_exp) : named =
     (match must_be_untagged_immediate arg with
      | Some a -> a
      | None -> Prim (Unary (v, arg)))
-  | Untag_immediate -> eval_untag_immediate arg
+  | Untag_immediate ->
+    eval_untag_immediate arg
+  | String_length sb ->
+    eval_string_length sb arg
   | ( Get_tag | Array_length | Int_as_pointer | Boolean_not
     | Reinterpret_int64_as_float
     | Is_boxed_float | Is_flat_float_array | Begin_try_region
     | End_region | Obj_dup | Duplicate_block _ | Duplicate_array _
-    | Is_int _ | Bigarray_length _ | String_length _
-    | Opaque_identity _
+    | Is_int _ | Bigarray_length _ | Opaque_identity _
     ) ->
     (Prim (Unary (v, arg)))
 
@@ -1185,7 +1209,7 @@ let eval_variadic (v : P.variadic_primitive) (args : core_exp list) : named =
 let rec eval (v : primitive) : core_exp =
   let f_arg (arg : core_exp) =
     (match arg with
-    | Named (Prim arg) -> eval arg
+     | Named (Prim arg) -> eval arg
     | (Named (Literal _ | Closure_expr _ | Set_of_closures _ |
               Static_consts _ | Rec_info _ )
       | Let _ | Let_cont _ | Apply _ | Apply_cont _ | Lambda _ | Switch _

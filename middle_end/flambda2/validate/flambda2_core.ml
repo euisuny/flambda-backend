@@ -190,6 +190,15 @@ let must_be_cont (e : core_exp) : Continuation.t option =
   | (Some (Res_cont Never_returns | Simple _ | Slot _ | Code_id _) | None) ->
     None
 
+let must_be_prim (e : core_exp) : primitive option =
+  match must_be_named e with
+  | Some e ->
+    (match e with
+     | Prim e -> Some e
+     | (Literal _ | Closure_expr _ | Set_of_closures _ | Static_consts _
+       | Rec_info _) -> None)
+  | None -> None
+
 let must_be_simple (e : core_exp) : Simple.t option =
   match e with
   | Named (Literal (Simple s)) -> Some s
@@ -288,6 +297,27 @@ let must_be_untagged_immediate (e : core_exp) : named option =
   match must_be_named e with
   | Some n -> must_be_untagged_immediate n
   | None -> None
+
+let must_be_string_length (e : named) : (Flambda_primitive.string_or_bytes * core_exp) option =
+  match e with
+  | Prim (Unary (String_length sb, arg)) -> Some (sb, arg)
+  | Prim (Unary
+            ((Tag_immediate | Untag_immediate | Duplicate_block _ | Duplicate_array _
+             | Is_int _ | Get_tag | Array_length | Bigarray_length _
+             | Int_as_pointer | Opaque_identity _ | Int_arith _ | Float_arith _
+             | Num_conv _ | Boolean_not | Reinterpret_int64_as_float | Unbox_number _
+             | Box_number _ | Project_function_slot _ | Project_value_slot _
+             | Is_boxed_float | Is_flat_float_array | Begin_try_region | End_region
+             | Obj_dup), _))
+  | (Prim (Nullary _ | Binary  _ | Ternary _ | Variadic _) |
+     Literal _ | Closure_expr _ | Set_of_closures _ | Static_consts _
+    | Rec_info _) -> None
+
+let must_be_string_length (e : core_exp) : (Flambda_primitive.string_or_bytes * core_exp) option =
+  match must_be_named e with
+  | Some n -> must_be_string_length n
+  | None -> None
+
 
 let must_be_slot (e : core_exp) : (Variable.t * slot) option =
   match must_be_literal e with

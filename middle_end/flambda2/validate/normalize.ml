@@ -406,7 +406,10 @@ let rec normalize (e:core_exp) : core_exp =
      are substituted into the static set of closures. We only normalize
      [named] expressions that are part of let-bound expressions for this
      reason.*)
-  | Named _
+  | Named _ ->
+    (match must_be_prim e with
+     | Some e -> Eval_prim.eval e
+     | None -> e)
   | Invalid _ -> e
 
 and normalize_apply_under_lambda ret_cont exn_cont (e : core_exp) : core_exp =
