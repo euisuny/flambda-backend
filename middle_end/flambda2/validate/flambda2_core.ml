@@ -606,7 +606,7 @@ and apply_renaming_switch {scrutinee; arms} renaming : switch_expr =
 let rec print ppf e =
   match e with
    | Named t ->
-     fprintf ppf "@[named %a@]"
+     fprintf ppf "@[<hov 1>%a@]"
      print_named t
    | Let t -> print_let ppf t
    | Let_cont t ->
@@ -700,13 +700,13 @@ and print_named ppf (t : named) =
     fprintf ppf "%a" print_literal literal
   | Prim prim -> print_prim ppf prim;
   | Closure_expr (var, slot, clo) ->
-    fprintf ppf "clo(%a, %a, %a)"
+    fprintf ppf "@[<hov 3>clo(%a,@ %a,@. %a)@]"
       Variable.print var
       Function_slot.print slot
       (fun ppf clo ->
          print_named ppf (Set_of_closures clo)) clo
   | Set_of_closures clo ->
-    fprintf ppf "set_of_closures %a"
+    fprintf ppf "set_of_closures@. @[<hov 2>%a@]"
     print_set_of_closures clo
   | Static_consts consts ->
     fprintf ppf "static_consts %a"
@@ -722,8 +722,7 @@ and print_set_of_closures ppf
     Format.fprintf ppf "(%a)"
       print_function_declaration function_decls
   else
-    Format.fprintf ppf "(%a\
-                        (env %a))"
+    Format.fprintf ppf "(%a@.(env %a))"
       print_function_declaration function_decls
       (Value_slot.Map.print print_value_slot) value_slots
 
@@ -740,22 +739,22 @@ and print_prim ppf (t : primitive) =
     fprintf ppf "@[<v 0>prim %a@]"
     print_nullary_prim prim
   | Unary (prim, arg) ->
-    fprintf ppf "@[(@[<v 0>prim %a@]@ %a)@]"
+    fprintf ppf "@[@[<v 0>prim %a@]@ (%a)@]"
      P.print_unary_primitive prim
      print arg
   | Binary (prim, arg1, arg2) ->
-    fprintf ppf "@[(@[<v 0>prim %a@]@ (%a,@ %a))@]"
+    fprintf ppf "@[@[<v 0>prim %a@]@ (%a,@ %a)@]"
     P.print_binary_primitive prim
     print arg1
     print arg2
   | Ternary (prim, arg1, arg2, arg3) ->
-    fprintf ppf "@[(@[<v 0>prim %a@]@ (%a@, %a@, %a))@]"
+    fprintf ppf "@[@[<v 0>prim %a@]@ (%a@, %a@, %a)@]"
     P.print_ternary_primitive prim
     print arg1
     print arg2
     print arg3
   | Variadic (prim, args) ->
-    fprintf ppf "@[(@[<v 0>prim %a@]@ (%a))@]"
+    fprintf ppf "@[@[<v 0>prim %a@]@ (%a)@]"
     P.print_variadic_primitive prim
     (Format.pp_print_list
        ~pp_sep:(fun ppf () ->
@@ -910,18 +909,18 @@ and print_handler ppf (t : continuation_handler) =
 
 and print_apply ppf
       ({callee; continuation; exn_continuation; apply_args} : apply_expr) =
-  fprintf ppf "(callee:%a)@ (ret:%a)@ (exn:%a)@ "
+  fprintf ppf "(callee:@[<hov 2>%a@])@ (ret:%a)@ (exn:%a)@ "
     print callee
     print continuation
     print exn_continuation;
-  fprintf ppf "(args:";
+  fprintf ppf " (args:";
   Format.pp_print_list ~pp_sep:Format.pp_print_space print ppf apply_args;
   fprintf ppf ")"
 
 and print_apply_cont ppf ({k ; args} : apply_cont_expr) =
   fprintf ppf "(%a)@ "
     print k;
-    fprintf ppf "(";
+    fprintf ppf " (args:";
     Format.pp_print_list ~pp_sep:Format.pp_print_space print ppf args;
   fprintf ppf ")"
 

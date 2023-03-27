@@ -409,10 +409,103 @@ let rec normalize (e:core_exp) : core_exp =
   | Named _
   | Invalid _ -> e
 
+and normalize_apply_under_lambda ret_cont exn_cont (e : core_exp) : core_exp =
+  match e with
+  | Named e -> named_fix (normalize_apply_under_lambda ret_cont exn_cont)
+                 (fun _ x -> Named (Literal x)) () e
+  | Let e -> let_fix (normalize_apply_under_lambda ret_cont exn_cont) e
+  | Let_cont e ->
+    let_cont_fix (normalize_apply_under_lambda ret_cont exn_cont) e
+  | Apply {callee;continuation;exn_continuation;apply_args}
+    ->
+    (match must_be_cont continuation, must_be_cont exn_continuation with
+    | Some k, Some ke ->
+      if Continuation.equal k ret_cont &&
+         Continuation.equal ke exn_cont then
+        let callee =
+          (match callee with
+          | Named (Closure_expr (phi, slot,
+                                {function_decls; value_slots})) ->
+            (match Function_slot.Lmap.find_opt slot function_decls with
+            | Some (Lambda exp) ->
+              let f =
+                Core_lambda.pattern_match exp
+                ~f:(fun b e ->
+                  let ret_cont' = b.return_continuation in
+                  let exn_cont' = b.exn_continuation in
+                  let f_cont () (l : literal) : core_exp =
+                    (match l with
+                    | Cont k ->
+                      let cont =
+                        if Continuation.equal k ret_cont' then
+                          ret_cont
+                        else if Continuation.equal k exn_cont' then
+                          exn_cont
+                        else
+                          k
+                      in
+                      Named (Literal (Cont cont))
+                    | Res_cont (Return k) ->
+                      let cont =
+                        if Continuation.equal k ret_cont' then
+                          ret_cont
+                        else if Continuation.equal k exn_cont' then
+                          exn_cont
+                        else
+                          k
+                      in
+                      Named (Literal (Res_cont (Return cont)))
+                    | (Res_cont Never_returns | Simple _ | Slot _ | Code_id _) ->
+                      Named (Literal l))
+                  in
+                  let e = core_fmap f_cont () e in
+                  let params = b.params in
+                  Handler (Core_continuation_handler.create params e))
+              in
+              Named (Closure_expr
+                          (phi, slot,
+                          {function_decls = Function_slot.Lmap.singleton slot f;
+                          value_slots}))
+            | (Some (Named _ | Let _ | Let_cont _ | Apply _ | Apply_cont _ | Switch _
+                      | Handler _ | Invalid _) | None) -> callee)
+          | Lambda _ ->
+            failwith "Unimplemented"
+
+          | (Named (Static_consts ((Code _ | Deleted_code | Static_const _)::_ | [])
+                  | Literal _ | Prim _ | Set_of_closures _
+                  | Rec_info _)
+            | Handler _ | Let _ | Let_cont _ | Apply _ | Apply_cont _ | Switch _ | Invalid _) ->
+            callee)
+        in
+        Apply_cont
+          {k=normalize_apply_under_lambda ret_cont exn_cont callee;
+           args=apply_args}
+      else
+        Apply
+          {callee=normalize_apply_under_lambda ret_cont exn_cont callee;
+            continuation; exn_continuation; apply_args}
+    | (Some _ | None), _ ->
+      Apply
+        {callee=normalize_apply_under_lambda ret_cont exn_cont callee;
+         continuation; exn_continuation; apply_args})
+  | Apply_cont e ->
+    apply_cont_fix (normalize_apply_under_lambda ret_cont exn_cont) e
+  | Lambda e ->
+    lambda_fix (normalize_apply_under_lambda ret_cont exn_cont) e
+  | Handler e ->
+    handler_fix (normalize_apply_under_lambda ret_cont exn_cont) e
+  | Switch e ->
+    switch_fix (normalize_apply_under_lambda ret_cont exn_cont) e
+  | Invalid _ -> e
+
 and normalize_lambda (e : lambda_expr) =
   Core_lambda.pattern_match e
     ~f:(fun {return_continuation; exn_continuation; params} e ->
-      let e = normalize e in
+      let e = normalize e |>
+              normalize_apply_under_lambda return_continuation exn_continuation
+      in
+      (* for all apply statements in this lambda are taking in the same return
+         and exn continuations *)
       (* LATER: Remove unused arguments (uncomment this and add checking for
          the application site for this lambda needs to have its argument removed
          as well) *)
@@ -628,17 +721,6 @@ and normalize_apply_no_beta_redex callee continuation exn_continuation apply_arg
     | Lambda _
     | Handler _ | Let _ | Let_cont _ | Apply _ | Apply_cont _ | Switch _ | Invalid _) ->
     default
-  (* LATER (UNCOMMENT):
-     if the continuations are literal continuations, check for whether they are used
-   *  in the callee. if not, reduce the apply expr to an apply cont expr. *)
-  (* match must_be_cont continuation, must_be_cont exn_continuation with
-   * | Some k1, Some k2 ->
-   *   if does_not_occur (Cont k1) true callee &&
-   *      does_not_occur (Cont k2) true callee
-   *   then Apply_cont {k = callee; args = apply_args}
-   *   else
-   *     Apply {callee;continuation;exn_continuation;apply_args}
-   * | (Some _ | None), _ -> *)
 
 and normalize_apply_function_decls phi function_decls
       callee continuation exn_continuation apply_args =
