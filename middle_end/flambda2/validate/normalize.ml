@@ -399,8 +399,7 @@ let rec normalize (e:core_exp) : core_exp =
   | Lambda e -> normalize_lambda e
   | Handler e -> normalize_handler e
   | Switch {scrutinee; arms} ->
-    let scrutinee = normalize scrutinee
-    in
+    let scrutinee = normalize scrutinee in
     let arms = Targetint_31_63.Map.map normalize arms
     in
     normalize_switch scrutinee arms
@@ -813,7 +812,7 @@ and normalize_set_of_closures (phi : Bound_for_let.t)
       normalize
       in_order in
   { function_decls
-  ; value_slots = Value_slot.Map.empty }
+  ; value_slots }
 
 (* For every occurrence of the "my_closure" argument in [fn_expr],
    substitute in [Slot(phi, clo)] *)
@@ -878,6 +877,11 @@ and subst_my_closure_body_named _phi
     ({function_decls;value_slots}: set_of_closures) (e : named)
   : core_exp =
   (match e with
+   | Prim (Unary (Project_value_slot slot,
+                  Named (Closure_expr (_, _, {function_decls = _ ; value_slots})))) ->
+     (match Value_slot.Map.find_opt slot.value_slot value_slots with
+      | Some exp -> exp
+      | None -> Named e)
    | Prim (Unary (Project_value_slot slot, _)) ->
     (match Value_slot.Map.find_opt slot.value_slot value_slots with
     | Some exp ->
@@ -908,7 +912,7 @@ and subst_my_closure_body_named _phi
               | Is_boxed_float | Is_flat_float_array | Begin_try_region | End_region
               | Obj_dup), _) | Nullary _ | Binary _ | Ternary _ | Variadic _)
     | Literal _ | Closure_expr _ | Set_of_closures _
-    | Static_consts _ | Rec_info _) -> Named e)
+    | Static_consts _ | Rec_info _) -> Named e)[@ocaml.warning "-4"]
 
 (* This is a "normalization" of [named] expression, in quotations because there
   is some simple evaluation that occurs for primitive arithmetic expressions *)

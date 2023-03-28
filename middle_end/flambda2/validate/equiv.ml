@@ -136,10 +136,10 @@ let equiv_value_slots env value_slot1 value_slot2 : eq =
 let zip_fold l1 l2 ~f ~acc =
   List.combine l1 l2 |> List.fold_left f acc
 
-let zip_sort_fold l1 l2 ~compare ~f ~acc =
-  let l1 = List.sort compare l1 in
-  let l2 = List.sort compare l2 in
-  zip_fold l1 l2 ~f ~acc
+(* let zip_sort_fold l1 l2 ~compare ~f ~acc =
+ *   let l1 = List.sort compare l1 in
+ *   let l2 = List.sort compare l2 in
+ *   zip_fold l1 l2 ~f ~acc *)
 
 (* Ignore code ids, phi slots, and rec info *)
 let equiv_code_ids _ _ _ = true
@@ -262,20 +262,20 @@ and equiv_set_of_closures env
   (set1 : set_of_closures) (set2 : set_of_closures) : eq =
   (* Unify value and function slots *)
   (* Comparing value slots *)
-  let value_slots_by_value set =
-    Value_slot.Map.bindings (set.value_slots)
-    |> List.map (fun (var, value) -> value, var)
-  in
-  let compare (exp1, _var1) (exp2, _var2) =
-    if equiv env exp1 exp2 then 0 else 1
-  in
-  let value_slots_eq =
-    zip_sort_fold (value_slots_by_value set1) (value_slots_by_value set2)
-      ~compare
-      ~f:(fun x ((_, var1), (_, var2)) ->
-            x && equiv_value_slots env var1 var2)
-      ~acc:true
-  in
+  (* let value_slots_by_value set =
+   *   Value_slot.Map.bindings (set.value_slots)
+   *   |> List.map (fun (var, value) -> value, var)
+   * in *)
+  (* let compare (exp1, _var1) (exp2, _var2) =
+   *   if equiv env exp1 exp2 then 0 else 1
+   * in *)
+  (* let value_slots_eq =
+   *   zip_sort_fold (value_slots_by_value set1) (value_slots_by_value set2)
+   *     ~compare
+   *     ~f:(fun x ((_, var1), (_, var2)) ->
+   *           x && equiv_value_slots env var1 var2)
+   *     ~acc:true
+   * in *)
   (* Comparing function slots *)
   let function_slots_and_fun_decls_by_code_id (set : set_of_closures)
       : (core_exp * (Function_slot.t * core_exp)) list =
@@ -294,7 +294,8 @@ and equiv_set_of_closures env
         equiv env decl1 decl2)
       ~acc: true
   in
-  value_slots_eq && function_slots_eq
+  (* value_slots_eq && *)
+  function_slots_eq
 
 and equiv_literal env literal1 literal2 : eq =
   match literal1, literal2 with
