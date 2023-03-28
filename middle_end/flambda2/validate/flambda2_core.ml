@@ -1448,8 +1448,7 @@ let static_const_fix (fix : core_exp -> core_exp) (e : static_const) =
     let {function_decls; value_slots} = set_of_closures_fix fix clo in
     Static_set_of_closures {function_decls; value_slots}
   | Block (tag, mut, list) ->
-    let list = List.map fix list
-    in
+    let list = List.map fix list in
     Block (tag, mut, list)
   | ( Boxed_float _ | Boxed_int32 _ | Boxed_int64 _ | Boxed_nativeint _
     | Immutable_float_block _ | Immutable_float_array _ | Immutable_value_array _

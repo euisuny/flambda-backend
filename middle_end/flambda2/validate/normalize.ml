@@ -120,16 +120,21 @@ and subst_singleton_set_of_closures_named ~bound ~clo (e : named) : core_exp =
     (match v with
     | Simple v ->
       (if Simple.same v (Simple.var bound) then
-          Named (Set_of_closures clo)
+         (let {function_decls; value_slots=_} = clo in
+          match Function_slot.Lmap.get_singleton function_decls with
+          | Some (slot, _) ->
+              Named (Closure_expr (bound, slot, clo))
+          | None ->
+            Named (Set_of_closures clo))
       else
         Named (Literal (Simple v)))
     | Slot (phi, Function_slot slot) ->
       (let decls = Function_slot.Lmap.bindings clo.function_decls in
        let bound_closure = List.find_opt (fun (x, _) -> x = slot) decls in
        (match bound_closure with
-        | None ->
-          Named e
-        | Some (k, _) -> Named (Closure_expr (phi, k, clo))))
+        | None -> Named e
+        | Some (k, _) -> Named (Closure_expr (phi, k, clo))
+       ))
     | (Cont _ | Res_cont _ | Slot (_, Value_slot _) | Code_id _) -> Named (Literal v))
   in
   match e with
@@ -384,10 +389,8 @@ let rec normalize (e:core_exp) : core_exp =
   match e with
   | Let { let_abst; expr_body } ->
     normalize_let let_abst expr_body
-    |> normalize
   | Let_cont e ->
     normalize_let_cont e
-    |> normalize
   | Apply {callee; continuation; exn_continuation; apply_args} ->
     normalize_apply callee continuation exn_continuation apply_args
   | Apply_cont {k ; args} ->
@@ -401,130 +404,14 @@ let rec normalize (e:core_exp) : core_exp =
     let arms = Targetint_31_63.Map.map normalize arms
     in
     normalize_switch scrutinee arms
-  (* Note that we don't normalize [named] expressions here because static
-     constants, when normalized, get a new binding because the [code] blocks
-     are substituted into the static set of closures. We only normalize
-     [named] expressions that are part of let-bound expressions for this
-     reason.*)
-  | Named _ ->
-    (match must_be_prim e with
-     | Some e -> Eval_prim.eval e
-     | None -> e)
-  | Invalid _ -> e
-
-and normalize_apply_under_lambda ret_cont exn_cont (e : core_exp) : core_exp =
-  match e with
-  | Named e -> named_fix (normalize_apply_under_lambda ret_cont exn_cont)
-                 (fun _ x -> Named (Literal x)) () e
-  | Let e -> let_fix (normalize_apply_under_lambda ret_cont exn_cont) e
-  | Let_cont e ->
-    let_cont_fix (normalize_apply_under_lambda ret_cont exn_cont) e
-  | Apply {callee;continuation;exn_continuation;apply_args}
-    ->
-    (match must_be_cont continuation, must_be_cont exn_continuation with
-    | Some k, Some ke ->
-      if Continuation.equal k ret_cont &&
-         Continuation.equal ke exn_cont then
-        let callee =
-          (match callee with
-          | Named (Closure_expr (phi, slot,
-                                {function_decls; value_slots})) ->
-            (match Function_slot.Lmap.find_opt slot function_decls with
-            | Some (Lambda exp) ->
-              let f =
-                Core_lambda.pattern_match exp
-                ~f:(fun b e ->
-                  let ret_cont' = b.return_continuation in
-                  let exn_cont' = b.exn_continuation in
-                  let f_cont () (l : literal) : core_exp =
-                    (match l with
-                    | Cont k ->
-                      let cont =
-                        if Continuation.equal k ret_cont' then
-                          ret_cont
-                        else if Continuation.equal k exn_cont' then
-                          exn_cont
-                        else
-                          k
-                      in
-                      Named (Literal (Cont cont))
-                    | Res_cont (Return k) ->
-                      let cont =
-                        if Continuation.equal k ret_cont' then
-                          ret_cont
-                        else if Continuation.equal k exn_cont' then
-                          exn_cont
-                        else
-                          k
-                      in
-                      Named (Literal (Res_cont (Return cont)))
-                    | (Res_cont Never_returns | Simple _ | Slot _ | Code_id _) ->
-                      Named (Literal l))
-                  in
-                  let e = core_fmap f_cont () e in
-                  let params = b.params in
-                  Handler (Core_continuation_handler.create params e))
-              in
-              Named (Closure_expr
-                          (phi, slot,
-                          {function_decls = Function_slot.Lmap.singleton slot f;
-                          value_slots}))
-            | (Some (Named _ | Let _ | Let_cont _ | Apply _ | Apply_cont _ | Switch _
-                      | Handler _ | Invalid _) | None) -> callee)
-          | Lambda _ ->
-            failwith "Unimplemented"
-
-          | (Named (Static_consts ((Code _ | Deleted_code | Static_const _)::_ | [])
-                  | Literal _ | Prim _ | Set_of_closures _
-                  | Rec_info _)
-            | Handler _ | Let _ | Let_cont _ | Apply _ | Apply_cont _ | Switch _ | Invalid _) ->
-            callee)
-        in
-        Apply_cont
-          {k=normalize_apply_under_lambda ret_cont exn_cont callee;
-           args=apply_args}
-      else
-        Apply
-          {callee=normalize_apply_under_lambda ret_cont exn_cont callee;
-            continuation; exn_continuation; apply_args}
-    | (Some _ | None), _ ->
-      Apply
-        {callee=normalize_apply_under_lambda ret_cont exn_cont callee;
-         continuation; exn_continuation; apply_args})
-  | Apply_cont e ->
-    apply_cont_fix (normalize_apply_under_lambda ret_cont exn_cont) e
-  | Lambda e ->
-    lambda_fix (normalize_apply_under_lambda ret_cont exn_cont) e
-  | Handler e ->
-    handler_fix (normalize_apply_under_lambda ret_cont exn_cont) e
-  | Switch e ->
-    switch_fix (normalize_apply_under_lambda ret_cont exn_cont) e
+  | Named e -> normalize_named e
   | Invalid _ -> e
 
 and normalize_lambda (e : lambda_expr) =
   Core_lambda.pattern_match e
     ~f:(fun {return_continuation; exn_continuation; params} e ->
-      let e = normalize e |>
-              normalize_apply_under_lambda return_continuation exn_continuation
+      let e = normalize e
       in
-      (* for all apply statements in this lambda are taking in the same return
-         and exn continuations *)
-      (* LATER: Remove unused arguments (uncomment this and add checking for
-         the application site for this lambda needs to have its argument removed
-         as well) *)
-      (* let params = Bound_parameters.to_list params in
-       * let params =
-       *   List.filter
-       *     (fun x ->
-       *         not (does_not_occur (Simple (Simple.var (Bound_parameter.var x))) true e))
-       *     params
-       *   |> Bound_parameters.create
-       * in
-       * if does_not_occur (Cont return_continuation) true e &&
-       *    does_not_occur (Cont exn_continuation) true e
-       * then
-       *   Handler (Core_continuation_handler.create params e)
-       * else *)
       Lambda
         (Core_lambda.create
             {return_continuation;exn_continuation;params}
@@ -559,12 +446,12 @@ and normalize_let let_abst body : core_exp =
         let x = e1 in e2 ⟶ let x = e1' in e2 *)
     let x, e1 =
       (match must_be_named e1 with
-      | Some e -> normalize_named x e
+      | Some e -> normalize_named_for_let x e
       | None -> x, normalize e1)
     in
     (* [Let-β]
         let x = v in e1 ⟶ e2 [x\v] *)
-    subst_pattern ~bound:x ~let_body:e1 e2)
+    subst_pattern ~bound:x ~let_body:e1 e2 |> normalize)
 
 and handler_map_to_closures (phi : Variable.t) (v : Bound_parameter.t list)
       (m : continuation_handler_map) : set_of_closures =
@@ -612,7 +499,7 @@ and normalize_let_cont (e:let_cont_expr) : core_exp =
               let result = subst_cont e1 k args e2 in
               result
            )
-      )
+      ) |> normalize
   | Recursive handlers ->
     (* e1 where rec k args = e2 *)
     let phi = Variable.create "ϕ" in
@@ -639,6 +526,7 @@ and normalize_let_cont (e:let_cont_expr) : core_exp =
                 body in_order_with_cont
             in
             subst_singleton_set_of_closures ~bound:phi ~clo e2))
+  |> normalize
 
 and subst_cont_id (cont : Continuation.t) (e1 : core_exp) (e2 : core_exp) =
   core_fmap
@@ -725,16 +613,15 @@ and normalize_apply_no_beta_redex callee continuation exn_continuation apply_arg
     | Handler _ | Let _ | Let_cont _ | Apply _ | Apply_cont _ | Switch _ | Invalid _) ->
     default
 
-and normalize_apply_function_decls phi function_decls
+and normalize_apply_function_decls phi slot function_decls
       callee continuation exn_continuation apply_args =
-  (* LATER: Do we need to handle cases other than singleton? *)
-  match Function_slot.Lmap.get_singleton function_decls with
-  | Some (_, Lambda exp) ->
+  match Function_slot.Lmap.find_opt slot function_decls with
+  | Some (Lambda exp) ->
     if does_not_occur (Simple (Simple.var phi)) true (Lambda exp) then
       normalize_apply_lambda exp continuation exn_continuation apply_args
     else
       normalize_apply_no_beta_redex callee continuation exn_continuation apply_args
-  | (Some (_,
+  | (Some (
     (Named _ | Let _ | Let_cont _ | Apply _ | Apply_cont _ | Switch _
     | Handler _ | Invalid _)) | None) ->
     normalize_apply_no_beta_redex callee continuation exn_continuation apply_args
@@ -765,9 +652,9 @@ and normalize_apply callee continuation exn_continuation apply_args : core_exp =
   let exn_continuation = normalize exn_continuation in
   let apply_args = List.map normalize apply_args in
   match callee with
-  | Named (Closure_expr (phi, _,
+  | Named (Closure_expr (phi, slot,
                          {function_decls; value_slots = _})) ->
-    normalize_apply_function_decls phi function_decls
+    normalize_apply_function_decls phi slot function_decls
       callee continuation exn_continuation apply_args
   | Lambda expr ->
     normalize_apply_lambda expr continuation exn_continuation apply_args
@@ -921,7 +808,10 @@ and normalize_set_of_closures (phi : Bound_for_let.t)
   (* normalize function slots
      NOTE (for later):
      This might need to change when we're dealing with effectful functions *)
-  let function_decls = Function_slot.Lmap.map normalize in_order in
+  let function_decls =
+    Function_slot.Lmap.map
+      normalize
+      in_order in
   { function_decls
   ; value_slots = Value_slot.Map.empty }
 
@@ -937,6 +827,7 @@ and subst_my_closure (phi : Bound_for_let.t) (slot : Function_slot.t)
      in
       Core_function_params_and_body.pattern_match fn_expr
         ~f:(fun bff e ->
+          (* bff is the "my_closure" variable *)
           Lambda
             (Core_lambda.pattern_match e
                ~f:(fun bound body ->
@@ -956,7 +847,7 @@ and subst_my_closure (phi : Bound_for_let.t) (slot : Function_slot.t)
                         | (Cont _ | Res_cont _ | Slot _ | Code_id _) -> Named (Literal s))
                      () body
                  in
-                Core_lambda.create bound (subst_my_closure_body clo body)))))
+                Core_lambda.create bound (subst_my_closure_body phi clo body)))))
   | Static ((Code _ | Block_like _ | Set_of_closures _) :: _ | []) ->
     Named (Static_consts [Code {expr=fn_expr; anon}]))
 
@@ -964,38 +855,34 @@ and subst_my_closure (phi : Bound_for_let.t) (slot : Function_slot.t)
     When we substitute in a set of closures for primitives,
     (Here is where the `Projection` primitives occur),
     we eliminate the projection. *)
-and subst_my_closure_body (clo: set_of_closures) (e : core_exp) : core_exp =
+and subst_my_closure_body phi (clo: set_of_closures) (e : core_exp) : core_exp =
   match e with
-  | Named e -> subst_my_closure_body_named clo e
+  | Named e -> subst_my_closure_body_named phi clo e
   | Let e ->
-    let_fix (subst_my_closure_body clo) e
+    let_fix (subst_my_closure_body phi clo) e
   | Let_cont e ->
-    let_cont_fix (subst_my_closure_body clo) e
+    let_cont_fix (subst_my_closure_body phi clo) e
   | Apply e ->
-    apply_fix (subst_my_closure_body clo) e
+    apply_fix (subst_my_closure_body phi clo) e
   | Apply_cont e ->
-    apply_cont_fix (subst_my_closure_body clo) e
+    apply_cont_fix (subst_my_closure_body phi clo) e
   | Lambda e ->
-    lambda_fix (subst_my_closure_body clo) e
+    lambda_fix (subst_my_closure_body phi clo) e
   | Handler e ->
-    handler_fix (subst_my_closure_body clo) e
+    handler_fix (subst_my_closure_body phi clo) e
   | Switch e ->
-    switch_fix (subst_my_closure_body clo) e
+    switch_fix (subst_my_closure_body phi clo) e
   | Invalid _ -> e
 
-and subst_my_closure_body_named
+and subst_my_closure_body_named _phi
     ({function_decls;value_slots}: set_of_closures) (e : named)
   : core_exp =
   (match e with
    | Prim (Unary (Project_value_slot slot, _)) ->
     (match Value_slot.Map.find_opt slot.value_slot value_slots with
-     | Some exp ->
-       (match must_have_closure exp with
-        | Some clo ->
-          (let fun_decls = clo.function_decls in
-           match Function_slot.Lmap.get_singleton fun_decls with
-           | Some (_, e) -> e
-           | None -> Named e)
+    | Some exp ->
+      (match must_have_closure exp with
+        | Some _ -> exp
         | None ->
           (match must_be_function_slot_expr exp with
             | Some (phi, slot) ->
@@ -1025,7 +912,34 @@ and subst_my_closure_body_named
 
 (* This is a "normalization" of [named] expression, in quotations because there
   is some simple evaluation that occurs for primitive arithmetic expressions *)
-and normalize_named (var: Bound_for_let.t) (body : named)
+and normalize_named (body : named) : core_exp =
+  match body with
+  | Literal _ (* A [Simple] is a register-sized value *)
+  | Rec_info _ (* Information about inlining recursive calls, an integer variable *) ->
+    Named (body)
+  | Closure_expr (phi, slot, {function_decls; value_slots}) ->
+    let function_decls =
+      Function_slot.Lmap.map normalize function_decls
+    in
+    let value_slots =
+      Value_slot.Map.map normalize value_slots
+    in
+    Named (Closure_expr (phi, slot, {function_decls; value_slots}))
+  | Set_of_closures {function_decls; value_slots} ->
+    let function_decls =
+      Function_slot.Lmap.map normalize function_decls
+    in
+    let value_slots =
+      Value_slot.Map.map normalize value_slots
+    in
+    Named (Set_of_closures {function_decls; value_slots})
+  | Static_consts e ->
+    static_const_group_fix normalize e
+  | Prim v -> Eval_prim.eval v
+
+(* This is a "normalization" of [named] expression, in quotations because there
+  is some simple evaluation that occurs for primitive arithmetic expressions *)
+and normalize_named_for_let (var: Bound_for_let.t) (body : named)
   : Bound_for_let.t * core_exp =
   match body with
   | Literal _ (* A [Simple] is a register-sized value *)
