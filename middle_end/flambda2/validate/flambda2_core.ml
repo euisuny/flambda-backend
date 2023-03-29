@@ -664,7 +664,7 @@ and print_lambda ppf t =
     (module Bound_for_lambda)
     t ~apply_renaming_to_term:apply_renaming
     ~f:(fun bound body ->
-      fprintf ppf "%a,@ %a"
+      fprintf ppf "%a ->@.   @[<hov 1>%a@]"
         Bound_for_lambda.print bound
         print body)
 
@@ -673,7 +673,8 @@ and print_let ppf ({let_abst; expr_body} : let_expr) =
     (module Bound_for_let)
     let_abst ~apply_renaming_to_term:apply_renaming
     ~f:(fun bound body ->
-        fprintf ppf "@[<v 0>@[<v 0>let (bound %a) =@  @[<hov 1>(%a)@]@]@ in:%a@]"
+      fprintf ppf
+        "@[<v 0>@[<hov 1>let (%a) =@ %a@]@;%a@]"
         print_bound_pattern bound
         print expr_body
         print body)
@@ -695,10 +696,9 @@ and print_bound_static ppf (t : Bound_codelike.t) =
 and print_static_pattern ppf (t : Bound_codelike.Pattern.t) =
   match t with
   | Code v ->
-    fprintf ppf "code %a" Code_id.print v
+    fprintf ppf "%a" Code_id.print v
   | Set_of_closures v ->
-    fprintf ppf "var %a"
-      Bound_var.print v
+    fprintf ppf "var %a" Bound_var.print v
   | Block_like v ->
     Format.fprintf ppf "(block_like %a)" Symbol.print v
 
@@ -739,7 +739,7 @@ and print_named ppf (t : named) =
     fprintf ppf "set_of_closures@. @[<hov 2>%a@]"
     print_set_of_closures clo
   | Static_consts consts ->
-    fprintf ppf "static_consts %a"
+    fprintf ppf "@[<hov 0>%a@]"
       print_static_const_group consts
   | Rec_info info ->
     fprintf ppf "rec_info %a"
@@ -816,7 +816,7 @@ and print_static_const_or_code ppf t =
 and print_static_const ppf (t : static_const) : unit =
   match t with
   | Static_set_of_closures set ->
-    fprintf ppf "(Set_of_closures %a)"
+    fprintf ppf "%a"
       print_set_of_closures set
   | Block (tag, mut, fields) ->
     fprintf ppf "(%sblock@ (tag %a)@ (%a))"
@@ -869,7 +869,7 @@ and print_function_params_and_body ppf ({expr;anon=_}:function_params_and_body) 
     (module Bound_var) expr
     ~apply_renaming_to_term:apply_renaming_lambda
     ~f:(fun t expr ->
-      fprintf ppf "λ my_closure: %a, %a"
+      fprintf ppf "@[<hov 2>λ %a%a@]"
         Variable.print (Bound_var.var t)
         print_lambda expr)
 
@@ -884,11 +884,12 @@ and print_let_cont ppf (t : let_cont_expr) =
           (module Bound_parameters) handler
           ~apply_renaming_to_term:apply_renaming
           ~f:(fun k expr_body ->
-            fprintf ppf "@[<hov 1>let_cont @[<h>(cont@ %a), (param@ %a)@],@ (body@ %a)@ @[<hov 2>in:%a@]@]"
-            print_cont cont
-            print_params k
-            print expr_body
-            print body))
+            fprintf ppf
+              "@[(%a)@; (@[<hov 1>where %a (%a) = @;%a)@]@]"
+              print body
+              print_cont cont
+              print_params k
+              print expr_body))
   | Recursive t ->
     fprintf ppf "let_cont rec@ ";
     Name_abstraction.pattern_match_for_printing
