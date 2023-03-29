@@ -1,9 +1,11 @@
 type t =
-  { return_continuation: Bound_continuation.t;
+  { my_closure: Variable.t;
+    return_continuation: Bound_continuation.t;
     exn_continuation: Bound_continuation.t;
     params: Bound_parameters.t }
 
 val create :
+  my_closure:Variable.t ->
   return_continuation:Continuation.t ->
   exn_continuation:Continuation.t ->
   params:Bound_parameters.t ->

@@ -74,7 +74,7 @@ module type Number_kind_common = sig
 
   val these_unboxed : Num.Set.t -> Flambda2_types.t
 
-  val term_unboxed : Num.t -> Flambda2_core.named
+  val term_unboxed : Num.t -> Flambda2_core.base_exp
 end
 
 module type Number_kind = sig
