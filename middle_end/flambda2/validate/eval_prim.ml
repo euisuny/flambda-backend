@@ -1164,43 +1164,37 @@ let eval_ternary (v : P.ternary_primitive)
 
 let eval_variadic (v : P.variadic_primitive) (args : core_exp list) : named =
   match v with
-  | Make_block (Values (tag, _kind), Immutable_unique, _alloc_mode) ->
-    (Static_consts [Static_const (Block (tag, Immutable_unique, args))])
-  | Make_block (Values (tag, [kind]), _mut, _alloc_mode) ->
-    (match args with
-    | [Named (Literal (Simple n))] ->
-    (* Reduce make block to immutable block *)
-    (* LATER : generalize for taking in a list of arguments *)
-      (match Flambda_kind.With_subkind.kind kind with
-        | Value ->
-          let constant =
-            Simple.pattern_match' n
-              ~var:(fun _ ~coercion:_ -> None)
-              ~symbol:(fun _ ~coercion:_ -> None)
-              ~const:(fun t -> Some t)
-          in
-          (match constant with
-          | Some constant ->
-            (match Int_ids.Const.descr constant with
-              | Tagged_immediate i ->
-                let block = (Block (tag, Immutable, [tagged_immediate_to_core i]))
+  | Make_block (Values (tag, kinds), mut, _alloc_mode) ->
+    let args_kinds = List.combine kinds args in
+    let args =
+      List.map
+        (fun (kind, arg) ->
+           match must_be_simple arg with
+          | Some n ->
+            (match Flambda_kind.With_subkind.kind kind with
+              | Value ->
+                let constant =
+                  Simple.pattern_match' n
+                    ~var:(fun _ ~coercion:_ -> None)
+                    ~symbol:(fun _ ~coercion:_ -> None)
+                    ~const:(fun t -> Some t)
                 in
-                Flambda2_core.Static_consts [(Static_const block)]
-              | (Naked_immediate _ | Naked_float _
-                | Naked_int32 _ | Naked_int64 _ | Naked_nativeint _) ->
-                failwith "[Primitive eval] Unimplemented constant")
-          | None -> Prim (Variadic (v, args))
-          )
-        | (Naked_number _ | Region | Rec_info) ->
-          failwith "[Primitive eval] Unimplemented_eval: making block for non-value kind")
-    | ([] |
-       (Named (Literal (Simple _ | Cont _ | Res_cont _ | Slot _ | Code_id _) | Prim _
-              | Closure_expr _ | Set_of_closures _ | Static_consts _ | Rec_info _ )
-      | Let _ | Let_cont _ | Apply _ | Apply_cont _ | Lambda _ | Switch _
-      | Handler _ | Invalid _):: _) -> Prim (Variadic (v, args)))
-  | Make_block (Values (tag, _kind), Immutable, _alloc_mode) ->
-    (Static_consts [Static_const (Block (tag, Immutable, args))])
-  | Make_block ((Values _ | Naked_floats),
+                (match constant with
+                | Some constant ->
+                  (match Int_ids.Const.descr constant with
+                   | Tagged_immediate i ->
+                     tagged_immediate_to_core i
+                    | (Naked_immediate _ | Naked_float _
+                      | Naked_int32 _ | Naked_int64 _ | Naked_nativeint _) ->
+                      failwith "[Primitive eval] Unimplemented constant")
+                | None -> arg)
+              | (Naked_number _ | Region | Rec_info) ->
+                failwith "[Primitive eval] Unimplemented_eval: \
+                          making block for non-value kind")
+          | None -> arg) args_kinds
+    in
+    Flambda2_core.Static_consts [(Static_const (Block (tag, mut, args)))]
+  | Make_block (Naked_floats,
                 (Mutable | Immutable | Immutable_unique), _) ->
     Prim (Variadic (v, args))
   | Make_array _ ->
