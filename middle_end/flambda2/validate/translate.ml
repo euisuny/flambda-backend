@@ -3,12 +3,24 @@ open! Flambda2_core
 
 module P = Flambda_primitive
 
+type substitutions = (Simple.t * core_exp) list
+
 (** Translation from flambda2 terms to simplified core language **)
 let simple_to_core (v : Simple.t) : core_exp =
   Named (Literal (Simple (Simple.without_coercion v)))
 
 let tagged_immediate_to_core (e : Targetint_31_63.t) : core_exp =
   Named (Literal (Simple (Simple.const (Int_ids.Const.tagged_immediate e))))
+
+let apply_subst (s : substitutions) (e : core_exp) : core_exp =
+  core_fmap (fun () v ->
+    match v with
+    | Simple v ->
+      (match List.assoc_opt v s with
+       | Some exp -> exp
+       | None -> Named (Literal (Simple v)))
+    | (Cont _ | Res_cont _ | Slot _ | Code_id _) -> Named (Literal v))
+    () e
 
 let subst_var_slot_helper
           (var : Bound_var.t) (phi : Bound_var.t) (slot : slot) (e2 : core_exp) =
@@ -23,21 +35,27 @@ let subst_var_slot_helper
     (var, phi, slot) e2
 
 let subst_var_slot
-      (vars : Bound_var.t list) (phi : Bound_var.t) (e1 : core_exp) (e2 : core_exp) =
+      (vars : Bound_var.t list) (phi : Bound_var.t)
+      (e1 : core_exp) (e2 : core_exp)
+      (s : substitutions) =
   match e1 with
   | Named (Set_of_closures {function_decls ; value_slots = _}) ->
     let in_order = Function_slot.Lmap.bindings function_decls
     in
     List.fold_left
-      (fun acc (var, (slot, _)) ->
-         subst_var_slot_helper var phi (Function_slot slot) acc)
-      e2
+      (fun (s, acc) (var, (slot, _)) ->
+         ((Simple.var (Bound_var.var var),
+          Named (Literal (Slot (Bound_var.var phi, Function_slot slot))))::s,
+         subst_var_slot_helper var phi (Function_slot slot) acc))
+      (s, e2)
       (List.combine vars in_order)
   | (Named (Literal _ | Prim _ | Closure_expr _ | Static_consts _ | Rec_info _) |
      Let _ | Let_cont _ | Apply _ | Apply_cont _ | Lambda _ | Handler _ | Switch _
     | Invalid _ ) ->
     Misc.fatal_error "Expected set of closures"
 
+(* TODO :
+   Change substitution helper functions to take general substitutions *)
 let subst_static_slot_helper
       (sym : Symbol.t) (phi : Bound_var.t) (slot : slot) (e2 : core_exp) =
   core_fmap
@@ -51,67 +69,79 @@ let subst_static_slot_helper
     (sym, phi, slot) e2
 
 let subst_static_slot
-      (bound : Symbol.t Function_slot.Lmap.t) (phi : Bound_var.t) (e2 : core_exp) =
+      (bound : Symbol.t Function_slot.Lmap.t) (phi : Bound_var.t)
+      (e2 : core_exp)
+      (s : substitutions) =
   let bound = Function_slot.Lmap.bindings bound
   in
   let e2 = List.fold_left
-    (fun acc (slot, sym) ->
-       subst_static_slot_helper sym phi (Function_slot slot) acc)
-    e2
+    (fun (s, acc) (slot, sym) ->
+      ((Simple.symbol sym,
+        Named (Literal (Slot (Bound_var.var phi, Function_slot slot))))::s,
+       subst_static_slot_helper sym phi (Function_slot slot) acc))
+    (s, e2)
     bound
   in
   e2
 
-let bound_static_to_core (t : Bound_static.Pattern.t) (e1 : core_exp) (e2 : core_exp) :
-  Bound_codelike.Pattern.t * core_exp * core_exp =
+let bound_static_to_core
+      (t : Bound_static.Pattern.t)
+      (e1 : core_exp) (e2 : core_exp)
+      (s : substitutions) :
+  Bound_codelike.Pattern.t * core_exp * core_exp * substitutions =
   match t with
   | Set_of_closures bound ->
     let phi = Bound_var.create (Variable.create "ϕ") Name_mode.normal
     in
     (* Substitute in new variable *)
-    let exp1 = subst_static_slot bound phi e1
+    let s, exp1 = subst_static_slot bound phi e1 s
     in
-    let exp2 = subst_static_slot bound phi e2
+    let s, exp2 = subst_static_slot bound phi e2 s
     in
-    (Bound_codelike.Pattern.set_of_closures phi, exp1, exp2)
-  | Code v -> (Bound_codelike.Pattern.code v, e1, e2)
-  | Block_like v -> (Bound_codelike.Pattern.block_like v, e1, e2)
+    (Bound_codelike.Pattern.set_of_closures phi, exp1, exp2, s)
+  | Code v -> (Bound_codelike.Pattern.code v, e1, e2, s)
+  | Block_like v -> (Bound_codelike.Pattern.block_like v, e1, e2, s)
 
-let bound_pattern_to_core (t : Bound_pattern.t) (e1 : core_exp) (e2 : core_exp) :
-  Bound_for_let.t * core_exp * core_exp =
+let bound_pattern_to_core
+      (t : Bound_pattern.t)
+      (e1 : core_exp) (e2 : core_exp)
+      (s : substitutions):
+  Bound_for_let.t * core_exp * core_exp * substitutions =
   match t with
-  | Singleton v -> (Singleton v, e1, e2)
+  | Singleton v -> (Singleton v, e1, e2, s)
   | Set_of_closures vars ->
     let phi = Bound_var.create (Variable.create "ϕ") Name_mode.normal
     in
     (* Substitute in new variable *)
-    let e2 = subst_var_slot vars phi e1 e2
+    let s, e2 = subst_var_slot vars phi e1 e2 s
     in
-    (Singleton phi, e1, e2)
-  | Static s ->
-    let static, e1, e2 =
+    (Singleton phi, e1, e2, s)
+  | Static static ->
+    let static, e1, e2, s =
       List.fold_left
-        (fun (pat_acc1, acc1, acc2) x ->
-           let pat, e1, e2 = bound_static_to_core x acc1 acc2 in
-           (pat_acc1 @ [pat], e1, e2))
-        ([], e1, e2)
-        (Bound_static.to_list s)
+        (fun (pat_acc1, acc1, acc2, s) x ->
+           let pat, e1, e2, s = bound_static_to_core x acc1 acc2 s in
+           (pat_acc1 @ [pat], e1, e2, s))
+        ([], e1, e2, s)
+        (Bound_static.to_list static)
     in
-    (Static (Bound_codelike.create static), e1, e2)
+    (Static (Bound_codelike.create static), e1, e2, s)
 
-let rec flambda_expr_to_core (e: expr) : core_exp =
+let rec flambda_expr_to_core (e: expr) (s : substitutions) :
+  core_exp * substitutions =
   let e = Expr.descr e in
   match e with
-  | Flambda.Let t -> let_to_core t
-  | Flambda.Let_cont t -> let_cont_to_core t
-  | Flambda.Apply t -> apply_to_core t
-  | Flambda.Apply_cont t -> apply_cont_to_core t
-  | Flambda.Switch t -> switch_to_core t
-  | Flambda.Invalid { message = t } -> Invalid { message = t }
+  | Flambda.Let t -> let_to_core t s
+  | Flambda.Let_cont t -> let_cont_to_core t s
+  | Flambda.Apply t -> apply_to_core t s
+  | Flambda.Apply_cont t -> apply_cont_to_core t s
+  | Flambda.Switch t -> switch_to_core t s
+  | Flambda.Invalid { message = t } -> (Invalid { message = t }, s)
 
 (* N.B. There is a new binder for [set_of_closures] in the core expression
    language. *)
-and let_to_core (e : Let_expr.t) : core_exp =
+and let_to_core (e : Let_expr.t) (s : substitutions) :
+  core_exp * substitutions =
   Let_expr.pattern_match e
     ~f:(fun var ~body ->
       (* The bound variable, [var], is being passed around for checking whether
@@ -119,9 +149,11 @@ and let_to_core (e : Let_expr.t) : core_exp =
          the prefix starts with [anon-fn]) *)
       let e1 = Let_expr.defining_expr e |> named_to_core var
       in
-      let x, e1, e2 = bound_pattern_to_core var e1 (flambda_expr_to_core body)
+      let body, s = flambda_expr_to_core body s in
+      let x, e1, e2, s =
+        bound_pattern_to_core var e1 body s
       in
-      Core_let.create ~x ~e1 ~e2)
+      (Core_let.create ~x ~e1 ~e2, s))
 
 and named_to_core var (e : Flambda.named) : core_exp =
   Named (
@@ -173,12 +205,14 @@ and static_consts_to_core var (e : Flambda.static_const_group) :
     static_const_or_code_to_core bound const)
     (List.combine bound_consts static_consts)
 
-and static_const_or_code_to_core var (e : Flambda.static_const_or_code) :
+and static_const_or_code_to_core
+      var
+      (e : Flambda.static_const_or_code):
   Flambda2_core.static_const_or_code =
   match e with
-  | Code e -> Code
-                (Code0.params_and_body e |>
-                 function_params_and_body_to_core var)
+  | Code e ->
+    Code (Code0.params_and_body e |>
+          function_params_and_body_to_core var)
   | Deleted_code -> Deleted_code
   | Static_const t -> Static_const (static_const_to_core t)
 
@@ -208,8 +242,9 @@ and field_of_static_block_to_core (e : Field_of_static_block.t) : core_exp =
   | Dynamically_computed (var, _) ->
     Named (Literal (Simple (Simple.var var)))
 
-and function_params_and_body_to_core (var : Bound_static.Pattern.t)
-      (t : Flambda.function_params_and_body) :
+and function_params_and_body_to_core
+      (var : Bound_static.Pattern.t)
+      (t : Flambda.function_params_and_body):
   Flambda2_core.function_params_and_body =
   let name =
     (match var with
@@ -224,6 +259,7 @@ and function_params_and_body_to_core (var : Bound_static.Pattern.t)
         ~f:(fun (bound: Bound_for_function.t) ~body ->
           let my_closure = Bound_for_function.my_closure bound
           in
+          let body, _ = flambda_expr_to_core body [] in
           Core_function_params_and_body.create
             (Bound_var.create my_closure Name_mode.normal)
             (Core_lambda.create
@@ -234,66 +270,110 @@ and function_params_and_body_to_core (var : Bound_static.Pattern.t)
                     (Bound_for_function.exn_continuation bound)
                   ~params:
                     (Bound_for_function.params bound))
-              (flambda_expr_to_core body))
+              body)
         );
     anon}
 
-and let_cont_to_core (e : Let_cont_expr.t) : core_exp =
+(* NOTE: The following FIXME s require accumulating appropriate information in
+   the substitution map. *)
+(* Accumulate substitutions in both the body and the handler, and substitute in
+  the bindings for the whole expression. *)
+and let_cont_to_core (e : Let_cont_expr.t) (s : substitutions) :
+  core_exp * substitutions =
   match e with
   | Non_recursive
       {handler = h; num_free_occurrences = _; is_applied_with_traps = _} ->
     Non_recursive_let_cont_handler.pattern_match h
       ~f:(fun contvar ~body ->
-        Let_cont (Non_recursive {
-          handler =
-            Non_recursive_let_cont_handler.handler h |> cont_handler_to_core;
-          body = flambda_expr_to_core body |> Core_letcont_body.create contvar;})
-      )
+        let body, s = flambda_expr_to_core body s in
+        let handler, s =
+          cont_handler_to_core
+            (Non_recursive_let_cont_handler.handler h) s
+        in
+        (* apply substitutions in both body and handler *)
+        let body = apply_subst s body in
+        let handler =
+          Core_continuation_handler.pattern_match handler
+             (fun var handler ->
+                 Core_continuation_handler.create var
+                   (apply_subst s handler))
+        in
+        let exp =
+          Let_cont (Non_recursive {handler;
+            body = body |> Core_letcont_body.create contvar;})
+        in
+        (exp, s))
   | Recursive r ->
     Recursive_let_cont_handlers.pattern_match_bound r
       ~f:
         (fun bound ~invariant_params ~body handler ->
-           Let_cont
+           (* FIXME *)
+           let body, _ = flambda_expr_to_core body s in
+           (Let_cont
              (Recursive
                 (Core_recursive.create bound
                    {continuation_map =
                       Core_continuation_map.create invariant_params
                         (cont_handlers_to_core handler);
-                    body = flambda_expr_to_core body;}
+                    body}
                 )
-             )
+             ), s)
         )
 
-
-and cont_handler_to_core (e : Continuation_handler.t) : continuation_handler =
+and cont_handler_to_core
+      (e : Continuation_handler.t) (s : substitutions)
+  : continuation_handler * substitutions =
   Continuation_handler.pattern_match e
     ~f:
       (fun var ~handler ->
-         Core_continuation_handler.create var (flambda_expr_to_core handler))
+         let handler, s = flambda_expr_to_core handler s in
+         (Core_continuation_handler.create var handler, s))
 
 and cont_handlers_to_core (e : Continuation_handlers.t) :
   continuation_handler Continuation.Map.t =
   let e : Continuation_handler.t Continuation.Map.t =
     Continuation_handlers.to_map e in
-  Continuation.Map.map cont_handler_to_core e
+  (* FIXME *)
+  Continuation.Map.map
+    (fun e ->
+       let e, _ = cont_handler_to_core e [] in e) e
 
-and apply_to_core (e : Apply.t) : core_exp =
-  Apply {
-    callee = Apply_expr.callee e |> simple_to_core;
-    continuation = Named (Literal (Res_cont (Apply_expr.continuation e)));
-    exn_continuation = Named (Literal (Cont (Apply_expr.exn_continuation e |>
-                        Exn_continuation.exn_handler)));
-    apply_args = Apply_expr.args e |> List.map simple_to_core }
+and apply_to_core (e : Apply.t) (s : substitutions)
+  : core_exp * substitutions =
+  (* FIXME *)
+  let e =
+    Apply {
+      callee = Apply_expr.callee e |> simple_to_core;
+      continuation = Named (Literal (Res_cont (Apply_expr.continuation e)));
+      exn_continuation = Named (Literal (Cont (Apply_expr.exn_continuation e |>
+                          Exn_continuation.exn_handler)));
+      apply_args = Apply_expr.args e |> List.map simple_to_core }
+  in
+  e, s
 
-and apply_cont_to_core (e : Apply_cont.t) : core_exp =
-  Apply_cont {
-    k = Named (Literal (Cont (Apply_cont_expr.continuation e)));
-    args = Apply_cont_expr.args e |> List.map simple_to_core;}
+and apply_cont_to_core (e : Apply_cont.t) (s : substitutions)
+  : core_exp * substitutions =
+  (* FIXME *)
+  let e =
+    Apply_cont {
+      k = Named (Literal (Cont (Apply_cont_expr.continuation e)));
+      args = Apply_cont_expr.args e |> List.map simple_to_core;}
+  in
+  e, s
 
-and switch_to_core (e : Switch.t) : core_exp =
-  Switch {
-    scrutinee = Switch_expr.scrutinee e |> simple_to_core;
-    arms = Switch_expr.arms e |> Targetint_31_63.Map.map apply_cont_to_core;}
+and switch_to_core (e : Switch.t) (s : substitutions)
+  : core_exp * substitutions =
+  (* FIXME *)
+  let e =
+    Switch {
+      scrutinee = Switch_expr.scrutinee e |> simple_to_core;
+      arms = Switch_expr.arms e |>
+             Targetint_31_63.Map.map
+               (fun x ->
+                   let e, _ = apply_cont_to_core x [] in e)
+      ;}
+  in
+  e, s
 
 let flambda_unit_to_core e : core_exp =
-  Flambda_unit.body e |> flambda_expr_to_core
+  let e, _ = flambda_expr_to_core (Flambda_unit.body e) [] in e

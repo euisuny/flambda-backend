@@ -14,11 +14,15 @@ open! Flambda2_core
     By using this translation, we can allow for more liberal β - reductions in
     while normalizing [core_exp] terms. **)
 
+type substitutions = (Simple.t * core_exp) list
+
 val simple_to_core : Simple.t -> core_exp
 
 val prim_to_core : Flambda_primitive.t -> primitive
 
-val flambda_expr_to_core : Flambda.expr -> core_exp
+val flambda_expr_to_core :
+  Flambda.expr -> substitutions ->
+  core_exp * substitutions
 
 val flambda_unit_to_core : Flambda_unit.t -> core_exp
 
