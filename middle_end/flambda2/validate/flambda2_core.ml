@@ -236,6 +236,56 @@ let must_be_code (e : core_exp) : function_params_and_body option =
   | Some e -> must_be_code e
   | None -> None
 
+let must_be_tagged_immediate (e : named) : named option =
+  match e with
+  | Literal (Simple s) ->
+    (match simple_with_type s with
+    | Tagged_immediate _ -> Some (Literal (Simple s))
+    | (Naked_immediate _ | Naked_float _ | Naked_int32 _ | Naked_int64 _
+      | Naked_nativeint _ | Var _ | Symbol _) -> None)
+  | Prim (Unary (Tag_immediate, arg)) -> must_be_named arg
+  | Prim (Unary
+            ((Untag_immediate | Duplicate_block _ | Duplicate_array _ | Is_int _
+             | Get_tag | Array_length | Bigarray_length _ | String_length _
+             | Int_as_pointer | Opaque_identity _ | Int_arith _ | Float_arith _
+             | Num_conv _ | Boolean_not | Reinterpret_int64_as_float | Unbox_number _
+             | Box_number _ | Project_function_slot _ | Project_value_slot _
+             | Is_boxed_float | Is_flat_float_array | Begin_try_region | End_region
+             | Obj_dup), _)) -> None
+  | (Prim (Nullary _ | Binary  _ | Ternary _ | Variadic _) |
+     Literal (Cont _ | Res_cont _ | Slot _ | Code_id _) | Closure_expr _
+    | Set_of_closures _ | Static_consts _ | Rec_info _) -> None
+
+let must_be_tagged_immediate (e : core_exp) : named option =
+  match must_be_named e with
+  | Some n -> must_be_tagged_immediate n
+  | None -> None
+
+let must_be_untagged_immediate (e : named) : named option =
+  match e with
+  | Literal (Simple _) -> None
+    (* (match simple_with_type s with
+     * | Naked_immediate _ -> Some (Literal (Simple s))
+     * | (Tagged_immediate _ | Naked_float _ | Naked_int32 _ | Naked_int64 _
+     *   | Naked_nativeint _ | Var _ | Symbol _) -> None) *)
+  | Prim (Unary (Untag_immediate, arg)) -> must_be_named arg
+  | Prim (Unary
+            ((Tag_immediate | Duplicate_block _ | Duplicate_array _ | Is_int _
+             | Get_tag | Array_length | Bigarray_length _ | String_length _
+             | Int_as_pointer | Opaque_identity _ | Int_arith _ | Float_arith _
+             | Num_conv _ | Boolean_not | Reinterpret_int64_as_float | Unbox_number _
+             | Box_number _ | Project_function_slot _ | Project_value_slot _
+             | Is_boxed_float | Is_flat_float_array | Begin_try_region | End_region
+             | Obj_dup), _)) -> None
+  | (Prim (Nullary _ | Binary  _ | Ternary _ | Variadic _) |
+     Literal (Cont _ | Res_cont _ | Slot _ | Code_id _) | Closure_expr _
+    | Set_of_closures _ | Static_consts _ | Rec_info _) -> None
+
+let must_be_untagged_immediate (e : core_exp) : named option =
+  match must_be_named e with
+  | Some n -> must_be_untagged_immediate n
+  | None -> None
+
 let must_be_simple_or_immediate (e : named) : Simple.t option =
   match e with
   | Literal (Simple s) -> Some s
@@ -256,46 +306,6 @@ let must_be_simple_or_immediate (e : named) : Simple.t option =
 let must_be_simple_or_immediate (e : core_exp) : Simple.t option =
   match must_be_named e with
   | Some n -> must_be_simple_or_immediate n
-  | None -> None
-
-let must_be_tagged_immediate (e : named) : named option =
-  match e with
-  | Prim (Unary (Tag_immediate, arg)) -> must_be_named arg
-  | Prim (Unary
-            ((Untag_immediate | Duplicate_block _ | Duplicate_array _ | Is_int _
-             | Get_tag | Array_length | Bigarray_length _ | String_length _
-             | Int_as_pointer | Opaque_identity _ | Int_arith _ | Float_arith _
-             | Num_conv _ | Boolean_not | Reinterpret_int64_as_float | Unbox_number _
-             | Box_number _ | Project_function_slot _ | Project_value_slot _
-             | Is_boxed_float | Is_flat_float_array | Begin_try_region | End_region
-             | Obj_dup), _))
-  | (Prim (Nullary _ | Binary  _ | Ternary _ | Variadic _) |
-     Literal _ | Closure_expr _ | Set_of_closures _ | Static_consts _
-    | Rec_info _) -> None
-
-let must_be_tagged_immediate (e : core_exp) : named option =
-  match must_be_named e with
-  | Some n -> must_be_tagged_immediate n
-  | None -> None
-
-let must_be_untagged_immediate (e : named) : named option =
-  match e with
-  | Prim (Unary (Untag_immediate, arg)) -> must_be_named arg
-  | Prim (Unary
-            ((Tag_immediate | Duplicate_block _ | Duplicate_array _ | Is_int _
-             | Get_tag | Array_length | Bigarray_length _ | String_length _
-             | Int_as_pointer | Opaque_identity _ | Int_arith _ | Float_arith _
-             | Num_conv _ | Boolean_not | Reinterpret_int64_as_float | Unbox_number _
-             | Box_number _ | Project_function_slot _ | Project_value_slot _
-             | Is_boxed_float | Is_flat_float_array | Begin_try_region | End_region
-             | Obj_dup), _))
-  | (Prim (Nullary _ | Binary  _ | Ternary _ | Variadic _) |
-     Literal _ | Closure_expr _ | Set_of_closures _ | Static_consts _
-    | Rec_info _ ) -> None
-
-let must_be_untagged_immediate (e : core_exp) : named option =
-  match must_be_named e with
-  | Some n -> must_be_untagged_immediate n
   | None -> None
 
 let must_be_string_length (e : named) : (Flambda_primitive.string_or_bytes * core_exp) option =

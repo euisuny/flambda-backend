@@ -333,6 +333,7 @@ and equiv_named env named1 named2 : eq =
     unequal (Named named1) (Named named2)
 
 and equiv_simple env simple1 simple2 : eq =
+  let result =
   Simple.pattern_match simple1
     ~name:(fun name1 ~coercion:_ ->
       Simple.pattern_match simple2
@@ -342,6 +343,12 @@ and equiv_simple env simple1 simple2 : eq =
       Simple.pattern_match simple2
         ~name:(fun _ ~coercion:_ -> false)
         ~const:(fun const2 -> Reg_width_const.equal const1 const2))
+  in
+  if result
+  then result
+  else unequal
+         (Named (Literal (Simple simple1)))
+         (Named (Literal (Simple simple2)))
 
 and equiv_primitives env prim1 prim2 : eq =
   match (prim1:primitive), (prim2:primitive) with

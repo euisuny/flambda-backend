@@ -960,8 +960,11 @@ and step_named_for_let (var: Bound_for_let.t) (body : named)
        let bound_vars = Bound_codelike.to_list var in
        let phi, exp = step_static_const_group bound_vars consts in
        (Static (Bound_codelike.create phi), exp)
-     | Singleton _ -> Misc.fatal_error "Expected bound static variables")
+     | Singleton _ ->
+       let consts = static_const_group_fix step consts in
+       (var, consts))
   | Prim v -> (var, Eval_prim.eval v)
+
 (* Inline non-recursive continuation handlers first *)
 let rec inline_handlers (e : core_exp) =
   match e with

@@ -278,14 +278,14 @@ and function_params_and_body_to_core
    the substitution map. *)
 (* Accumulate substitutions in both the body and the handler, and substitute in
   the bindings for the whole expression. *)
-and let_cont_to_core (e : Let_cont_expr.t) (s : substitutions) :
+and let_cont_to_core (e : Let_cont_expr.t) (sub : substitutions) :
   core_exp * substitutions =
   match e with
   | Non_recursive
       {handler = h; num_free_occurrences = _; is_applied_with_traps = _} ->
     Non_recursive_let_cont_handler.pattern_match h
       ~f:(fun contvar ~body ->
-        let body, s = flambda_expr_to_core body s in
+        let body, s = flambda_expr_to_core body sub in
         let handler, s =
           cont_handler_to_core
             (Non_recursive_let_cont_handler.handler h) s
@@ -302,13 +302,13 @@ and let_cont_to_core (e : Let_cont_expr.t) (s : substitutions) :
           Let_cont (Non_recursive {handler;
             body = body |> Core_letcont_body.create contvar;})
         in
-        (exp, s))
+        (exp, sub))
   | Recursive r ->
     Recursive_let_cont_handlers.pattern_match_bound r
       ~f:
         (fun bound ~invariant_params ~body handler ->
            (* FIXME *)
-           let body, _ = flambda_expr_to_core body s in
+           let body, _ = flambda_expr_to_core body sub in
            (Let_cont
              (Recursive
                 (Core_recursive.create bound
@@ -317,7 +317,7 @@ and let_cont_to_core (e : Let_cont_expr.t) (s : substitutions) :
                         (cont_handlers_to_core handler);
                     body}
                 )
-             ), s)
+             ), sub)
         )
 
 and cont_handler_to_core
