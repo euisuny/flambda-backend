@@ -1,0 +1,42 @@
+let $camlLoop2__immstring24 = "." in
+let code rec loopify(default tailrec) size(52)
+      loop_1 (i) my_closure my_region my_depth -> k * k1 =
+  let next_depth = rec_info (succ my_depth) in
+  let s = %project_value_slot loop.s my_closure in
+  let l = %project_value_slot loop.l my_closure in
+  let prim = %int_comp i >= l in
+  let Pintcomp = %Tag_imm prim in
+  (let untagged = %untag_imm Pintcomp in
+   switch untagged
+     | 0 -> k2
+     | 1 -> k3)
+    where k3 =
+      let Pfield = %block_load ($Stdlib.camlStdlib, 27) in
+      apply Pfield (s, $camlLoop2__immstring24) &my_region -> k * k1
+    where k2 =
+      let prim_1 = %string_length s in
+      let `*match*` = %Tag_imm prim_1 in
+      let prim_2 = %phys_ne (`*match*`, 0) in
+      let Pintcomp_1 = %Tag_imm prim_2 in
+      ((let untagged = %untag_imm Pintcomp_1 in
+        switch untagged
+          | 0 -> k2
+          | 1 -> k (s))
+         where k2 =
+           let Paddint = i + 1 in
+           apply direct(loop_1) my_closure (Paddint) &my_region -> k * k1)
+in
+let code size(72)
+      valid_float_lexem_0 (s) my_closure my_region my_depth -> k * k1 =
+  let prim = %string_length s in
+  let l = %Tag_imm prim in
+  let loop = closure loop_1 @loop with { s = s; l = l } in
+  apply direct(loop_1) loop (0) &my_region -> k * k1
+in
+(let valid_float_lexem = closure valid_float_lexem_0 @valid_float_lexem in
+ let Pmakeblock = %Block 0 (valid_float_lexem) in
+ cont k (Pmakeblock))
+  where k define_root_symbol (module_block) =
+    let field_0 = %block_load tag(0) size(1) (module_block, 0) in
+    let $camlLoop2 = Block 0 (field_0) in
+    cont done ($camlLoop2)

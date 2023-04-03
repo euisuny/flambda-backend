@@ -1,0 +1,16 @@
+let $camlNativeint_simple__nativeint10 = 1n in
+let code loopify(never) size(11)
+      succ_0 (n) my_closure my_region my_depth -> k * k1 =
+  let prim = %unbox_nativeint $camlNativeint_simple__nativeint10 in
+  let prim_1 = %unbox_nativeint n in
+  let prim_2 = %int_arith nativeint prim_1 + prim in
+  let Paddbint = %Box_nativeint prim_2 in
+  cont k (Paddbint)
+in
+(let `succ` = closure succ_0 @`succ` in
+ let Pmakeblock = %Block 0 (`succ`) in
+ cont k (Pmakeblock))
+  where k define_root_symbol (module_block) =
+    let field_0 = %block_load tag(0) size(1) (module_block, 0) in
+    let $camlNativeint = Block 0 (field_0) in
+    cont done ($camlNativeint)
