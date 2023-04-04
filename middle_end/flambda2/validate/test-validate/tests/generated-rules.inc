@@ -5,38 +5,10 @@
 
  (rule
  (alias runtest)
-  (deps tests13.fl)
+  (deps length.fl)
   (action
    (progn
-   (run ../tools/flvalidate.exe tests13.fl))))
-
- (rule
- (alias runtest)
-  (deps rec.fl)
-  (action
-   (progn
-   (run ../tools/flvalidate.exe rec.fl))))
-
- (rule
- (alias runtest)
-  (deps size.fl)
-  (action
-   (progn
-   (run ../tools/flvalidate.exe size.fl))))
-
- (rule
- (alias runtest)
-  (deps tests13_simple3.fl)
-  (action
-   (progn
-   (run ../tools/flvalidate.exe tests13_simple3.fl))))
-
- (rule
- (alias runtest)
-  (deps arith.fl)
-  (action
-   (progn
-   (run ../tools/flvalidate.exe arith.fl))))
+   (run ../tools/flvalidate.exe length.fl))))
 
  (rule
  (alias runtest)
@@ -54,6 +26,20 @@
 
  (rule
  (alias runtest)
+  (deps opaque_partial.fl)
+  (action
+   (progn
+   (run ../tools/flvalidate.exe opaque_partial.fl))))
+
+ (rule
+ (alias runtest)
+  (deps size.fl)
+  (action
+   (progn
+   (run ../tools/flvalidate.exe size.fl))))
+
+ (rule
+ (alias runtest)
   (deps tests11_simple.fl)
   (action
    (progn
@@ -61,31 +47,45 @@
 
  (rule
  (alias runtest)
+  (deps tests13.fl)
+  (action
+   (progn
+   (run ../tools/flvalidate.exe tests13.fl))))
+
+ (rule
+ (alias runtest)
+  (deps tests13_simple.fl)
+  (action
+   (progn
+   (run ../tools/flvalidate.exe tests13_simple.fl))))
+
+ (rule
+ (alias runtest)
+  (deps tests13_simpler.fl)
+  (action
+   (progn
+   (run ../tools/flvalidate.exe tests13_simpler.fl))))
+
+ (rule
+ (alias runtest)
+  (deps exit.fl)
+  (action
+   (progn
+   (run ../tools/flvalidate.exe exit.fl))))
+
+ (rule
+ (alias runtest)
+  (deps nativeint.fl)
+  (action
+   (progn
+   (run ../tools/flvalidate.exe nativeint.fl))))
+
+ (rule
+ (alias runtest)
   (deps anon.fl)
   (action
    (progn
    (run ../tools/flvalidate.exe anon.fl))))
-
- (rule
- (alias runtest)
-  (deps tests13_simple2.fl)
-  (action
-   (progn
-   (run ../tools/flvalidate.exe tests13_simple2.fl))))
-
- (rule
- (alias runtest)
-  (deps tests12.fl)
-  (action
-   (progn
-   (run ../tools/flvalidate.exe tests12.fl))))
-
- (rule
- (alias runtest)
-  (deps tests11.fl)
-  (action
-   (progn
-   (run ../tools/flvalidate.exe tests11.fl))))
 
  (rule
  (alias runtest)
@@ -138,28 +138,35 @@
 
  (rule
  (alias runtest)
-  (deps length.fl)
+  (deps arith.fl)
   (action
    (progn
-   (run ../tools/flvalidate.exe length.fl))))
+   (run ../tools/flvalidate.exe arith.fl))))
 
  (rule
  (alias runtest)
-  (deps tests13_simple.fl)
+  (deps tests11.fl)
   (action
    (progn
-   (run ../tools/flvalidate.exe tests13_simple.fl))))
+   (run ../tools/flvalidate.exe tests11.fl))))
 
  (rule
  (alias runtest)
-  (deps tests13_simpler.fl)
+  (deps tests12.fl)
   (action
    (progn
-   (run ../tools/flvalidate.exe tests13_simpler.fl))))
+   (run ../tools/flvalidate.exe tests12.fl))))
 
  (rule
  (alias runtest)
-  (deps opaque_partial.fl)
+  (deps tests13_simple2.fl)
   (action
    (progn
-   (run ../tools/flvalidate.exe opaque_partial.fl))))
+   (run ../tools/flvalidate.exe tests13_simple2.fl))))
+
+ (rule
+ (alias runtest)
+  (deps tests13_simple3.fl)
+  (action
+   (progn
+   (run ../tools/flvalidate.exe tests13_simple3.fl))))
