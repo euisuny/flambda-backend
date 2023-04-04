@@ -6,11 +6,8 @@ module P = Flambda_primitive
 type substitutions = (Simple.t * core_exp) list
 
 (** Translation from flambda2 terms to simplified core language **)
-let simple_to_core (s : substitutions) (v : Simple.t) : core_exp =
-  let simple = (Simple.without_coercion v) in
-  match List.assoc_opt simple s with
-  | Some exp -> exp
-  | None -> Named (Literal (Simple simple))
+let simple_to_core (v : Simple.t) : core_exp =
+  Named (Literal (Simple (Simple.without_coercion v)))
 
 let tagged_immediate_to_core (e : Targetint_31_63.t) : core_exp =
   Named (Literal (Simple (Simple.const (Int_ids.Const.tagged_immediate e))))
@@ -152,14 +149,15 @@ and let_to_core (e : Let_expr.t) (s : substitutions) :
          the prefix starts with [anon-fn]) *)
       let e1 = Let_expr.defining_expr e |> named_to_core var
       in
-      let body, _ = flambda_expr_to_core body s in
+      let body, s = flambda_expr_to_core body s in
       let x, e1, e2, s =
         bound_pattern_to_core var e1 body s
       in
       (Core_let.create ~x ~e1 ~e2, s))
 
 and named_to_core var (e : Flambda.named) : core_exp =
-  Named (match e with
+  Named (
+    match e with
     | Simple e -> Literal (Simple e)
     | Prim (t, _) -> Prim (prim_to_core t)
     | Set_of_closures e -> Set_of_closures (set_of_closures_to_core e)
@@ -276,6 +274,8 @@ and function_params_and_body_to_core
         );
     anon}
 
+(* NOTE: The following FIXME s require accumulating appropriate information in
+   the substitution map. *)
 (* Accumulate substitutions in both the body and the handler, and substitute in
   the bindings for the whole expression. *)
 and let_cont_to_core (e : Let_cont_expr.t) (sub : substitutions) :
@@ -302,19 +302,19 @@ and let_cont_to_core (e : Let_cont_expr.t) (sub : substitutions) :
           Let_cont (Non_recursive {handler;
             body = body |> Core_letcont_body.create contvar;})
         in
-        (exp, s))
-
+        (exp, sub))
   | Recursive r ->
     Recursive_let_cont_handlers.pattern_match_bound r
       ~f:
         (fun bound ~invariant_params ~body handler ->
-           let body, s = flambda_expr_to_core body sub in
+           (* FIXME *)
+           let body, _ = flambda_expr_to_core body sub in
            (Let_cont
              (Recursive
                 (Core_recursive.create bound
                    {continuation_map =
                       Core_continuation_map.create invariant_params
-                        (cont_handlers_to_core handler s);
+                        (cont_handlers_to_core handler);
                     body}
                 )
              ), sub)
@@ -329,44 +329,48 @@ and cont_handler_to_core
          let handler, s = flambda_expr_to_core handler s in
          (Core_continuation_handler.create var handler, s))
 
-and cont_handlers_to_core (e : Continuation_handlers.t) (s : substitutions):
+and cont_handlers_to_core (e : Continuation_handlers.t) :
   continuation_handler Continuation.Map.t =
   let e : Continuation_handler.t Continuation.Map.t =
     Continuation_handlers.to_map e in
+  (* FIXME *)
   Continuation.Map.map
     (fun e ->
-       let e, _ = cont_handler_to_core e s in e) e
+       let e, _ = cont_handler_to_core e [] in e) e
 
 and apply_to_core (e : Apply.t) (s : substitutions)
   : core_exp * substitutions =
+  (* FIXME *)
   let e =
     Apply {
-      callee = Apply_expr.callee e |> simple_to_core s;
+      callee = Apply_expr.callee e |> simple_to_core;
       continuation = Named (Literal (Res_cont (Apply_expr.continuation e)));
       exn_continuation = Named (Literal (Cont (Apply_expr.exn_continuation e |>
                           Exn_continuation.exn_handler)));
-      apply_args = Apply_expr.args e |> List.map (simple_to_core s) }
+      apply_args = Apply_expr.args e |> List.map simple_to_core }
   in
   e, s
 
 and apply_cont_to_core (e : Apply_cont.t) (s : substitutions)
   : core_exp * substitutions =
+  (* FIXME *)
   let e =
     Apply_cont {
       k = Named (Literal (Cont (Apply_cont_expr.continuation e)));
-      args = Apply_cont_expr.args e |> List.map (simple_to_core s);}
+      args = Apply_cont_expr.args e |> List.map simple_to_core;}
   in
   e, s
 
 and switch_to_core (e : Switch.t) (s : substitutions)
   : core_exp * substitutions =
+  (* FIXME *)
   let e =
     Switch {
-      scrutinee = Switch_expr.scrutinee e |> (simple_to_core s);
+      scrutinee = Switch_expr.scrutinee e |> simple_to_core;
       arms = Switch_expr.arms e |>
              Targetint_31_63.Map.map
                (fun x ->
-                   let e, _ = apply_cont_to_core x s in e)
+                   let e, _ = apply_cont_to_core x [] in e)
       ;}
   in
   e, s

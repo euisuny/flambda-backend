@@ -449,21 +449,6 @@ val result_kind' : t -> Flambda_kind.t
     primitive may have. *)
 val effects_and_coeffects : t -> Effects_and_coeffects.t
 
-val effects_and_coeffects_of_nullary_primitive :
-  nullary_primitive -> Effects_and_coeffects.t
-
-val effects_and_coeffects_of_unary_primitive :
-  unary_primitive -> Effects_and_coeffects.t
-
-val effects_and_coeffects_of_binary_primitive :
-  binary_primitive -> Effects_and_coeffects.t
-
-val effects_and_coeffects_of_ternary_primitive :
-  ternary_primitive -> Effects_and_coeffects.t
-
-val effects_and_coeffects_of_variadic_primitive :
-  variadic_primitive -> Effects_and_coeffects.t
-
 (** Returns [true] iff the given primitive has neither effects nor coeffects. *)
 val no_effects_or_coeffects : t -> bool
 

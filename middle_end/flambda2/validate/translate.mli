@@ -16,7 +16,7 @@ open! Flambda2_core
 
 type substitutions = (Simple.t * core_exp) list
 
-val simple_to_core : substitutions -> Simple.t -> core_exp
+val simple_to_core : Simple.t -> core_exp
 
 val prim_to_core : Flambda_primitive.t -> primitive
 
