@@ -96,17 +96,8 @@ let eval_float_arith_op (op : P.unary_float_arith_op) (original_term : named) ar
 let eval_untag_immediate (arg : core_exp) : named =
   let v = P.Untag_immediate in
   (match must_be_tagged_immediate arg with
-   | Some a ->
-     (match must_be_simple arg with
-      | Some s ->
-        (match simple_with_type s with
-         | Tagged_immediate i ->
-           (Literal (Simple (Simple.const
-                               (Int_ids.Const.naked_immediate i))))
-         | (Naked_immediate _ | Naked_float _ | Naked_int32 _ | Naked_int64 _
-           | Naked_nativeint _ | Var _ | Symbol _) -> a)
-      | None -> a)
-  | None -> Prim (Unary (v, arg)))
+   | Some a -> a
+   | None -> Prim (Unary (v, arg)))
 
 let reinterpret_int64_as_float (c : static_const_or_code) : static_const_or_code =
   match c with
@@ -121,7 +112,6 @@ let reinterpret_int64_as_float (c : static_const_or_code) : static_const_or_code
     | Mutable_string _ | Immutable_string _) | Code _ | Deleted_code) ->
      Misc.fatal_error "Expected Boxed_int64"
 
-(* FIXME: Is there a way to get around this nasty pattern match? *)
 let eval_box_number_naked_float v (arg : core_exp) : named =
   match must_be_named arg with
   | Some (Prim (Unary (Reinterpret_int64_as_float, arg))) ->
@@ -180,94 +170,59 @@ let eval_string_length (sb : Flambda_primitive.string_or_bytes) (arg : core_exp)
       | Code _ | Deleted_code -> default)
     | (Some [] | Some (_::_) | None) -> default)
 
-let eval_unbox_number (n : Flambda_kind.Boxable_number.t) (arg : core_exp) : core_exp =
-  let default = Named (Prim (Unary (Unbox_number n, arg))) in
-  match must_be_prim arg with
-  | Some prim ->
-    (match n, prim with
-    | Naked_float, (Unary (Box_number (Naked_float, _), arg))
-    | Naked_int32, (Unary (Box_number (Naked_int32, _), arg))
-    | Naked_int64, (Unary (Box_number (Naked_int64, _), arg))
-    | Naked_nativeint, (Unary (Box_number (Naked_nativeint, _), arg)) ->
-      arg
-    | (Naked_float | Naked_int32 | Naked_int64 | Naked_nativeint),
-      (Nullary _ | Binary _ | Ternary _ | Variadic _ |
-       Unary ((Duplicate_block _ | Duplicate_array _ | Is_int _
-              | Get_tag | Array_length | Bigarray_length _
-              | Int_as_pointer | Opaque_identity _ | Int_arith _ | Float_arith _
-              | Reinterpret_int64_as_float | Untag_immediate | Tag_immediate
-              | String_length _ | Unbox_number _
-              | Num_conv _ | Boolean_not | Box_number _
-              | Project_function_slot _ | Project_value_slot _ | Is_boxed_float
-              | Is_flat_float_array | Begin_try_region | End_region
-              | Obj_dup), _)
-      ) -> default)
-  | None ->
-    (match must_be_static_consts arg with
-     | Some [(Static_const (Boxed_int32 (Const i)))] ->
-       Named (Literal (Simple (Simple.const (Int_ids.Const.naked_int32 i))))
-     | Some [(Static_const (Boxed_int64 (Const i)))] ->
-       Named (Literal (Simple (Simple.const (Int_ids.Const.naked_int64 i))))
-     | Some [(Static_const (Boxed_float (Const i)))] ->
-       Named (Literal (Simple (Simple.const (Int_ids.Const.naked_float i))))
-     | Some [(Static_const (Boxed_nativeint (Const i)))] ->
-       Named (Literal (Simple (Simple.const (Int_ids.Const.naked_nativeint i))))
-     | (Some _ | None) -> default)[@ocaml.warning "-4"]
-
-let eval_unary (v : P.unary_primitive) (arg : core_exp) : core_exp =
-  let default = Named (Prim (Unary (v, arg))) in
+let eval_unary (v : P.unary_primitive) (arg : core_exp) : named =
   match v with
   (* [Project_function_slot] and [Project_value_slot] is resolved during
      instantiating closures in the normalization process *)
-  | Project_value_slot _ | Project_function_slot _ -> default
-  | Unbox_number n -> eval_unbox_number n arg
-  | Box_number (Naked_float, _) ->
-    Named (eval_box_number_naked_float v arg)
+  | Project_value_slot _ | Project_function_slot _
+  | Unbox_number _ ->
+    Prim (Unary (v, arg))
+  | Box_number (Naked_float, _) -> eval_box_number_naked_float v arg
   | Box_number ((Naked_int32 | Naked_int64 | Naked_nativeint), _) ->
-    default
+    Prim (Unary (v, arg))
   | Int_arith (kind, op) ->
     (match must_be_simple arg with
      | Some s1 ->
-       Named ((match kind with
+       ((match kind with
          | Tagged_immediate -> Unary_int_arith_tagged_immediate.simplify op
          | Naked_immediate -> Unary_int_arith_naked_immediate.simplify op
          | Naked_int32 -> Unary_int_arith_naked_int32.simplify op
          | Naked_int64 -> Unary_int_arith_naked_int64.simplify op
          | Naked_nativeint -> Unary_int_arith_naked_nativeint.simplify op)
                 (Prim (Unary (v, arg))) ~arg:s1)
-     | None -> default)
+     | None -> Prim (Unary (v, arg)))
   | Num_conv { src; dst } ->
     (match must_be_simple arg with
      | Some s1 ->
-       Named ((match src with
+       (match src with
         | Tagged_immediate -> Simplify_int_conv_tagged_immediate.simplify ~dst
         | Naked_immediate -> Simplify_int_conv_naked_immediate.simplify ~dst
         | Naked_float -> Simplify_int_conv_naked_float.simplify ~dst
         | Naked_int32 -> Simplify_int_conv_naked_int32.simplify ~dst
         | Naked_int64 -> Simplify_int_conv_naked_int64.simplify ~dst
         | Naked_nativeint -> Simplify_int_conv_naked_nativeint.simplify ~dst)
-         ~original_term:(Prim (Unary (v, arg))) ~arg:s1)
-     | None -> default)
+         ~original_term:(Prim (Unary (v, arg))) ~arg:s1
+     | None -> Prim (Unary (v, arg)))
   | Float_arith op ->
     (match must_be_simple arg with
      | Some s1 ->
-       Named (eval_float_arith_op op (Prim (Unary (v, arg))) s1)
-     | None -> default)
+       eval_float_arith_op op (Prim (Unary (v, arg))) s1
+     | None -> Prim (Unary (v, arg)))
   | Tag_immediate ->
     (match must_be_untagged_immediate arg with
-     | Some a -> Named a
-     | None -> default)
+     | Some a -> a
+     | None -> Prim (Unary (v, arg)))
   | Untag_immediate ->
-    Named (eval_untag_immediate arg)
+    eval_untag_immediate arg
   | String_length sb ->
-    Named (eval_string_length sb arg)
+    eval_string_length sb arg
   | ( Get_tag | Array_length | Int_as_pointer | Boolean_not
     | Reinterpret_int64_as_float
     | Is_boxed_float | Is_flat_float_array | Begin_try_region
     | End_region | Obj_dup | Duplicate_block _ | Duplicate_array _
     | Is_int _ | Bigarray_length _ | Opaque_identity _
     ) ->
-    default
+    (Prim (Unary (v, arg)))
 
 let simple_tagged_immediate ~(const : Simple.t) : Targetint_31_63.t option =
   let constant =
@@ -1257,7 +1212,7 @@ let rec eval (v : primitive) : core_exp =
   match v with
   | Nullary v -> Named (eval_nullary v)
   | Unary (v, arg) ->
-    eval_unary v (f_arg arg)
+    Named (eval_unary v (f_arg arg))
   | Binary (op, arg1, arg2) ->
     eval_binary op (f_arg arg1) (f_arg arg2)
   | Ternary (v, arg1, arg2, arg3) ->
