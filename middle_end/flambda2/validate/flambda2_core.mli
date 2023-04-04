@@ -334,3 +334,7 @@ val static_const_group_fix :
   static_const_group -> core_exp
 
 val literal_contained : literal -> literal -> bool
+
+val no_effects_or_coeffects : core_exp -> bool
+val no_effects : core_exp -> bool
+val returns_unit : core_exp -> bool

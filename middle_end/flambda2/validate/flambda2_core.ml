@@ -1552,3 +1552,52 @@ let literal_contained (literal1 : literal) (literal2 : literal) : bool =
     Code_id.name code1 == Code_id.name code2
   | (Simple _ | Cont _ | Slot (_, (Function_slot _ | Value_slot _))
     | Res_cont (Never_returns | Return _) | Code_id _), _ -> false
+
+let effects_and_coeffects (p : primitive) =
+  match p with
+  | Nullary prim ->
+    Flambda_primitive.effects_and_coeffects_of_nullary_primitive prim
+  | Unary (prim, _) ->
+    Flambda_primitive.effects_and_coeffects_of_unary_primitive prim
+  | Binary (prim, _, _) ->
+    Flambda_primitive.effects_and_coeffects_of_binary_primitive prim
+  | Ternary (prim, _, _, _) ->
+    Flambda_primitive.effects_and_coeffects_of_ternary_primitive prim
+  | Variadic (prim, _) ->
+    Flambda_primitive.effects_and_coeffects_of_variadic_primitive prim
+
+let no_effects (p : primitive) =
+  match effects_and_coeffects p with
+  | No_effects, _, _ -> true
+  | ( (Only_generative_effects _ | Arbitrary_effects),
+      (No_coeffects | Has_coeffects),
+      _ ) ->
+    false
+
+let no_effects (e : core_exp) : bool =
+  match must_be_prim e with
+  | None -> true
+  | Some p -> no_effects p
+
+let no_effects_or_coeffects (p : primitive) =
+  match effects_and_coeffects p with
+  | No_effects, No_coeffects, _ -> true
+  | ( (No_effects | Only_generative_effects _ | Arbitrary_effects),
+      (No_coeffects | Has_coeffects),
+      _ ) ->
+    false
+
+let no_effects_or_coeffects (e : core_exp) : bool =
+  match must_be_prim e with
+  | None -> true
+  | Some p -> no_effects_or_coeffects p
+
+let returns_unit (p : primitive) : bool =
+  match p with
+  | Ternary _ -> true
+  | (Nullary _ | Unary _ | Binary _ | Variadic _) -> false
+
+let returns_unit (e : core_exp) : bool =
+  match must_be_prim e with
+  | None -> false
+  | Some p -> returns_unit p

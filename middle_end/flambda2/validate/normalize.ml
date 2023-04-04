@@ -448,9 +448,24 @@ and step_let let_abst body : core_exp =
       | Some e -> step_named_for_let x e
       | None -> x, step e1)
     in
+    (* If the term is effectful, then do not inline. *)
+    (* It shouldn't be substituted in as a let-binding, but also shouldn't be
+       inlined when the function is called. *)
     (* [Let-β]
-        let x = v in e1 ⟶ e2 [x\v] *)
-    subst_pattern ~bound:x ~let_body:e1 e2 |> step)
+       let x = v in e1 ⟶ e2 [x\v] *)
+    if no_effects_or_coeffects e1 then
+      (subst_pattern ~bound:x ~let_body:e1 e2 |> step)
+    else
+      (let e2 =
+        (if returns_unit e1 then
+           let e2 = subst_pattern ~bound:x
+             ~let_body:(Named (Literal (Simple
+                                          (Simple.const Int_ids.Const.const_zero)))) e2
+           in
+           e2
+         else e2) |> step
+      in
+      Core_let.create ~x ~e1 ~e2))
 
 and handler_map_to_closures (phi : Variable.t) (v : Bound_parameter.t list)
       (m : continuation_handler_map) : set_of_closures =
