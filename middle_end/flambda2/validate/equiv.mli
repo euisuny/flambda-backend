@@ -7,6 +7,8 @@ module Env : sig
   val create : unit -> t
 end
 
+val debug : bool ref
+
 val eq_string : eq -> string
 
 val equiv_primitives :

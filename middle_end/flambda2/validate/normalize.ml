@@ -423,6 +423,15 @@ and step_handler (e : continuation_handler) =
        Handler (Core_continuation_handler.create param e))
 
 and step_switch scrutinee arms : core_exp =
+  let default =
+    ((* if the arms are all the same, collapse them to a single arm *)
+    let bindings = Targetint_31_63.Map.bindings arms in
+    let (_, hd) = List.hd bindings in
+    Equiv.debug := false;
+    if (List.for_all (fun (_, x) -> Equiv.core_eq hd x) bindings)
+    then (Equiv.debug := true; hd)
+    else (Equiv.debug := true; Switch {scrutinee; arms}))
+  in
   (* if the scrutinee is exactly one of the arms, simplify *)
   match must_be_simple_or_immediate scrutinee with
   | Some s ->
@@ -432,9 +441,9 @@ and step_switch scrutinee arms : core_exp =
           | Naked_immediate i | Tagged_immediate i ->
             (Targetint_31_63.Map.find i arms)
           | Naked_float _ | Naked_int32 _ | Naked_int64 _ | Naked_nativeint _ ->
-            Switch {scrutinee; arms})
-      | None -> Switch {scrutinee; arms})
-  | None -> Switch {scrutinee; arms}
+            default)
+      | None -> default)
+  | None -> default
 
 and step_let let_abst body : core_exp =
   Core_let.pattern_match {let_abst; expr_body = body}

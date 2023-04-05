@@ -112,11 +112,9 @@ let equiv_names env name1 name2 : eq =
           ~symbol:(fun symbol2 -> equiv_symbols env symbol1 symbol2))
   in
   if result then result
-  else
-    (Format.fprintf Format.std_formatter "@.%a <> %a@."
-      Name.print name1
-      Name.print name2;
-     false)
+  else unequal
+         (Named (Literal (Simple (Simple.name name1))))
+         (Named (Literal (Simple (Simple.name name2))))
 
 let equiv_value_slots env value_slot1 value_slot2 : eq =
   match Env.find_value_slot env value_slot1 with
