@@ -5,7 +5,13 @@ module P = Flambda_primitive
    (2) Ignore [Num_occurrences] (which is used for making inlining decisions)
    (3) Ignored traps for now *)
 
-type core_exp =
+module With_delayed_renaming : sig
+  type 'descr t
+end
+
+type core_exp = exp_descr With_delayed_renaming.t
+
+and exp_descr =
   | Named of named
   | Let of let_expr
   | Let_cont of let_cont_expr
@@ -187,11 +193,18 @@ val must_be_static_set_of_closures : static_const -> set_of_closures option
 
 val must_have_closure : core_exp -> set_of_closures option
 
-module T0 : sig
+module Expr : sig
   type t = core_exp
-
-  val apply_renaming : t -> Renaming.t -> t
+  type descr = exp_descr
   val ids_for_export : t -> Ids_for_export.t
+  val descr : t -> exp_descr
+  val create_let : let_expr -> t
+  val create_let_cont : let_cont_expr -> t
+  val create_apply : apply_expr -> t
+  val create_apply_cont : apply_cont_expr -> t
+  val create_lambda : lambda_expr -> t
+  val create_handler : continuation_handler -> t
+  val create_switch : switch_expr -> t
 end
 
 module ContMap : sig
@@ -207,9 +220,8 @@ module RecursiveLetExpr : sig
 end
 
 module Core_let : sig
-  val create : x:Bound_for_let.t -> e1:core_exp -> e2 :core_exp -> core_exp
-
   type t = let_expr
+  val create : x:Bound_for_let.t -> e1:core_exp -> e2 :core_exp -> t
 
   module Pattern_match_pair_error : sig
     type t = Mismatched_let_bindings
@@ -262,12 +274,12 @@ end
 module Core_lambda : sig
   type t = lambda_expr
 
-  val create : Bound_for_lambda.t -> T0.t -> t
+  val create : Bound_for_lambda.t -> Expr.t -> t
 
-  (* val create_handler_lambda : Bound_parameters.t -> T0.t -> t *)
+  (* val create_handler_lambda : Bound_parameters.t -> Expr.t -> t *)
 
   val pattern_match :
-    t -> f:(Bound_for_lambda.t -> T0.t -> 'a) -> 'a
+    t -> f:(Bound_for_lambda.t -> Expr.t -> 'a) -> 'a
 
   val pattern_match_pair:
     t -> t ->

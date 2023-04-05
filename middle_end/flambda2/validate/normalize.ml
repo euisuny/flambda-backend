@@ -430,8 +430,8 @@ and step_switch scrutinee arms : core_exp =
     let (_, hd) = List.hd bindings in
     Equiv.debug := false;
     if (List.for_all (fun (_, x) -> Equiv.core_eq hd x) bindings)
-    then (Equiv.debug := true; hd)
-    else (Equiv.debug := true; Switch {scrutinee; arms}))
+    then (Equiv.debug := false; hd)
+    else (Equiv.debug := false; Switch {scrutinee; arms}))
   in
   (* if the scrutinee is exactly one of the arms, simplify *)
   match must_be_simple_or_immediate scrutinee with

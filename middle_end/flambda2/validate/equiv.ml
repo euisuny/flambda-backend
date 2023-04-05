@@ -1,6 +1,6 @@
 open! Flambda2_core
 
-let debug = ref true
+let debug = ref false
 
 let unequal (e1 : core_exp) (e2 : core_exp) =
   if !debug then
@@ -287,9 +287,12 @@ and equiv_set_of_closures env
       (function_slots_and_fun_decls_by_code_id set1)
       (function_slots_and_fun_decls_by_code_id set2)
       ~f:(fun acc ((_, (slot1, decl1)), (_, (slot2, decl2))) ->
+        (* if equiv env decl1 decl2 then *)
         acc &&
         equiv_function_slots env slot1 slot2 &&
-        equiv env decl1 decl2)
+        equiv env decl1 decl2
+        (* else unequal decl1 decl2 *)
+      )
       ~acc: true
   in
   (* value_slots_eq && *)
@@ -325,9 +328,9 @@ and equiv_named env named1 named2 : eq =
   | Rec_info _, Rec_info _ -> true
   | Static_consts const1, Static_consts const2 ->
     (List.combine const1 const2 |>
-     List.fold_left (fun x (e1, e2) -> x && equiv_static_consts env e1 e2) true)
+    List.fold_left (fun x (e1, e2) -> x && equiv_static_consts env e1 e2) true)
   | (Literal _ | Prim _ |
-     Set_of_closures _ | Rec_info _ | Static_consts _ | Closure_expr _), _ ->
+    Set_of_closures _ | Rec_info _ | Static_consts _ | Closure_expr _), _ ->
     unequal (Named named1) (Named named2)
 
 and equiv_simple env simple1 simple2 : eq =
@@ -354,12 +357,12 @@ and equiv_primitives env prim1 prim2 : eq =
     P.equal_unary_primitive op1 op2 &&
     equiv env arg1 arg2
   | Binary (op1, arg1_1, arg1_2), Binary (op2, arg2_1, arg2_2) ->
-    P.equal_binary_primitive op1 op2 &&
+    P.refine_binary_primitive op1 op2 &&
     equiv env arg1_1 arg2_1 &&
     equiv env arg1_2 arg2_2
   | Ternary (op1, arg1_1, arg1_2, arg1_3),
     Ternary (op2, arg2_1, arg2_2, arg2_3) ->
-    P.equal_ternary_primitive op1 op2 &&
+    P.refine_ternary_primitive op1 op2 &&
     equiv env arg1_1 arg2_1 &&
     equiv env arg1_2 arg2_2 &&
     equiv env arg1_3 arg2_3

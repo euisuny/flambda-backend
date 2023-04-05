@@ -221,6 +221,27 @@ module Block_access_kind = struct
       Or_unknown.compare Targetint_31_63.compare size1 size2
     | Values _, Naked_floats _ -> -1
     | Naked_floats _, Values _ -> 1
+
+  (* t2 might have some more known values *)
+  let refine t1 t2 =
+    match t1, t2 with
+    | ( Values { tag = tag1; size = size1; field_kind = field_kind1 },
+        Values { tag = tag2; size = size2; field_kind = field_kind2 } ) ->
+      let c = Or_unknown.compare Tag.Scannable.compare tag1 tag2 in
+      if c <= 0
+      then true
+      else
+        let c = Or_unknown.compare Targetint_31_63.compare size1 size2 in
+        if c <= 0
+        then true
+        else Block_access_field_kind.compare field_kind1 field_kind2 = 0
+    | Naked_floats { size = size1 }, Naked_floats { size = size2 } ->
+      if Or_unknown.compare Targetint_31_63.compare size1 size2 <= 0
+      then true
+      else false
+    | Values _, Naked_floats _ -> false
+    | Naked_floats _, Values _ -> false
+
 end
 
 type string_or_bytes =
@@ -1223,6 +1244,59 @@ let compare_binary_primitive p1 p2 =
       (binary_primitive_numbering p1)
       (binary_primitive_numbering p2)
 
+let refine_binary_primitive p1 p2 =
+  let binary_primitive_numbering p =
+    match p with
+    | Array_load _ -> 0
+    | Block_load _ -> 1
+    | String_or_bigstring_load _ -> 2
+    | Bigarray_load _ -> 3
+    | Phys_equal _ -> 4
+    | Int_arith _ -> 5
+    | Int_shift _ -> 6
+    | Int_comp _ -> 7
+    | Float_arith _ -> 8
+    | Float_comp _ -> 9
+  in
+  match p1, p2 with
+  | Block_load (kind1, mut1), Block_load (kind2, mut2) ->
+    let c = Block_access_kind.refine kind1 kind2 in
+    c && Mutability.compare mut1 mut2 = 0
+  | Array_load (kind1, mut1), Array_load (kind2, mut2) ->
+    let c = Array_kind.compare kind1 kind2 in
+    c = 0 && Mutability.compare mut1 mut2 = 0
+  | ( String_or_bigstring_load (string_like1, width1),
+      String_or_bigstring_load (string_like2, width2) ) ->
+    let c = Stdlib.compare string_like1 string_like2 in
+    c = 0 && Stdlib.compare width1 width2 = 0
+  | ( Bigarray_load (num_dim1, kind1, layout1),
+      Bigarray_load (num_dim2, kind2, layout2) ) ->
+    let c1 = Stdlib.compare num_dim1 num_dim2 in
+    let c2 = Stdlib.compare kind1 kind2 in
+    c1 = 0 && c2 = 0 && Stdlib.compare layout1 layout2 = 0
+  | Phys_equal comp1, Phys_equal comp2 ->
+    Stdlib.compare comp1 comp2 = 0
+  | Int_arith (kind1, op1), Int_arith (kind2, op2) ->
+    let c = K.Standard_int.compare kind1 kind2 in
+    c = 0 && Stdlib.compare op1 op2 = 0
+  | Int_shift (kind1, op1), Int_shift (kind2, op2) ->
+    let c = K.Standard_int.compare kind1 kind2 in
+    c = 0 && Stdlib.compare op1 op2 = 0
+  | Int_comp (kind1, comp_behaviour1), Int_comp (kind2, comp_behaviour2) ->
+    let c = K.Standard_int.compare kind1 kind2 in
+    c = 0 && Stdlib.compare comp_behaviour1 comp_behaviour2 = 0
+  | Float_arith op1, Float_arith op2 ->
+    Stdlib.compare op1 op2 = 0
+  | Float_comp comp1, Float_comp comp2 ->
+    Stdlib.compare comp1 comp2 = 0
+  | ( ( Block_load _ | Array_load _ | String_or_bigstring_load _
+      | Bigarray_load _ | Phys_equal _ | Int_arith _ | Int_shift _ | Int_comp _
+      | Float_arith _ | Float_comp _ ),
+      _ ) ->
+    Stdlib.compare
+      (binary_primitive_numbering p1)
+      (binary_primitive_numbering p2) = 0
+
 let equal_binary_primitive p1 p2 = compare_binary_primitive p1 p2 = 0
 
 let print_binary_primitive ppf p =
@@ -1382,6 +1456,37 @@ let compare_ternary_primitive p1 p2 =
     Stdlib.compare
       (ternary_primitive_numbering p1)
       (ternary_primitive_numbering p2)
+
+let refine_ternary_primitive p1 p2 =
+  let ternary_primitive_numbering p =
+    match p with
+    | Block_set _ -> 0
+    | Array_set _ -> 1
+    | Bytes_or_bigstring_set _ -> 2
+    | Bigarray_set _ -> 3
+  in
+  match p1, p2 with
+  | Block_set (kind1, init_or_assign1), Block_set (kind2, init_or_assign2) ->
+    let c = Block_access_kind.refine kind1 kind2 in
+    c && Init_or_assign.compare init_or_assign1 init_or_assign2 = 0
+  | Array_set (kind1, init_or_assign1), Array_set (kind2, init_or_assign2) ->
+    let c = Array_kind.compare kind1 kind2 in
+    c = 0 && Init_or_assign.compare init_or_assign1 init_or_assign2 = 0
+  | ( Bytes_or_bigstring_set (kind1, width1),
+      Bytes_or_bigstring_set (kind2, width2) ) ->
+    let c = Stdlib.compare kind1 kind2 in
+    c = 0 && Stdlib.compare width1 width2 = 0
+  | ( Bigarray_set (num_dims1, kind1, layout1),
+      Bigarray_set (num_dims2, kind2, layout2) ) ->
+    let c1 = Stdlib.compare num_dims1 num_dims2 in
+    let c2 = Stdlib.compare kind1 kind2 in
+    c1 = 0 && c2 = 0 && Stdlib.compare layout1 layout2 = 0
+  | (Block_set _ | Array_set _ | Bytes_or_bigstring_set _ | Bigarray_set _), _
+    ->
+    Stdlib.compare
+      (ternary_primitive_numbering p1)
+      (ternary_primitive_numbering p2) = 0
+
 
 let equal_ternary_primitive p1 p2 = compare_ternary_primitive p1 p2 = 0
 

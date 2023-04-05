@@ -101,6 +101,8 @@ module Block_access_kind : sig
 
   val compare : t -> t -> int
 
+  val refine : t -> t -> bool
+
   val element_kind_for_load : t -> Flambda_kind.t
 end
 
@@ -494,9 +496,13 @@ val equal_nullary_primitive : nullary_primitive -> nullary_primitive -> bool
 
 val equal_unary_primitive : unary_primitive -> unary_primitive -> bool
 
+val refine_binary_primitive : binary_primitive -> binary_primitive -> bool
+
 val equal_binary_primitive : binary_primitive -> binary_primitive -> bool
 
 val equal_ternary_primitive : ternary_primitive -> ternary_primitive -> bool
+
+val refine_ternary_primitive : ternary_primitive -> ternary_primitive -> bool
 
 val equal_variadic_primitive : variadic_primitive -> variadic_primitive -> bool
 

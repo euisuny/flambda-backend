@@ -98,13 +98,15 @@ let print_flexpect name main_dump_ppf ~raw_flambda:old_unit new_unit =
     ~f:pp_flambda_as_flexpect (old_unit, new_unit)
 
 let validate filename (src : Flambda_unit.t) (res : Flambda_unit.t) =
-  let src_core = Translate.flambda_unit_to_core src |> Normalize.normalize in
-  let res_core = Translate.flambda_unit_to_core res |> Normalize.normalize in
+  let src_core = Translate.flambda_unit_to_core src in
+  let src_core = src_core |> Normalize.normalize in
+  (* Format.fprintf Format.std_formatter "[SRC]@.%a@.@." Flambda2_core.print src_core; *)
+  let res_core = Translate.flambda_unit_to_core res in
+  let res_core = res_core |> Normalize.normalize in
+  (* Format.fprintf Format.std_formatter "[RES]@.%a@.@." Flambda2_core.print res_core; *)
   if (Equiv.core_eq src_core res_core)
-  then
-    Format.eprintf "fλ2: %s PASS@." filename
-  else
-    Format.eprintf "fλ2: %s FAIL@." filename
+  then Format.eprintf "fλ2: %s PASS@." filename
+  else Format.eprintf "fλ2: %s FAIL@." filename
 
 let lambda_to_cmm ~ppf_dump:ppf ~prefixname ~filename ~keep_symbol_tables
     (program : Lambda.program) =
