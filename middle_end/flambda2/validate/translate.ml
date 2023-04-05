@@ -22,110 +22,62 @@ let apply_subst (s : substitutions) (e : core_exp) : core_exp =
     | (Cont _ | Res_cont _ | Slot _ | Code_id _) -> Named (Literal v))
     () e
 
-let subst_var_slot_helper
-          (var : Bound_var.t) (phi : Bound_var.t) (slot : slot) (e2 : core_exp) =
-  core_fmap
-    (fun (var, phi, slot) v ->
-       match v with
-       | Simple v ->
-          (if (Simple.same (Simple.var (Bound_var.var var)) v) then
-            Named (Literal (Slot (Bound_var.var phi, slot)))
-           else Named (Literal (Simple v)))
-       | (Cont _ | Res_cont _ | Slot _ | Code_id _) -> Named (Literal v))
-    (var, phi, slot) e2
-
 let subst_var_slot
       (vars : Bound_var.t list) (phi : Bound_var.t)
-      (e1 : core_exp) (e2 : core_exp)
-      (s : substitutions) =
-  match e1 with
+      (e : core_exp) (s : substitutions) =
+  match e with
   | Named (Set_of_closures {function_decls ; value_slots = _}) ->
     let in_order = Function_slot.Lmap.bindings function_decls
     in
     List.fold_left
-      (fun (s, acc) (var, (slot, _)) ->
+      (fun s(var, (slot, _)) ->
          ((Simple.var (Bound_var.var var),
-          Named (Literal (Slot (Bound_var.var phi, Function_slot slot))))::s,
-         subst_var_slot_helper var phi (Function_slot slot) acc))
-      (s, e2)
+          Named (Literal (Slot (Bound_var.var phi, Function_slot slot))))::s)) s
       (List.combine vars in_order)
   | (Named (Literal _ | Prim _ | Closure_expr _ | Static_consts _ | Rec_info _) |
      Let _ | Let_cont _ | Apply _ | Apply_cont _ | Lambda _ | Handler _ | Switch _
     | Invalid _ ) ->
     Misc.fatal_error "Expected set of closures"
 
-(* TODO :
-   Change substitution helper functions to take general substitutions *)
-let subst_static_slot_helper
-      (sym : Symbol.t) (phi : Bound_var.t) (slot : slot) (e2 : core_exp) =
-  core_fmap
-    (fun (sym, phi, slot) v ->
-      match v with
-      | Simple v ->
-        (if (Simple.same (Simple.symbol sym) v) then
-          Named (Literal (Slot (Bound_var.var phi, slot)))
-        else Named (Literal (Simple v)))
-      | (Cont _ | Res_cont _ | Slot _ | Code_id _) -> Named (Literal v))
-    (sym, phi, slot) e2
-
 let subst_static_slot
-      (bound : Symbol.t Function_slot.Lmap.t) (phi : Bound_var.t)
-      (e2 : core_exp)
-      (s : substitutions) =
-  let bound = Function_slot.Lmap.bindings bound
-  in
-  let e2 = List.fold_left
-    (fun (s, acc) (slot, sym) ->
+      (bound : Symbol.t Function_slot.Lmap.t)
+      (phi : Bound_var.t) (s : substitutions) : substitutions =
+  let bound = Function_slot.Lmap.bindings bound in
+  List.fold_left
+    (fun s (slot, sym) ->
       ((Simple.symbol sym,
-        Named (Literal (Slot (Bound_var.var phi, Function_slot slot))))::s,
-       subst_static_slot_helper sym phi (Function_slot slot) acc))
-    (s, e2)
-    bound
-  in
-  e2
+        Named (Literal (Slot (Bound_var.var phi, Function_slot slot))))::s)) s bound
 
-let bound_static_to_core
-      (t : Bound_static.Pattern.t)
-      (e1 : core_exp) (e2 : core_exp)
-      (s : substitutions) :
-  Bound_codelike.Pattern.t * core_exp * core_exp * substitutions =
+let bound_static_to_core (t : Bound_static.Pattern.t) (s : substitutions) :
+  Bound_codelike.Pattern.t * substitutions =
   match t with
   | Set_of_closures bound ->
-    let phi = Bound_var.create (Variable.create "ϕ") Name_mode.normal
-    in
+    let phi = Bound_var.create (Variable.create "ϕ") Name_mode.normal in
     (* Substitute in new variable *)
-    let s, exp1 = subst_static_slot bound phi e1 s
-    in
-    let s, exp2 = subst_static_slot bound phi e2 s
-    in
-    (Bound_codelike.Pattern.set_of_closures phi, exp1, exp2, s)
-  | Code v -> (Bound_codelike.Pattern.code v, e1, e2, s)
-  | Block_like v -> (Bound_codelike.Pattern.block_like v, e1, e2, s)
+    let s = subst_static_slot bound phi s in
+    (Bound_codelike.Pattern.set_of_closures phi, s)
+  | Code v -> (Bound_codelike.Pattern.code v, s)
+  | Block_like v -> (Bound_codelike.Pattern.block_like v, s)
 
-let bound_pattern_to_core
-      (t : Bound_pattern.t)
-      (e1 : core_exp) (e2 : core_exp)
-      (s : substitutions):
-  Bound_for_let.t * core_exp * core_exp * substitutions =
+let bound_pattern_to_core (t : Bound_pattern.t) (e : core_exp) (s : substitutions):
+  Bound_for_let.t * core_exp * substitutions =
   match t with
-  | Singleton v -> (Singleton v, e1, e2, s)
+  | Singleton v -> (Singleton v, e, s)
   | Set_of_closures vars ->
     let phi = Bound_var.create (Variable.create "ϕ") Name_mode.normal
     in
-    (* Substitute in new variable *)
-    let s, e2 = subst_var_slot vars phi e1 e2 s
-    in
-    (Singleton phi, e1, e2, s)
+    let s = subst_var_slot vars phi e s in
+    (Singleton phi, e, s)
   | Static static ->
-    let static, e1, e2, s =
+    let static, s =
       List.fold_left
-        (fun (pat_acc1, acc1, acc2, s) x ->
-           let pat, e1, e2, s = bound_static_to_core x acc1 acc2 s in
-           (pat_acc1 @ [pat], e1, e2, s))
-        ([], e1, e2, s)
+        (fun (pat_acc, s) x ->
+           let pat, s = bound_static_to_core x s in
+           (pat_acc @ [pat], s))
+        ([], s)
         (Bound_static.to_list static)
     in
-    (Static (Bound_codelike.create static), e1, e2, s)
+    (Static (Bound_codelike.create static), e, s)
 
 let rec flambda_expr_to_core (e: expr) (s : substitutions) :
   core_exp * substitutions =
@@ -147,12 +99,10 @@ and let_to_core (e : Let_expr.t) (s : substitutions) :
       (* The bound variable, [var], is being passed around for checking whether
          if when a [code_id] is bound, it is an anonymous function (i.e. whether
          the prefix starts with [anon-fn]) *)
-      let e1 = Let_expr.defining_expr e |> named_to_core var
-      in
-      let body, s = flambda_expr_to_core body s in
-      let x, e1, e2, s =
-        bound_pattern_to_core var e1 body s
-      in
+      let e1 = Let_expr.defining_expr e |> named_to_core var in
+      let x, e1, s = bound_pattern_to_core var e1 s in
+      let e2, s = flambda_expr_to_core body s in
+      let e2 = apply_subst s e2 in
       (Core_let.create ~x ~e1 ~e2, s))
 
 and named_to_core var (e : Flambda.named) : core_exp =
@@ -274,8 +224,6 @@ and function_params_and_body_to_core
         );
     anon}
 
-(* NOTE: The following FIXME s require accumulating appropriate information in
-   the substitution map. *)
 (* Accumulate substitutions in both the body and the handler, and substitute in
   the bindings for the whole expression. *)
 and let_cont_to_core (e : Let_cont_expr.t) (sub : substitutions) :
@@ -290,31 +238,27 @@ and let_cont_to_core (e : Let_cont_expr.t) (sub : substitutions) :
           cont_handler_to_core
             (Non_recursive_let_cont_handler.handler h) s
         in
-        (* apply substitutions in both body and handler *)
-        let body = apply_subst s body in
         let handler =
           Core_continuation_handler.pattern_match handler
              (fun var handler ->
-                 Core_continuation_handler.create var
-                   (apply_subst s handler))
+                 Core_continuation_handler.create var handler)
         in
         let exp =
           Let_cont (Non_recursive {handler;
             body = body |> Core_letcont_body.create contvar;})
         in
-        (exp, sub))
+        (exp, s))
   | Recursive r ->
     Recursive_let_cont_handlers.pattern_match_bound r
       ~f:
         (fun bound ~invariant_params ~body handler ->
-           (* FIXME *)
            let body, _ = flambda_expr_to_core body sub in
            (Let_cont
              (Recursive
                 (Core_recursive.create bound
                    {continuation_map =
                       Core_continuation_map.create invariant_params
-                        (cont_handlers_to_core handler);
+                        (cont_handlers_to_core handler sub);
                     body}
                 )
              ), sub)
@@ -329,18 +273,16 @@ and cont_handler_to_core
          let handler, s = flambda_expr_to_core handler s in
          (Core_continuation_handler.create var handler, s))
 
-and cont_handlers_to_core (e : Continuation_handlers.t) :
+and cont_handlers_to_core (e : Continuation_handlers.t) (s : substitutions) :
   continuation_handler Continuation.Map.t =
   let e : Continuation_handler.t Continuation.Map.t =
     Continuation_handlers.to_map e in
-  (* FIXME *)
   Continuation.Map.map
     (fun e ->
-       let e, _ = cont_handler_to_core e [] in e) e
+       let e, _ = cont_handler_to_core e s in e) e
 
 and apply_to_core (e : Apply.t) (s : substitutions)
   : core_exp * substitutions =
-  (* FIXME *)
   let e =
     Apply {
       callee = Apply_expr.callee e |> simple_to_core;
@@ -353,7 +295,6 @@ and apply_to_core (e : Apply.t) (s : substitutions)
 
 and apply_cont_to_core (e : Apply_cont.t) (s : substitutions)
   : core_exp * substitutions =
-  (* FIXME *)
   let e =
     Apply_cont {
       k = Named (Literal (Cont (Apply_cont_expr.continuation e)));
@@ -363,14 +304,12 @@ and apply_cont_to_core (e : Apply_cont.t) (s : substitutions)
 
 and switch_to_core (e : Switch.t) (s : substitutions)
   : core_exp * substitutions =
-  (* FIXME *)
   let e =
     Switch {
       scrutinee = Switch_expr.scrutinee e |> simple_to_core;
       arms = Switch_expr.arms e |>
              Targetint_31_63.Map.map
-               (fun x ->
-                   let e, _ = apply_cont_to_core x [] in e)
+               (fun x -> let e, _ = apply_cont_to_core x s in e)
       ;}
   in
   e, s
