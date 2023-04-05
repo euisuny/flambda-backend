@@ -219,7 +219,9 @@ and function_params_and_body_to_core
                   ~exn_continuation:
                     (Bound_for_function.exn_continuation bound)
                   ~params:
-                    (Bound_for_function.params bound))
+                    (Bound_for_function.params bound)
+                  ~my_region:
+                    (Bound_for_function.my_region bound))
               body)
         );
     anon}
@@ -288,7 +290,8 @@ and apply_to_core (e : Apply.t) (s : substitutions)
       callee = Apply_expr.callee e |> simple_to_core;
       continuation = Named (Literal (Res_cont (Apply_expr.continuation e)));
       exn_continuation = Named (Literal (Cont (Apply_expr.exn_continuation e |>
-                          Exn_continuation.exn_handler)));
+                                               Exn_continuation.exn_handler)));
+      region = Named (Literal (Simple (Simple.var (Apply_expr.region e))));
       apply_args = Apply_expr.args e |> List.map simple_to_core }
   in
   e, s

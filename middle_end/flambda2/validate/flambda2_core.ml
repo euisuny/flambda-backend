@@ -123,6 +123,7 @@ and apply_expr =
   { callee: core_exp;
     continuation: core_exp;
     exn_continuation: core_exp;
+    region: core_exp;
     apply_args: core_exp list; }
 
 and apply_cont_expr =
@@ -213,6 +214,12 @@ let must_be_lambda (e : core_exp) : lambda_expr option =
   | Lambda e -> Some e
   | (Named _ | Let _ | Let_cont _ | Apply _ | Apply_cont _ | Switch _
     | Handler _ | Invalid _) -> None
+
+let must_be_handler (e : core_exp) : continuation_handler option =
+  match e with
+  | Handler e -> Some e
+  | (Named _ | Let _ | Let_cont _ | Apply _ | Apply_cont _ | Switch _
+    | Lambda _ | Invalid _) -> None
 
 let must_be_apply (e : core_exp) : apply_expr option =
   match e with
@@ -617,16 +624,18 @@ and apply_renaming_cont_map t renaming : continuation_handler_map =
 
 (* renaming for [Apply] *)
 and apply_renaming_apply
-      { callee; continuation; exn_continuation; apply_args}
+      { callee; continuation; exn_continuation; region; apply_args}
       renaming:
   apply_expr =
   let continuation = apply_renaming continuation renaming in
   let exn_continuation = apply_renaming exn_continuation renaming in
   let callee = apply_renaming callee renaming in
+  let region = apply_renaming region renaming in
   let apply_args =
     List.map (fun x -> apply_renaming x renaming) apply_args in
   { callee = callee; continuation = continuation;
     exn_continuation = exn_continuation;
+    region = region;
     apply_args = apply_args }
 
 (* renaming for [Apply_cont] *)
@@ -949,11 +958,12 @@ and print_handler ppf (t : continuation_handler) =
         print expr_body)
 
 and print_apply ppf
-      ({callee; continuation; exn_continuation; apply_args} : apply_expr) =
-  fprintf ppf "(callee:@[<hov 2>%a@])@ (ret:%a)@ (exn:%a)@ "
+      ({callee; continuation; exn_continuation; region; apply_args} : apply_expr) =
+  fprintf ppf "(callee:@[<hov 2>%a@])@ (ret:%a)@ (exn:%a)@ (reg: %a)"
     print callee
     print continuation
-    print exn_continuation;
+    print exn_continuation
+    print region;
   fprintf ppf " (args:";
   Format.pp_print_list ~pp_sep:Format.pp_print_space print ppf apply_args;
   fprintf ppf ")"
@@ -1161,7 +1171,7 @@ and ids_for_export_cont_map (t : continuation_handler_map) =
 
 (* ids for [Apply] *)
 and ids_for_export_apply
-      { callee; continuation; exn_continuation; apply_args } =
+      { callee; continuation; exn_continuation; region; apply_args } =
   let callee_ids = ids_for_export callee in
   let callee_and_args_ids =
     List.fold_left
@@ -1169,9 +1179,12 @@ and ids_for_export_apply
        callee_ids apply_args in
   let result_continuation_ids = ids_for_export continuation in
   let exn_continuation_ids = ids_for_export exn_continuation in
+  let region_ids = ids_for_export region in
   (Ids_for_export.union
-     callee_and_args_ids
-    (Ids_for_export.union result_continuation_ids exn_continuation_ids))
+     region_ids
+     (Ids_for_export.union
+        callee_and_args_ids
+        (Ids_for_export.union result_continuation_ids exn_continuation_ids)))
 
 (* ids for [Apply_cont] *)
 and ids_for_export_apply_cont { k; args } =
@@ -1321,14 +1334,6 @@ module Core_lambda = struct
     A.pattern_match x ~f:(fun b e -> f b e)
 
   let create = A.create
-  let create_handler_lambda (params : Bound_parameters.t) (e : T0.t) =
-    (* Put a dummy fresh return and exception continuation here *)
-    let return_continuation = Continuation.create () in
-    let exn_continuation = Continuation.create () in
-    let bound =
-      Bound_for_lambda.create ~return_continuation ~exn_continuation ~params
-    in
-    create bound e
 
   let apply_renaming = apply_renaming_lambda
   let ids_for_export = ids_for_export_lambda
@@ -1365,7 +1370,7 @@ end
 
 let lambda_to_handler (e : lambda_expr) : continuation_handler =
   Core_lambda.pattern_match e
-    ~f:(fun {return_continuation=_;exn_continuation=_;params} e ->
+    ~f:(fun {return_continuation=_;exn_continuation=_;params;my_region=_} e ->
       Core_continuation_handler.create params e)
 
 (* Fixpoint combinator for core expressions *)
@@ -1421,11 +1426,12 @@ let handler_fix (f : core_exp -> core_exp)
        (fun param exp -> Core_continuation_handler.create param (f exp)))
 
 let apply_fix (f : core_exp -> core_exp)
-      ({callee; continuation; exn_continuation; apply_args} : apply_expr) =
+      ({callee; continuation; exn_continuation; region; apply_args} : apply_expr) =
   Apply
     {callee = f callee;
      continuation = f continuation;
      exn_continuation = f exn_continuation;
+     region = f region;
      apply_args = List.map f apply_args;}
 
 let apply_cont_fix (f : core_exp -> core_exp)
@@ -1552,3 +1558,66 @@ let literal_contained (literal1 : literal) (literal2 : literal) : bool =
     Code_id.name code1 == Code_id.name code2
   | (Simple _ | Cont _ | Slot (_, (Function_slot _ | Value_slot _))
     | Res_cont (Never_returns | Return _) | Code_id _), _ -> false
+
+let effects_and_coeffects (p : primitive) =
+  match p with
+  | Nullary prim ->
+    Flambda_primitive.effects_and_coeffects_of_nullary_primitive prim
+  | Unary (prim, _) ->
+    Flambda_primitive.effects_and_coeffects_of_unary_primitive prim
+  | Binary (prim, _, _) ->
+    Flambda_primitive.effects_and_coeffects_of_binary_primitive prim
+  | Ternary (prim, _, _, _) ->
+    Flambda_primitive.effects_and_coeffects_of_ternary_primitive prim
+  | Variadic (prim, _) ->
+    Flambda_primitive.effects_and_coeffects_of_variadic_primitive prim
+
+let no_effects (p : primitive) =
+  match effects_and_coeffects p with
+  | No_effects, _, _ -> true
+  | ( (Only_generative_effects _ | Arbitrary_effects),
+      (No_coeffects | Has_coeffects),
+      _ ) ->
+    false
+
+let no_effects (e : core_exp) : bool =
+  match must_be_prim e with
+  | None -> true
+  | Some p -> no_effects p
+
+let can_inline (p : primitive) =
+  match effects_and_coeffects p with
+  | No_effects, No_coeffects, _ -> true
+  | Only_generative_effects _, No_coeffects, _ -> true
+  | ( (No_effects | Only_generative_effects _ | Arbitrary_effects),
+      (No_coeffects | Has_coeffects),
+      _ ) ->
+    false
+
+let can_inline (e : core_exp) : bool =
+  match must_be_prim e with
+  | None -> true
+  | Some p -> can_inline p
+
+let no_effects_or_coeffects (p : primitive) =
+  match effects_and_coeffects p with
+  | No_effects, No_coeffects, _ -> true
+  | ( (No_effects | Only_generative_effects _ | Arbitrary_effects),
+      (No_coeffects | Has_coeffects),
+      _ ) ->
+    false
+
+let no_effects_or_coeffects (e : core_exp) : bool =
+  match must_be_prim e with
+  | None -> true
+  | Some p -> no_effects_or_coeffects p
+
+let returns_unit (p : primitive) : bool =
+  match p with
+  | Ternary _ -> true
+  | (Nullary _ | Unary _ | Binary _ | Variadic _) -> false
+
+let returns_unit (e : core_exp) : bool =
+  match must_be_prim e with
+  | None -> false
+  | Some p -> returns_unit p

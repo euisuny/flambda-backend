@@ -122,6 +122,7 @@ and apply_expr =
   { callee: core_exp;
     continuation: core_exp;
     exn_continuation: core_exp;
+    region: core_exp;
     apply_args: core_exp list; }
 
 and apply_cont_expr =
@@ -157,6 +158,8 @@ val must_be_cont : core_exp -> Continuation.t option
 val must_be_slot : core_exp -> (Variable.t * slot) option
 
 val must_be_lambda : core_exp -> lambda_expr option
+
+val must_be_handler : core_exp -> continuation_handler option
 
 val must_be_apply : core_exp -> apply_expr option
 
@@ -261,7 +264,7 @@ module Core_lambda : sig
 
   val create : Bound_for_lambda.t -> T0.t -> t
 
-  val create_handler_lambda : Bound_parameters.t -> T0.t -> t
+  (* val create_handler_lambda : Bound_parameters.t -> T0.t -> t *)
 
   val pattern_match :
     t -> f:(Bound_for_lambda.t -> T0.t -> 'a) -> 'a
@@ -334,3 +337,9 @@ val static_const_group_fix :
   static_const_group -> core_exp
 
 val literal_contained : literal -> literal -> bool
+
+(* Effects *)
+val no_effects_or_coeffects : core_exp -> bool
+val no_effects : core_exp -> bool
+val can_inline : core_exp -> bool
+val returns_unit : core_exp -> bool

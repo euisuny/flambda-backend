@@ -50,10 +50,11 @@ let rec does_not_occur (v : literal) acc (exp : core_exp) =
               in
               continuation_map &&
               does_not_occur v acc body)))
-  | Apply {callee; continuation; exn_continuation; apply_args}->
+  | Apply {callee; continuation; exn_continuation; region; apply_args}->
     does_not_occur v acc callee &&
     does_not_occur v acc continuation &&
     does_not_occur v acc exn_continuation &&
+    does_not_occur v acc region &&
     List.fold_left
       (fun acc e -> acc && does_not_occur v acc e) true apply_args
   | Apply_cont {k; args} ->
@@ -359,7 +360,7 @@ let rec subst_cont (cont_e1: core_exp) (k: Bound_continuation.t)
   match cont_e1 with
   | Named (Literal (Cont cont | Res_cont (Return cont)))  ->
     if Continuation.equal cont k
-    then Lambda (Core_lambda.create_handler_lambda args cont_e2)
+    then Handler (Core_continuation_handler.create args cont_e2)
     else cont_e1
   | Named (Literal (Simple _ | Slot _ | Res_cont Never_returns | Code_id _)
           | Prim _ | Closure_expr _ | Set_of_closures _ | Static_consts _
@@ -391,8 +392,8 @@ let rec step (e:core_exp) : core_exp =
     step_let let_abst expr_body
   | Let_cont e ->
     step_let_cont e
-  | Apply {callee; continuation; exn_continuation; apply_args} ->
-    step_apply callee continuation exn_continuation apply_args
+  | Apply {callee; continuation; exn_continuation; region; apply_args} ->
+    step_apply callee continuation exn_continuation region apply_args
   | Apply_cont {k ; args} ->
     (* The recursive call for [apply_cont] is done for the arguments *)
     step_apply_cont k args
@@ -408,12 +409,12 @@ let rec step (e:core_exp) : core_exp =
 
 and step_lambda (e : lambda_expr) =
   Core_lambda.pattern_match e
-    ~f:(fun {return_continuation; exn_continuation; params} e ->
+    ~f:(fun {return_continuation; exn_continuation; params; my_region} e ->
       let e = step e
       in
       Lambda
         (Core_lambda.create
-            {return_continuation;exn_continuation;params}
+           {return_continuation;exn_continuation;params;my_region}
             e))
 
 and step_handler (e : continuation_handler) =
@@ -458,8 +459,21 @@ and step_let let_abst body : core_exp =
       | None -> x, step e1)
     in
     (* [Let-β]
-        let x = v in e1 ⟶ e2 [x\v] *)
-    subst_pattern ~bound:x ~let_body:e1 e2 |> step)
+       let x = v in e1 ⟶ e2 [x\v] *)
+    if can_inline e1 then
+      (subst_pattern ~bound:x ~let_body:e1 e2 |> step)
+    else
+      (let e2 =
+         (if returns_unit e1 then
+            let e2 =
+              subst_pattern ~bound:x
+                ~let_body:(Named (Literal (Simple
+                (Simple.const Int_ids.Const.const_zero)))) e2
+            in
+            e2
+          else e2) |> step
+       in
+       Core_let.create ~x ~e1 ~e2))
 
 and handler_map_to_closures (phi : Variable.t) (v : Bound_parameter.t list)
       (m : continuation_handler_map) : set_of_closures =
@@ -557,12 +571,13 @@ and step_fun_decls (decls : function_declarations) =
            ~f:(fun
                 {return_continuation;
                  exn_continuation;
-                 params}
+                 params;
+                 my_region}
                 e ->
                 let default =
                   Lambda
                     (Core_lambda.create
-                    {return_continuation;exn_continuation;params}
+                       {return_continuation;exn_continuation;params;my_region}
                     e)
                 in
                 match must_be_apply e with
@@ -570,6 +585,7 @@ and step_fun_decls (decls : function_declarations) =
                     {callee;
                       continuation = continuation';
                       exn_continuation = exn_continuation';
+                      region = _;
                       apply_args} ->
                   (* callee is to itself *)
                   (match must_be_slot callee,
@@ -598,9 +614,9 @@ and step_fun_decls (decls : function_declarations) =
        | None -> x
     ) decls
 
-and step_apply_no_beta_redex callee continuation exn_continuation apply_args =
+and step_apply_no_beta_redex callee continuation exn_continuation region apply_args =
   let default =
-    Apply {callee;continuation;exn_continuation;apply_args}
+    Apply {callee;continuation;exn_continuation;region;apply_args}
   in
   match callee with
   | Named (Closure_expr (phi, slot, {function_decls; value_slots})) ->
@@ -622,19 +638,19 @@ and step_apply_no_beta_redex callee continuation exn_continuation apply_args =
     default
 
 and step_apply_function_decls phi slot function_decls
-      callee continuation exn_continuation apply_args =
+      callee continuation exn_continuation region apply_args =
   match Function_slot.Lmap.find_opt slot function_decls with
   | Some (Lambda exp) ->
     if does_not_occur (Simple (Simple.var phi)) true (Lambda exp) then
-      step_apply_lambda exp continuation exn_continuation apply_args
+      step_apply_lambda exp continuation exn_continuation region apply_args
     else
-      step_apply_no_beta_redex callee continuation exn_continuation apply_args
+      step_apply_no_beta_redex callee continuation exn_continuation region apply_args
   | (Some (
     (Named _ | Let _ | Let_cont _ | Apply _ | Apply_cont _ | Switch _
     | Handler _ | Invalid _)) | None) ->
-    step_apply_no_beta_redex callee continuation exn_continuation apply_args
+    step_apply_no_beta_redex callee continuation exn_continuation region apply_args
 
-and step_apply_lambda lambda_expr continuation exn_continuation apply_args =
+and step_apply_lambda lambda_expr continuation exn_continuation region apply_args =
   Core_lambda.pattern_match lambda_expr
     ~f:(fun bound exp ->
         let params = bound.params in
@@ -648,29 +664,34 @@ and step_apply_lambda lambda_expr continuation exn_continuation apply_args =
                  else if Continuation.equal k bound.exn_continuation
                  then exn_continuation
                  else (Named (Literal l))
-               | (Simple _ | Res_cont Never_returns | Slot _ | Code_id _) ->
+               | Simple s ->
+                 if (Simple.same (Simple.var bound.my_region) s)
+                 then region
+                 else (Named (Literal l))
+               | (Res_cont Never_returns | Slot _ | Code_id _) ->
                  Named (Literal l)
             ) () exp
         in
         subst_params params exp apply_args |> step)
 
-and step_apply callee continuation exn_continuation apply_args : core_exp =
+and step_apply callee continuation exn_continuation region apply_args : core_exp =
   let callee = step callee in
   let continuation = step continuation in
   let exn_continuation = step exn_continuation in
+  let region = step region in
   let apply_args = List.map step apply_args in
   match callee with
   | Named (Closure_expr (phi, slot,
                          {function_decls; value_slots = _})) ->
     step_apply_function_decls phi slot function_decls
-      callee continuation exn_continuation apply_args
+      callee continuation exn_continuation region apply_args
   | Lambda expr ->
-    step_apply_lambda expr continuation exn_continuation apply_args
+    step_apply_lambda expr continuation exn_continuation region apply_args
   | (Named (Static_consts ((Code _ | Deleted_code | Static_const _)::_ | [])
            | Literal _ | Prim _ | Set_of_closures _
            | Rec_info _)
      | Handler _ | Let _ | Let_cont _ | Apply _ | Apply_cont _ | Switch _ | Invalid _) ->
-    step_apply_no_beta_redex callee continuation exn_continuation apply_args
+    step_apply_no_beta_redex callee continuation exn_continuation region apply_args
 
 and _step_continuation_handler (e : continuation_handler) =
   Core_continuation_handler.pattern_match e
@@ -685,9 +706,8 @@ and step_apply_cont k args : core_exp =
       --------------------------
      k args ⟶ k args'       *)
   let args = List.map step args in
-  match must_be_lambda k with
-  | Some lambda ->
-    let handler = lambda_to_handler lambda in
+  match must_be_handler k with
+  | Some handler ->
     Core_continuation_handler.pattern_match handler
       (fun params e -> subst_params params e args) |> step
   | None -> Apply_cont {k; args}

@@ -535,3 +535,18 @@ val ids_for_export_binary_primitive: binary_primitive -> Ids_for_export.t
 val ids_for_export_ternary_primitive: ternary_primitive -> Ids_for_export.t
 
 val ids_for_export_variadic_primitive: variadic_primitive -> Ids_for_export.t
+
+val effects_and_coeffects_of_nullary_primitive :
+  nullary_primitive -> Effects_and_coeffects.t
+
+val effects_and_coeffects_of_unary_primitive :
+  unary_primitive -> Effects_and_coeffects.t
+
+val effects_and_coeffects_of_binary_primitive :
+  binary_primitive -> Effects_and_coeffects.t
+
+val effects_and_coeffects_of_ternary_primitive :
+  ternary_primitive -> Effects_and_coeffects.t
+
+val effects_and_coeffects_of_variadic_primitive :
+  variadic_primitive -> Effects_and_coeffects.t
