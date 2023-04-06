@@ -167,8 +167,10 @@ let lambda_to_cmm ~ppf_dump:ppf ~prefixname ~filename ~keep_symbol_tables
         (* Run the validator *)
         (if !Flambda_backend_flags.validate
          then
-           (Normalize.comp_unit := compilation_unit;
-            validate filename raw_flambda flambda)
+           (try (Normalize.comp_unit := compilation_unit;
+            validate filename raw_flambda flambda) with
+            | _ -> Format.eprintf "fλ2: %s FAIL [ERROR]@." filename
+         )
          else ());
         (if Flambda_features.inlining_report ()
         then

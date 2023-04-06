@@ -1243,8 +1243,8 @@ let eval_variadic (v : P.variadic_primitive) (args : core_exp list) : named =
   | Make_block (Naked_floats,
                 (Mutable | Immutable | Immutable_unique), _) ->
     Prim (Variadic (v, args))
-  | Make_array _ ->
-    Misc.fatal_error "[Primitive eval]: eval_variadic_make_array_unspported"
+  | Make_array _ -> Prim (Variadic (v, args))
+    (* Misc.fatal_error "[Primitive eval]: eval_variadic_make_array_unspported" *)
 
 let rec eval (v : primitive) : core_exp =
   let f_arg (arg : core_exp) =
