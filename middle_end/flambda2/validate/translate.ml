@@ -3,7 +3,8 @@ open! Flambda2_core
 
 module P = Flambda_primitive
 
-type substitutions = (Simple.t * core_exp) list
+module Sub = Map.Make (Simple)
+type substitutions = core_exp Sub.t
 
 (** Translation from flambda2 terms to simplified core language **)
 let simple_to_core (v : Simple.t) : core_exp =
@@ -18,7 +19,7 @@ let apply_subst (s : substitutions) (e : core_exp) : core_exp =
   core_fmap (fun () v ->
     match v with
     | Simple v ->
-      (match List.assoc_opt v s with
+      (match Sub.find_opt v s with
        | Some exp -> exp
        | None -> Expr.create_named (Literal (Simple v)))
     | (Cont _ | Res_cont _ | Slot _ | Code_id _) -> Expr.create_named (Literal v))
@@ -33,8 +34,8 @@ let subst_var_slot
     in
     List.fold_left
       (fun s(var, (slot, _)) ->
-         ((Simple.var (Bound_var.var var),
-          Expr.create_named (Literal (Slot (Bound_var.var phi, Function_slot slot))))::s)) s
+         (Sub.add (Simple.var (Bound_var.var var))
+          (Expr.create_named (Literal (Slot (Bound_var.var phi, Function_slot slot)))) s)) s
       (List.combine vars in_order)
   | (Named (Literal _ | Prim _ | Closure_expr _ | Static_consts _ | Rec_info _) |
      Let _ | Let_cont _ | Apply _ | Apply_cont _ | Lambda _ | Handler _ | Switch _
@@ -47,15 +48,15 @@ let subst_static_slot
   let bound = Function_slot.Lmap.bindings bound in
   List.fold_left
     (fun s (slot, sym) ->
-      ((Simple.symbol sym,
-        Expr.create_named (Literal (Slot (Bound_var.var phi, Function_slot slot))))::s)) s bound
+      (Sub.add (Simple.symbol sym)
+        (Expr.create_named (Literal (Slot (Bound_var.var phi, Function_slot slot)))) s)) s bound
 
 let bound_static_to_core (t : Bound_static.Pattern.t) (s : substitutions) :
   Bound_codelike.Pattern.t * substitutions =
   match t with
   | Set_of_closures bound ->
     let phi = Bound_var.create (Variable.create "ϕ") Name_mode.normal in
-    (* Substitute in new variable *)
+    (* substitutionsstitute in new variable *)
     let s = subst_static_slot bound phi s in
     (Bound_codelike.Pattern.set_of_closures phi, s)
   | Code v -> (Bound_codelike.Pattern.code v, s)
@@ -212,7 +213,7 @@ and function_params_and_body_to_core
         ~f:(fun (bound: Bound_for_function.t) ~body ->
           let my_closure = Bound_for_function.my_closure bound
           in
-          let body, _ = flambda_expr_to_core body [] in
+          let body, _ = flambda_expr_to_core body Sub.empty in
           Core_function_params_and_body.create
             (Bound_var.create my_closure Name_mode.normal)
             (Core_lambda.create
@@ -318,4 +319,4 @@ and switch_to_core (e : Switch.t) (s : substitutions)
   e, s
 
 let flambda_unit_to_core e : core_exp =
-  let e, _ = flambda_expr_to_core (Flambda_unit.body e) [] in e
+  let e, _ = flambda_expr_to_core (Flambda_unit.body e) Sub.empty in e

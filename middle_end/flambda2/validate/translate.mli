@@ -14,7 +14,7 @@ open! Flambda2_core
     By using this translation, we can allow for more liberal β - reductions in
     while normalizing [core_exp] terms. **)
 
-type substitutions = (Simple.t * core_exp) list
+type substitutions
 
 val simple_to_core : Simple.t -> core_exp
 
