@@ -7,10 +7,12 @@ type substitutions = (Simple.t * core_exp) list
 
 (** Translation from flambda2 terms to simplified core language **)
 let simple_to_core (v : Simple.t) : core_exp =
-  Named (Literal (Simple (Simple.without_coercion v)))
+  Expr.create_named
+    (Literal (Simple (Simple.without_coercion v)))
 
 let tagged_immediate_to_core (e : Targetint_31_63.t) : core_exp =
-  Named (Literal (Simple (Simple.const (Int_ids.Const.tagged_immediate e))))
+  Expr.create_named
+     (Literal (Simple (Simple.const (Int_ids.Const.tagged_immediate e))))
 
 let apply_subst (s : substitutions) (e : core_exp) : core_exp =
   core_fmap (fun () v ->
@@ -18,21 +20,21 @@ let apply_subst (s : substitutions) (e : core_exp) : core_exp =
     | Simple v ->
       (match List.assoc_opt v s with
        | Some exp -> exp
-       | None -> Named (Literal (Simple v)))
-    | (Cont _ | Res_cont _ | Slot _ | Code_id _) -> Named (Literal v))
+       | None -> Expr.create_named (Literal (Simple v)))
+    | (Cont _ | Res_cont _ | Slot _ | Code_id _) -> Expr.create_named (Literal v))
     () e
 
 let subst_var_slot
       (vars : Bound_var.t list) (phi : Bound_var.t)
       (e : core_exp) (s : substitutions) =
-  match e with
+  match descr e with
   | Named (Set_of_closures {function_decls ; value_slots = _}) ->
     let in_order = Function_slot.Lmap.bindings function_decls
     in
     List.fold_left
       (fun s(var, (slot, _)) ->
          ((Simple.var (Bound_var.var var),
-          Named (Literal (Slot (Bound_var.var phi, Function_slot slot))))::s)) s
+          Expr.create_named (Literal (Slot (Bound_var.var phi, Function_slot slot))))::s)) s
       (List.combine vars in_order)
   | (Named (Literal _ | Prim _ | Closure_expr _ | Static_consts _ | Rec_info _) |
      Let _ | Let_cont _ | Apply _ | Apply_cont _ | Lambda _ | Handler _ | Switch _
@@ -46,7 +48,7 @@ let subst_static_slot
   List.fold_left
     (fun s (slot, sym) ->
       ((Simple.symbol sym,
-        Named (Literal (Slot (Bound_var.var phi, Function_slot slot))))::s)) s bound
+        Expr.create_named (Literal (Slot (Bound_var.var phi, Function_slot slot))))::s)) s bound
 
 let bound_static_to_core (t : Bound_static.Pattern.t) (s : substitutions) :
   Bound_codelike.Pattern.t * substitutions =
@@ -81,14 +83,15 @@ let bound_pattern_to_core (t : Bound_pattern.t) (e : core_exp) (s : substitution
 
 let rec flambda_expr_to_core (e: expr) (s : substitutions) :
   core_exp * substitutions =
-  let e = Expr.descr e in
+  let e = Flambda.Expr.descr e in
   match e with
   | Flambda.Let t -> let_to_core t s
   | Flambda.Let_cont t -> let_cont_to_core t s
   | Flambda.Apply t -> apply_to_core t s
   | Flambda.Apply_cont t -> apply_cont_to_core t s
   | Flambda.Switch t -> switch_to_core t s
-  | Flambda.Invalid { message = t } -> (Invalid { message = t }, s)
+  | Flambda.Invalid { message = t } ->
+    (Expr.create_invalid t, s)
 
 (* N.B. There is a new binder for [set_of_closures] in the core expression
    language. *)
@@ -106,7 +109,7 @@ and let_to_core (e : Let_expr.t) (s : substitutions) :
       (Core_let.create ~x ~e1 ~e2, s))
 
 and named_to_core var (e : Flambda.named) : core_exp =
-  Named (
+  Expr.create_named (
     match e with
     | Simple e -> Literal (Simple e)
     | Prim (t, _) -> Prim (prim_to_core t)
@@ -124,26 +127,26 @@ and set_of_closures_to_core (e : Set_of_closures.t) : set_of_closures =
 
 and function_declarations_to_core (e : Function_declarations.t) : function_declarations =
   Function_declarations.funs_in_order e |>
-  Function_slot.Lmap.map (fun x -> Named (Literal (Code_id x)))
+  Function_slot.Lmap.map (fun x -> Expr.create_named (Literal (Code_id x)))
 
 and value_slots_to_core
       (e : (Simple.t) Value_slot.Map.t) : core_exp Value_slot.Map.t =
-    Value_slot.Map.map (fun x -> Named (Literal (Simple (Simple.without_coercion x)))) e
+    Value_slot.Map.map (fun x -> Expr.create_named (Literal (Simple (Simple.without_coercion x)))) e
 
 and prim_to_core (e : P.t) : primitive =
   match e with
   | Nullary v -> Nullary v
   | Unary (prim, arg) ->
-    Unary (prim, Named (Literal (Simple arg)))
+    Unary (prim, Expr.create_named (Literal (Simple arg)))
   | Binary (prim, arg1, arg2) ->
-    Binary (prim, Named (Literal (Simple arg1)), Named (Literal (Simple arg2)))
+    Binary (prim, Expr.create_named (Literal (Simple arg1)), Expr.create_named (Literal (Simple arg2)))
   | Ternary (prim, arg1, arg2, arg3) ->
-    Ternary (prim, Named (Literal (Simple arg1)),
-             Named (Literal (Simple arg2)),
-             Named (Literal (Simple arg3)))
+    Ternary (prim, Expr.create_named (Literal (Simple arg1)),
+             Expr.create_named (Literal (Simple arg2)),
+             Expr.create_named (Literal (Simple arg3)))
   | Variadic (prim, args) ->
     Variadic (prim,
-              List.map (fun x -> Named (Literal (Simple x))) args)
+              List.map (fun x -> Expr.create_named (Literal (Simple x))) args)
 
 and static_consts_to_core var (e : Flambda.static_const_group) :
   Flambda2_core.static_const_group =
@@ -187,10 +190,10 @@ and static_const_to_core (e : Static_const.t) : Flambda2_core.static_const =
 and field_of_static_block_to_core (e : Field_of_static_block.t) : core_exp =
   match e with
   | Symbol e ->
-    Named (Literal (Simple (Simple.symbol e)))
+    Expr.create_named (Literal (Simple (Simple.symbol e)))
   | Tagged_immediate e -> tagged_immediate_to_core e
   | Dynamically_computed (var, _) ->
-    Named (Literal (Simple (Simple.var var)))
+    Expr.create_named (Literal (Simple (Simple.var var)))
 
 and function_params_and_body_to_core
       (var : Bound_static.Pattern.t)
@@ -245,25 +248,22 @@ and let_cont_to_core (e : Let_cont_expr.t) (sub : substitutions) :
              (fun var handler ->
                  Core_continuation_handler.create var handler)
         in
-        let exp =
-          Let_cont (Non_recursive {handler;
-            body = body |> Core_letcont_body.create contvar;})
-        in
+        let body = Core_letcont_body.create contvar body in
+        let exp = Core_letcont.create_non_recursive handler ~body in
         (exp, s))
   | Recursive r ->
     Recursive_let_cont_handlers.pattern_match_bound r
       ~f:
         (fun bound ~invariant_params ~body handler ->
            let body, _ = flambda_expr_to_core body sub in
-           (Let_cont
-             (Recursive
-                (Core_recursive.create bound
-                   {continuation_map =
-                      Core_continuation_map.create invariant_params
-                        (cont_handlers_to_core handler sub);
-                    body}
-                )
-             ), sub)
+           let body =
+             {continuation_map =
+                Core_continuation_map.create invariant_params
+                  (cont_handlers_to_core handler sub);
+              body}
+           in
+           let exp = Core_letcont.create_recursive bound body in
+           (exp, sub)
         )
 
 and cont_handler_to_core
@@ -286,12 +286,12 @@ and cont_handlers_to_core (e : Continuation_handlers.t) (s : substitutions) :
 and apply_to_core (e : Apply.t) (s : substitutions)
   : core_exp * substitutions =
   let e =
-    Apply {
+    Expr.create_apply {
       callee = Apply_expr.callee e |> simple_to_core;
-      continuation = Named (Literal (Res_cont (Apply_expr.continuation e)));
-      exn_continuation = Named (Literal (Cont (Apply_expr.exn_continuation e |>
+      continuation = Expr.create_named (Literal (Res_cont (Apply_expr.continuation e)));
+      exn_continuation = Expr.create_named (Literal (Cont (Apply_expr.exn_continuation e |>
                                                Exn_continuation.exn_handler)));
-      region = Named (Literal (Simple (Simple.var (Apply_expr.region e))));
+      region = Expr.create_named (Literal (Simple (Simple.var (Apply_expr.region e))));
       apply_args = Apply_expr.args e |> List.map simple_to_core }
   in
   e, s
@@ -299,8 +299,8 @@ and apply_to_core (e : Apply.t) (s : substitutions)
 and apply_cont_to_core (e : Apply_cont.t) (s : substitutions)
   : core_exp * substitutions =
   let e =
-    Apply_cont {
-      k = Named (Literal (Cont (Apply_cont_expr.continuation e)));
+    Expr.create_apply_cont {
+      k = Expr.create_named (Literal (Cont (Apply_cont_expr.continuation e)));
       args = Apply_cont_expr.args e |> List.map simple_to_core;}
   in
   e, s
@@ -308,7 +308,7 @@ and apply_cont_to_core (e : Apply_cont.t) (s : substitutions)
 and switch_to_core (e : Switch.t) (s : substitutions)
   : core_exp * substitutions =
   let e =
-    Switch {
+    Expr.create_switch {
       scrutinee = Switch_expr.scrutinee e |> simple_to_core;
       arms = Switch_expr.arms e |>
              Targetint_31_63.Map.map

@@ -168,7 +168,8 @@ let eval_string_length (sb : Flambda_primitive.string_or_bytes) (arg : core_exp)
           | Immutable_string string ->
             let length = String.length string |> Targetint_31_63.of_int in
             let const = Simple.const (Int_ids.Const.const_int length) in
-            Prim (Unary (Untag_immediate, Named (Literal (Simple const))))
+            Prim (Unary (Untag_immediate,
+                         Expr.create_named (Literal (Simple const))))
           | Static_set_of_closures _ | Block _
           | Boxed_float _ | Boxed_int32 _ | Boxed_int64 _
           | Boxed_nativeint _
@@ -181,7 +182,8 @@ let eval_string_length (sb : Flambda_primitive.string_or_bytes) (arg : core_exp)
     | (Some [] | Some (_::_) | None) -> default)
 
 let eval_unbox_number (n : Flambda_kind.Boxable_number.t) (arg : core_exp) : core_exp =
-  let default = Named (Prim (Unary (Unbox_number n, arg))) in
+  let default = Expr.create_named
+                  (Prim (Unary (Unbox_number n, arg))) in
   match must_be_prim arg with
   | Some prim ->
     (match n, prim with
@@ -205,30 +207,32 @@ let eval_unbox_number (n : Flambda_kind.Boxable_number.t) (arg : core_exp) : cor
   | None ->
     (match must_be_static_consts arg with
      | Some [(Static_const (Boxed_int32 (Const i)))] ->
-       Named (Literal (Simple (Simple.const (Int_ids.Const.naked_int32 i))))
+       Expr.create_named
+         (Literal (Simple (Simple.const (Int_ids.Const.naked_int32 i))))
      | Some [(Static_const (Boxed_int64 (Const i)))] ->
-       Named (Literal (Simple (Simple.const (Int_ids.Const.naked_int64 i))))
+       Expr.create_named
+         (Literal (Simple (Simple.const (Int_ids.Const.naked_int64 i))))
      | Some [(Static_const (Boxed_float (Const i)))] ->
-       Named (Literal (Simple (Simple.const (Int_ids.Const.naked_float i))))
+       Expr.create_named (Literal (Simple (Simple.const (Int_ids.Const.naked_float i))))
      | Some [(Static_const (Boxed_nativeint (Const i)))] ->
-       Named (Literal (Simple (Simple.const (Int_ids.Const.naked_nativeint i))))
+       Expr.create_named (Literal (Simple (Simple.const (Int_ids.Const.naked_nativeint i))))
      | (Some _ | None) -> default)[@ocaml.warning "-4"]
 
 let eval_unary (v : P.unary_primitive) (arg : core_exp) : core_exp =
-  let default = Named (Prim (Unary (v, arg))) in
+  let default = Expr.create_named (Prim (Unary (v, arg))) in
   match v with
   (* [Project_function_slot] and [Project_value_slot] is resolved during
      instantiating closures in the normalization process *)
   | Project_value_slot _ | Project_function_slot _ -> default
   | Unbox_number n -> eval_unbox_number n arg
   | Box_number (Naked_float, _) ->
-    Named (eval_box_number_naked_float v arg)
+    Expr.create_named (eval_box_number_naked_float v arg)
   | Box_number ((Naked_int32 | Naked_int64 | Naked_nativeint), _) ->
     default
   | Int_arith (kind, op) ->
     (match must_be_simple arg with
      | Some s1 ->
-       Named ((match kind with
+       Expr.create_named ((match kind with
          | Tagged_immediate -> Unary_int_arith_tagged_immediate.simplify op
          | Naked_immediate -> Unary_int_arith_naked_immediate.simplify op
          | Naked_int32 -> Unary_int_arith_naked_int32.simplify op
@@ -239,7 +243,7 @@ let eval_unary (v : P.unary_primitive) (arg : core_exp) : core_exp =
   | Num_conv { src; dst } ->
     (match must_be_simple arg with
      | Some s1 ->
-       Named ((match src with
+       Expr.create_named ((match src with
         | Tagged_immediate -> Simplify_int_conv_tagged_immediate.simplify ~dst
         | Naked_immediate -> Simplify_int_conv_naked_immediate.simplify ~dst
         | Naked_float -> Simplify_int_conv_naked_float.simplify ~dst
@@ -251,14 +255,14 @@ let eval_unary (v : P.unary_primitive) (arg : core_exp) : core_exp =
   | Float_arith op ->
     (match must_be_simple arg with
      | Some s1 ->
-       Named (eval_float_arith_op op (Prim (Unary (v, arg))) s1)
+       Expr.create_named (eval_float_arith_op op (Prim (Unary (v, arg))) s1)
      | None -> default)
   | Tag_immediate ->
     (match must_be_untagged_immediate arg with
-     | Some a -> Named a
+     | Some a -> Expr.create_named a
      | None -> default)
-  | Untag_immediate -> Named (eval_untag_immediate arg)
-  | String_length sb -> Named (eval_string_length sb arg)
+  | Untag_immediate -> Expr.create_named (eval_untag_immediate arg)
+  | String_length sb -> Expr.create_named (eval_string_length sb arg)
   | ( Get_tag | Array_length | Int_as_pointer | Boolean_not
     | Reinterpret_int64_as_float
     | Is_boxed_float | Is_flat_float_array | Begin_try_region
@@ -280,7 +284,7 @@ let simple_tagged_immediate ~(const : Simple.t) : Targetint_31_63.t option =
 
 let eval_block_load v (arg1 : named) (arg2 : Simple.t) =
   let default =
-    Named (Prim (Binary (v, Named arg1, Named (Literal (Simple arg2)))))
+    Expr.create_named (Prim (Binary (v, Expr.create_named arg1, Expr.create_named (Literal (Simple arg2)))))
   in
   (* [arg1] is the block, and [arg2] is the index *)
   match arg1, arg2 with
@@ -308,7 +312,7 @@ let eval_block_load v (arg1 : named) (arg2 : Simple.t) =
         match index with (* TODO: Match on the tags and size? *)
         | Some i ->
           (match List.nth blocks (Targetint_31_63.to_int i) |> must_be_named with
-          | Some n -> Named n
+          | Some n -> Expr.create_named n
           | None -> default)
         | None -> default)
     else default
@@ -322,7 +326,7 @@ let eval_block_load v (arg1 : named) (arg2 : Simple.t) =
 let eval_block_load v (arg1 : core_exp) (arg2 : core_exp) =
   match must_be_named arg1, must_be_simple arg2 with
   | Some arg1, Some arg2 -> eval_block_load v arg1 arg2
-  | (Some _ | None), _ -> Named (Prim (Binary (v, arg1, arg2)))
+  | (Some _ | None), _ -> Expr.create_named (Prim (Binary (v, arg1, arg2)))
 
 type 'a binary_arith_outcome_for_one_side_only =
   | Exactly of 'a
@@ -1134,9 +1138,9 @@ let eval_phys_equal (op : P.equality_comparison) original_term arg1 arg2 =
   match equal, op with
   | None, _ -> original_term
   | Some equal, Eq ->
-    Named (Literal (Simple (Simple.untagged_const_bool equal)))
+    Expr.create_named (Literal (Simple (Simple.untagged_const_bool equal)))
   | Some equal, Neq ->
-    Named (Literal (Simple (Simple.untagged_const_bool (not equal))))
+    Expr.create_named (Literal (Simple (Simple.untagged_const_bool (not equal))))
 
 (* Trying to see if we can get the evaluation without having information from
    the typing environment... *)
@@ -1146,59 +1150,59 @@ let eval_binary
   | Phys_equal op ->
     (match must_be_simple arg1, must_be_simple arg2 with
      | Some s1, Some s2 ->
-       eval_phys_equal op (Named (Prim (Binary (v, arg1, arg2)))) s1 s2
-     | (Some _ | None), _ -> Named (Prim (Binary (v, arg1, arg2))))
+       eval_phys_equal op (Expr.create_named (Prim (Binary (v, arg1, arg2)))) s1 s2
+     | (Some _ | None), _ -> Expr.create_named (Prim (Binary (v, arg1, arg2))))
   | Int_arith (kind, op) ->
     (match must_be_simple arg1, must_be_simple_or_immediate arg2 with
       | Some s1, Some s2 ->
-          Named ((match kind with
+          Expr.create_named ((match kind with
           | Tagged_immediate -> Binary_int_arith_tagged_immediate.simplify op
           | Naked_immediate -> Binary_int_arith_naked_immediate.simplify op
           | Naked_int32 -> Binary_int_arith_int32.simplify op
           | Naked_int64 -> Binary_int_arith_int64.simplify op
           | Naked_nativeint -> Binary_int_arith_nativeint.simplify op)
                     (Prim (Binary (v, arg1, arg2))) ~arg1:s1 ~arg2:s2)
-      | (Some _ | None), _ -> Named (Prim (Binary (v, arg1, arg2))))
+      | (Some _ | None), _ -> Expr.create_named (Prim (Binary (v, arg1, arg2))))
   | Int_shift (kind, op) ->
     (match must_be_simple arg1, must_be_simple_or_immediate arg2 with
       | Some s1, Some s2 ->
-        Named ((match kind with
+        Expr.create_named ((match kind with
           | Tagged_immediate -> Binary_int_shift_tagged_immediate.simplify op
           | Naked_immediate -> Binary_int_shift_naked_immediate.simplify op
           | Naked_int32 -> Binary_int_shift_int32.simplify op
           | Naked_int64 -> Binary_int_shift_int64.simplify op
           | Naked_nativeint -> Binary_int_shift_nativeint.simplify op)
                   (Prim (Binary (v, arg1, arg2))) ~arg1:s1 ~arg2:s2)
-      | (Some _ | None), _ -> Named (Prim (Binary (v, arg1, arg2))))
+      | (Some _ | None), _ -> Expr.create_named (Prim (Binary (v, arg1, arg2))))
   | Int_comp (kind, op) ->
     (match must_be_simple arg1, must_be_simple arg2 with
      | Some s1, Some s2 ->
-       Named ((match kind with
+       Expr.create_named ((match kind with
          | Tagged_immediate -> Binary_int_comp_tagged_immediate.simplify op
          | Naked_immediate -> Binary_int_comp_naked_immediate.simplify op
          | Naked_int32 -> Binary_int_comp_int32.simplify op
          | Naked_int64 -> Binary_int_comp_int64.simplify op
          | Naked_nativeint -> Binary_int_comp_nativeint.simplify op)
                 (Prim (Binary (v, arg1, arg2))) ~arg1:s1 ~arg2:s2)
-     | (Some _ | None), _ -> Named (Prim (Binary (v, arg1, arg2))))
+     | (Some _ | None), _ -> Expr.create_named (Prim (Binary (v, arg1, arg2))))
   | Float_arith op ->
     (match must_be_simple arg1, must_be_simple arg2 with
      | Some s1, Some s2 ->
-       Named (Binary_float_arith.simplify op
+       Expr.create_named (Binary_float_arith.simplify op
                 (Prim (Binary (v, arg1, arg2))) ~arg1:s1 ~arg2:s2)
-     | (Some _ | None), _ -> Named (Prim (Binary (v, arg1, arg2))))
+     | (Some _ | None), _ -> Expr.create_named (Prim (Binary (v, arg1, arg2))))
   | Float_comp op ->
     (match must_be_simple arg1, must_be_simple arg2 with
      | Some s1, Some s2 ->
-       Named (Binary_float_comp.simplify op
+       Expr.create_named (Binary_float_comp.simplify op
                 (Prim (Binary (v, arg1, arg2))) ~arg1:s1 ~arg2:s2)
-     | (Some _ | None), _ -> Named (Prim (Binary (v, arg1, arg2))))
+     | (Some _ | None), _ -> Expr.create_named (Prim (Binary (v, arg1, arg2))))
   | Block_load (Values _, (Mutable | Immutable | Immutable_unique)) ->
     eval_block_load v arg1 arg2
   | Block_load (Naked_floats _, (Mutable | Immutable | Immutable_unique))
   | Array_load (_,_)
   | String_or_bigstring_load (_,_)
-  | Bigarray_load (_,_,_) -> Named (Prim (Binary (v, arg1, arg2)))
+  | Bigarray_load (_,_,_) -> Expr.create_named (Prim (Binary (v, arg1, arg2)))
 
 let eval_ternary (v : P.ternary_primitive)
       (arg1 : core_exp) (arg2 : core_exp) (arg3 : core_exp) : named =
@@ -1244,7 +1248,7 @@ let eval_variadic (v : P.variadic_primitive) (args : core_exp list) : named =
 
 let rec eval (v : primitive) : core_exp =
   let f_arg (arg : core_exp) =
-    (match arg with
+    (match descr arg with
      | Named (Prim arg) -> eval arg
     | (Named (Literal _ | Closure_expr _ | Set_of_closures _ |
               Static_consts _ | Rec_info _ )
@@ -1252,15 +1256,15 @@ let rec eval (v : primitive) : core_exp =
       | Handler _ | Invalid _) -> arg)
   in
   match v with
-  | Nullary v -> Named (eval_nullary v)
+  | Nullary v -> Expr.create_named (eval_nullary v)
   | Unary (v, arg) ->
     eval_unary v (f_arg arg)
   | Binary (op, arg1, arg2) ->
     eval_binary op (f_arg arg1) (f_arg arg2)
   | Ternary (v, arg1, arg2, arg3) ->
-    Named (eval_ternary v (f_arg arg1) (f_arg arg2) (f_arg arg3))
+    Expr.create_named (eval_ternary v (f_arg arg1) (f_arg arg2) (f_arg arg3))
   | Variadic (v, args) ->
     let args =
       List.map f_arg args
     in
-    Named (eval_variadic v args)
+    Expr.create_named (eval_variadic v args)

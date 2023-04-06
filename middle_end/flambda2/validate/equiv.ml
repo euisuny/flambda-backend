@@ -107,14 +107,14 @@ let equiv_names env name1 name2 : eq =
         Name.pattern_match name2
           ~var:(fun _ ->
             unequal
-              (Named (Literal (Simple (Simple.name name1))))
-              (Named (Literal (Simple (Simple.name name2)))))
+              (Expr.create_named (Literal (Simple (Simple.name name1))))
+              (Expr.create_named (Literal (Simple (Simple.name name2)))))
           ~symbol:(fun symbol2 -> equiv_symbols env symbol1 symbol2))
   in
   if result then result
   else unequal
-         (Named (Literal (Simple (Simple.name name1))))
-         (Named (Literal (Simple (Simple.name name2))))
+         (Expr.create_named (Literal (Simple (Simple.name name1))))
+         (Expr.create_named (Literal (Simple (Simple.name name2))))
 
 let equiv_value_slots env value_slot1 value_slot2 : eq =
   match Env.find_value_slot env value_slot1 with
@@ -124,12 +124,12 @@ let equiv_value_slots env value_slot1 value_slot2 : eq =
       match Env.find_value_slot_rev env value_slot2 with
       | Some _ ->
         unequal
-          (Named (Literal (Slot (Variable.create "", Value_slot value_slot1))))
-          (Named (Literal (Slot (Variable.create "", Value_slot value_slot2))))
+          (Expr.create_named (Literal (Slot (Variable.create "", Value_slot value_slot1))))
+          (Expr.create_named (Literal (Slot (Variable.create "", Value_slot value_slot2))))
       | None -> Env.add_value_slot env value_slot1 value_slot2;
         unequal
-          (Named (Literal (Slot (Variable.create "", Value_slot value_slot1))))
-          (Named (Literal (Slot (Variable.create "", Value_slot value_slot2))))
+          (Expr.create_named (Literal (Slot (Variable.create "", Value_slot value_slot1))))
+          (Expr.create_named (Literal (Slot (Variable.create "", Value_slot value_slot2))))
 
 let zip_fold l1 l2 ~f ~acc =
   List.combine l1 l2 |> List.fold_left f acc
@@ -143,7 +143,7 @@ let zip_fold l1 l2 ~f ~acc =
 let equiv_code_ids _ _ _ = true
 
 let rec equiv (env:Env.t) e1 e2 : eq =
-  match e1, e2 with
+  match Expr.descr e1, Expr.descr e2 with
   | Named (Closure_expr (_, slot1, {function_decls;_})), Lambda _ ->
     let e1 = Function_slot.Lmap.find slot1 function_decls in
     equiv env e1 e2
@@ -174,7 +174,7 @@ and equiv_let env e1 e2 : eq =
            (bound1, e1.expr_body, let_bound1)
            (bound2, e2.expr_body, let_bound2))
   |> function | Ok comp -> comp | Error _ ->
-    unequal (Let e1) (Let e2)
+    unequal (Expr.create_let e1) (Expr.create_let e2)
 
 and equiv_let_symbol_exprs env
       (static1, const1, body1) (static2, const2, body2) : eq =
@@ -331,7 +331,7 @@ and equiv_named env named1 named2 : eq =
     List.fold_left (fun x (e1, e2) -> x && equiv_static_consts env e1 e2) true)
   | (Literal _ | Prim _ |
     Set_of_closures _ | Rec_info _ | Static_consts _ | Closure_expr _), _ ->
-    unequal (Named named1) (Named named2)
+    unequal (Expr.create_named named1) (Expr.create_named named2)
 
 and equiv_simple env simple1 simple2 : eq =
   let result =
@@ -348,8 +348,8 @@ and equiv_simple env simple1 simple2 : eq =
   if result
   then result
   else unequal
-         (Named (Literal (Simple simple1)))
-         (Named (Literal (Simple simple2)))
+         (Expr.create_named (Literal (Simple simple1)))
+         (Expr.create_named (Literal (Simple simple2)))
 
 and equiv_primitives env prim1 prim2 : eq =
   match (prim1:primitive), (prim2:primitive) with

@@ -198,6 +198,7 @@ module Expr : sig
   type descr = exp_descr
   val ids_for_export : t -> Ids_for_export.t
   val descr : t -> exp_descr
+  val create_named : named -> t
   val create_let : let_expr -> t
   val create_let_cont : let_cont_expr -> t
   val create_apply : apply_expr -> t
@@ -205,6 +206,7 @@ module Expr : sig
   val create_lambda : lambda_expr -> t
   val create_handler : continuation_handler -> t
   val create_switch : switch_expr -> t
+  val create_invalid : string -> t
 end
 
 module ContMap : sig
@@ -221,7 +223,7 @@ end
 
 module Core_let : sig
   type t = let_expr
-  val create : x:Bound_for_let.t -> e1:core_exp -> e2 :core_exp -> t
+  val create : x:Bound_for_let.t -> e1:core_exp -> e2 :core_exp -> core_exp
 
   module Pattern_match_pair_error : sig
     type t = Mismatched_let_bindings
@@ -270,6 +272,23 @@ module Core_recursive : sig
      core_exp ->
      core_exp -> continuation_handler_map -> continuation_handler_map -> 'a) -> 'a
 end
+
+module Core_letcont : sig
+  type t
+
+  val print : Format.formatter -> let_cont_expr -> unit
+
+  val create_non_recursive :
+    continuation_handler ->
+    body:((Bound_continuation.t, core_exp) Name_abstraction.t) ->
+    core_exp
+
+  val create_recursive :
+    Bound_continuations.t ->
+    recursive_let_expr ->
+    core_exp
+end
+
 
 module Core_lambda : sig
   type t = lambda_expr
@@ -320,6 +339,8 @@ val print : Format.formatter -> core_exp -> unit
 val print_static_pattern : Format.formatter -> Bound_codelike.Pattern.t -> unit
 val print_prim : Format.formatter -> primitive -> unit
 val print_bound_pattern : Format.formatter -> Bound_for_let.t -> unit
+
+val descr : core_exp -> exp_descr
 
 val apply_renaming : core_exp -> Renaming.t -> core_exp
 

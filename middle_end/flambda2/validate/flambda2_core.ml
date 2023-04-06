@@ -1261,6 +1261,7 @@ module Expr = struct
   let ids_for_export = ids_for_export
   let descr = descr
   let create = With_delayed_renaming.create
+  let create_named named = create (Named named)
   let create_let let_expr = create (Let let_expr)
   let create_let_cont let_cont = create (Let_cont let_cont)
   let create_apply apply = create (Apply apply)
@@ -1268,7 +1269,7 @@ module Expr = struct
   let create_lambda lambda = create (Lambda lambda)
   let create_handler handler = create (Handler handler)
   let create_switch switch = create (Switch switch)
-
+  let create_invalid msg = create (Invalid {message = msg})
 end
 
 module ContMap = struct
@@ -1287,7 +1288,7 @@ module Core_let = struct
   module A = Name_abstraction.Make (Bound_for_let) (Expr)
   type t = let_expr
   let create ~(x : Bound_for_let.t) ~(e1 : core_exp) ~(e2 : core_exp)  =
-    { let_abst = A.create x e2; expr_body = e1 }
+    Expr.create_let { let_abst = A.create x e2; expr_body = e1 }
 
   module Pattern_match_pair_error = struct
     type t = Mismatched_let_bindings
@@ -1381,6 +1382,20 @@ module Core_recursive = struct
             ~f:(fun params h1 h2 -> f params body1 body2 h1 h2))
 end
 
+module Core_letcont = struct
+  type t = let_cont_expr
+
+  let print = print_let_cont
+
+  let create_non_recursive handler ~body =
+    Expr.create_let_cont
+      (Non_recursive {handler; body})
+
+  let create_recursive conts handlers =
+    Expr.create_let_cont
+      (Recursive (Core_recursive.create conts handlers))
+end
+
 module Core_lambda = struct
   module A = Name_abstraction.Make (Bound_for_lambda) (Expr)
   type t = lambda_expr
@@ -1432,11 +1447,10 @@ let lambda_to_handler (e : lambda_expr) : continuation_handler =
 let let_fix (f : core_exp -> core_exp) {let_abst; expr_body} =
   Core_let.pattern_match {let_abst; expr_body}
     ~f:(fun ~x ~e1 ~e2 ->
-      Let (Core_let.create
+      (Core_let.create
         ~x
         ~e1:(f e1)
         ~e2:(f e2)))
-  |> With_delayed_renaming.create
 
 let let_cont_fix (f : core_exp -> core_exp) (e : let_cont_expr) =
   (match e with
@@ -1451,7 +1465,7 @@ let let_cont_fix (f : core_exp -> core_exp) (e : let_cont_expr) =
         (fun cont exp ->
            Core_letcont_body.create cont (f exp))
     in
-    Let_cont (Non_recursive {handler; body})
+    Core_letcont.create_non_recursive handler ~body
   | Recursive body ->
     Core_recursive.pattern_match body
       ~f:(fun bound {continuation_map; body} ->
@@ -1465,23 +1479,19 @@ let let_cont_fix (f : core_exp -> core_exp) (e : let_cont_expr) =
                         Core_continuation_handler.create param
                           (f exp))) continuation_map
             in
-            let body =
-              Core_recursive.create bound
-                {continuation_map =
-                   Core_continuation_map.create bound_cm continuation_map;
-                body = f body}
-            in
-            Let_cont (Recursive body)
+            Core_letcont.create_recursive bound
+              {continuation_map =
+                 Core_continuation_map.create bound_cm continuation_map;
+               body = f body}
+            (* Let_cont (Recursive body) *)
           )
       ))
-  |> With_delayed_renaming.create
 
 let handler_fix (f : core_exp -> core_exp)
       (handler : continuation_handler) =
-  Handler
-    (Core_continuation_handler.pattern_match handler
-       (fun param exp -> Core_continuation_handler.create param (f exp)))
-  |> With_delayed_renaming.create
+  (Core_continuation_handler.pattern_match handler
+      (fun param exp -> Core_continuation_handler.create param (f exp)))
+  |> Expr.create_handler
 
 let apply_fix (f : core_exp -> core_exp)
       ({callee; continuation; exn_continuation; region; apply_args} : apply_expr) =
@@ -1495,23 +1505,21 @@ let apply_fix (f : core_exp -> core_exp)
 
 let apply_cont_fix (f : core_exp -> core_exp)
       ({k; args} : apply_cont_expr) =
-  Apply_cont
+  Expr.create_apply_cont
     {k = f k;
      args = List.map f args}
-  |> With_delayed_renaming.create
 
 let lambda_fix (f : core_exp -> core_exp) (e : lambda_expr) =
   Core_lambda.pattern_match e
     ~f:(fun b e ->
-      Lambda (Core_lambda.create b (f e)))
-  |> With_delayed_renaming.create
+      (Core_lambda.create b (f e)))
+  |> Expr.create_lambda
 
 let switch_fix (f : core_exp -> core_exp)
       ({scrutinee; arms} : switch_expr) =
-  Switch
-    {scrutinee = f scrutinee;
-     arms = Targetint_31_63.Map.map f arms}
-  |> With_delayed_renaming.create
+  {scrutinee = f scrutinee;
+    arms = Targetint_31_63.Map.map f arms}
+  |> Expr.create_switch
 
 let set_of_closures_fix
       (fix : core_exp -> core_exp) {function_decls; value_slots} =

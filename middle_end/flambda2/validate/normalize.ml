@@ -13,7 +13,7 @@ let comp_unit : Compilation_unit.t ref =
          Compilation_unit.Name.dummy)
 
 let rec does_not_occur (v : literal) acc (exp : core_exp) =
-  match exp with
+  match descr exp with
   | Invalid _ -> acc
   | Named (Literal l) ->
     (not (literal_contained v l) && acc)
@@ -90,15 +90,15 @@ let rec subst_pattern ~(bound : Bound_for_let.t) ~(let_body : core_exp)
                 let bound = Simple.var (Bound_var.var bound) in
                 if (Simple.equal s bound) then
                   let_body
-                else Named (Literal (Simple s))
-             | (Cont _ | Res_cont _ | Slot _ | Code_id _) -> Named (Literal s))
+                else Expr.create_named (Literal (Simple s))
+             | (Cont _ | Res_cont _ | Slot _ | Code_id _) -> Expr.create_named (Literal s))
           (bound, let_body) e)
   | Static bound ->
     subst_static_list ~bound ~let_body e
 
 and subst_singleton_set_of_closures ~(bound: Variable.t)
       ~(clo : set_of_closures) (e : core_exp) : core_exp =
-  match e with
+  match descr e with
   | Named e -> subst_singleton_set_of_closures_named ~bound ~clo e
   | Let e ->
     let_fix (subst_singleton_set_of_closures ~bound ~clo) e
@@ -124,19 +124,19 @@ and subst_singleton_set_of_closures_named ~bound ~clo (e : named) : core_exp =
          (let {function_decls; value_slots=_} = clo in
           match Function_slot.Lmap.get_singleton function_decls with
           | Some (slot, _) ->
-              Named (Closure_expr (bound, slot, clo))
+              Expr.create_named (Closure_expr (bound, slot, clo))
           | None ->
-            Named (Set_of_closures clo))
+            Expr.create_named (Set_of_closures clo))
       else
-        Named (Literal (Simple v)))
+        Expr.create_named (Literal (Simple v)))
     | Slot (phi, Function_slot slot) ->
       (let decls = Function_slot.Lmap.bindings clo.function_decls in
        let bound_closure = List.find_opt (fun (x, _) -> x = slot) decls in
        (match bound_closure with
-        | None -> Named e
-        | Some (k, _) -> Named (Closure_expr (phi, k, clo))
+        | None -> Expr.create_named e
+        | Some (k, _) -> Expr.create_named (Closure_expr (phi, k, clo))
        ))
-    | (Cont _ | Res_cont _ | Slot (_, Value_slot _) | Code_id _) -> Named (Literal v))
+    | (Cont _ | Res_cont _ | Slot (_, Value_slot _) | Code_id _) -> Expr.create_named (Literal v))
   in
   match e with
   | Literal v -> f bound v
@@ -145,15 +145,15 @@ and subst_singleton_set_of_closures_named ~bound ~clo (e : named) : core_exp =
     let set =
       set_of_closures_fix (subst_singleton_set_of_closures ~bound ~clo) set
     in
-    Named (Closure_expr (phi, slot, set))
+    Expr.create_named (Closure_expr (phi, slot, set))
   | Set_of_closures set ->
     let set =
       set_of_closures_fix (subst_singleton_set_of_closures ~bound ~clo) set
     in
-    Named (Set_of_closures set)
+    Expr.create_named (Set_of_closures set)
   | Static_consts group ->
     static_const_group_fix (subst_singleton_set_of_closures ~bound ~clo) group
-  | Rec_info _ -> Named e
+  | Rec_info _ -> Expr.create_named e
 
 and subst_static_list ~(bound : Bound_codelike.t) ~let_body e : core_exp =
   let rec subst_static_list_ bound body e =
@@ -168,7 +168,7 @@ and subst_static_list ~(bound : Bound_codelike.t) ~let_body e : core_exp =
   match must_be_static_consts let_body with
   | Some consts_list ->
     let (body : core_exp list) =
-      List.map (fun x -> Named (Static_consts [x])) consts_list
+      List.map (fun x -> Expr.create_named (Static_consts [x])) consts_list
     in
     subst_static_list_ (Bound_codelike.to_list bound) body e
   | None -> Misc.fatal_error "Expected name static constants in let body"
@@ -176,7 +176,7 @@ and subst_static_list ~(bound : Bound_codelike.t) ~let_body e : core_exp =
 and subst_pattern_static
       ~(bound : Bound_codelike.Pattern.t) ~(let_body : core_exp) (e : core_exp)
   : core_exp =
-  match e with
+  match Expr.descr e with
   | Let e ->
     let_fix (subst_pattern_static ~bound ~let_body) e
   | Let_cont e ->
@@ -222,12 +222,12 @@ and subst_bound_set_of_closures (bound : Bound_var.t) ~let_body
           (match must_be_static_set_of_closures const with
            | Some set ->
              if Simple.same v (Simple.var (Bound_var.var bound)) then
-              Named (Static_consts [Static_const (Static_set_of_closures set)])
-              else Named e
-           | None -> Named e)
+              Expr.create_named (Static_consts [Static_const (Static_set_of_closures set)])
+              else Expr.create_named e
+           | None -> Expr.create_named e)
         | Some (Deleted_code | Code _) -> Misc.fatal_error "Cannot be reached"
-        | None -> Named e)
-     | None -> Named e
+        | None -> Expr.create_named e)
+     | None -> Expr.create_named e
     )
   | Prim e ->
     prim_fix (subst_pattern_static
@@ -254,15 +254,15 @@ and subst_bound_set_of_closures (bound : Bound_var.t) ~let_body
                 List.find_opt (fun (x, _) -> x = slot) bound
               in
               (match bound_closure with
-              | None -> Named e
-              | Some (k, _) -> Named (Closure_expr (phi, k, set)))
+              | None -> Expr.create_named e
+              | Some (k, _) -> Expr.create_named (Closure_expr (phi, k, set)))
             | None -> Misc.fatal_error "Cannot be reached")
           | Some (Deleted_code | Code _) -> Misc.fatal_error "Cannot be reached"
-          | None -> Named e)
-     | None -> Named e
+          | None -> Expr.create_named e)
+     | None -> Expr.create_named e
     )
   | Literal (Res_cont _ | Code_id _ | Cont _ | Slot (_, Value_slot _))
-  | Closure_expr _ | Set_of_closures _ | Rec_info _ -> Named e
+  | Closure_expr _ | Set_of_closures _ | Rec_info _ -> Expr.create_named e
 
 and subst_code_id_set_of_closures (bound : Code_id.t) ~(let_body : core_exp)
       {function_decls; value_slots}
@@ -283,23 +283,23 @@ and subst_code_id (bound : Code_id.t) ~(let_body : core_exp) (e : named) : core_
      | Code_id code_id ->
        if (Code_id.compare code_id bound = 0)
        then let_body
-       else (Named (Literal e))
-     | (Simple _ | Cont _ | Res_cont _ | Slot _) -> Named (Literal e))
+       else (Expr.create_named (Literal e))
+     | (Simple _ | Cont _ | Res_cont _ | Slot _) -> Expr.create_named (Literal e))
   | Prim e ->
     prim_fix
       (subst_pattern_static
          ~bound:(Bound_codelike.Pattern.code bound) ~let_body) e
   | Closure_expr (phi, slot, set) ->
-    Named (Closure_expr (phi, slot, subst_code_id_set_of_closures bound ~let_body set))
+    Expr.create_named (Closure_expr (phi, slot, subst_code_id_set_of_closures bound ~let_body set))
   | Set_of_closures set ->
     let set = subst_code_id_set_of_closures bound ~let_body set
     in
-    Named (Set_of_closures set)
+    Expr.create_named (Set_of_closures set)
   | Static_consts consts ->
     static_const_group_fix
       (subst_pattern_static ~bound:(Bound_codelike.Pattern.code bound) ~let_body)
        consts
-  | Rec_info _ -> Named e
+  | Rec_info _ -> Expr.create_named e
 
 and subst_block_like
       ~(bound : Symbol.t) ~(let_body : core_exp) (e : named) : core_exp =
@@ -308,10 +308,10 @@ and subst_block_like
        match v with
        | Simple v ->
           if Simple.equal v (Simple.symbol bound) then
-            let_body else Named (Literal (Simple v))
+            let_body else Expr.create_named (Literal (Simple v))
        | (Cont _ | Res_cont _ | Slot _ | Code_id _) ->
-         Named (Literal v))
-    () (Named e)
+         Expr.create_named (Literal v))
+    () (Expr.create_named e)
 
 let partial_combine l1 l2 =
   let rec partial_combine (l1 : 'a list) (l2 : 'b list) acc
@@ -338,7 +338,7 @@ let subst_params
     if remainder == []
     then e
     else
-      Handler
+      Expr.create_handler
         (Core_continuation_handler.create (Bound_parameters.create remainder) e)
   in
   let param_args =
@@ -349,18 +349,20 @@ let subst_params
       | Simple s ->
           (match List.assoc_opt s param_args with
           | Some arg_v -> arg_v
-          | None -> Named (Literal (Simple s)))
+          | None -> Expr.create_named (Literal (Simple s)))
       | (Cont _ | Res_cont _ | Slot _ | Code_id _) ->
-        Named (Literal s))
+        Expr.create_named (Literal s))
     () e
 
 (* [LetCont-β] *)
 let rec subst_cont (cont_e1: core_exp) (k: Bound_continuation.t)
           (args: Bound_parameters.t) (cont_e2: core_exp) : core_exp =
-  match cont_e1 with
+  match Expr.descr cont_e1 with
   | Named (Literal (Cont cont | Res_cont (Return cont)))  ->
     if Continuation.equal cont k
-    then Handler (Core_continuation_handler.create args cont_e2)
+    then
+      Expr.create_handler
+        (Core_continuation_handler.create args cont_e2)
     else cont_e1
   | Named (Literal (Simple _ | Slot _ | Res_cont Never_returns | Code_id _)
           | Prim _ | Closure_expr _ | Set_of_closures _ | Static_consts _
@@ -375,7 +377,7 @@ let rec subst_cont (cont_e1: core_exp) (k: Bound_continuation.t)
     (* if Continuation.equal cont k
      * then subst_params args cont_e2 concrete_args
      * else *)
-    Apply_cont
+    Expr.create_apply_cont
       {k = subst_cont e k args cont_e2;
         args = List.map (fun x -> subst_cont x k args cont_e2) concrete_args}
   | Lambda e ->
@@ -387,7 +389,7 @@ let rec subst_cont (cont_e1: core_exp) (k: Bound_continuation.t)
   | Invalid _ -> cont_e1
 
 let rec step (e:core_exp) : core_exp =
-  match e with
+  match Expr.descr e with
   | Let { let_abst; expr_body } ->
     step_let let_abst expr_body
   | Let_cont e ->
@@ -412,7 +414,7 @@ and step_lambda (e : lambda_expr) =
     ~f:(fun {return_continuation; exn_continuation; params; my_region} e ->
       let e = step e
       in
-      Lambda
+      Expr.create_lambda
         (Core_lambda.create
            {return_continuation;exn_continuation;params;my_region}
             e))
@@ -421,7 +423,8 @@ and step_handler (e : continuation_handler) =
   Core_continuation_handler.pattern_match e
     (fun param e ->
        let e = step e in
-       Handler (Core_continuation_handler.create param e))
+       Expr.create_handler
+         (Core_continuation_handler.create param e))
 
 and step_switch scrutinee arms : core_exp =
   let default =
@@ -431,7 +434,8 @@ and step_switch scrutinee arms : core_exp =
     Equiv.debug := false;
     if (List.for_all (fun (_, x) -> Equiv.core_eq hd x) bindings)
     then (Equiv.debug := false; hd)
-    else (Equiv.debug := false; Switch {scrutinee; arms}))
+    else (Equiv.debug := false;
+          Expr.create_switch {scrutinee; arms}))
   in
   (* if the scrutinee is exactly one of the arms, simplify *)
   match must_be_simple_or_immediate scrutinee with
@@ -467,7 +471,7 @@ and step_let let_abst body : core_exp =
          (if returns_unit e1 then
             let e2 =
               subst_pattern ~bound:x
-                ~let_body:(Named (Literal (Simple
+                ~let_body:(Expr.create_named (Literal (Simple
                 (Simple.const Int_ids.Const.const_zero)))) e2
             in
             e2
@@ -498,11 +502,11 @@ and handler_map_to_closures (phi : Variable.t) (v : Bound_parameter.t list)
              in
               Core_continuation_handler.create params
                 (subst_cont_id key
-                   (Named (Literal (Slot (phi, Function_slot slot)))) e))
+                   (Expr.create_named (Literal (Slot (phi, Function_slot slot)))) e))
        in
        (* for every occurence of [key] in [e], substitute
           with Slot(phi, Function_slot slot) *)
-       let lambda = Handler e in
+       let lambda = Expr.create_handler e in
        Function_slot.Lmap.add slot lambda fun_decls) m
     Function_slot.Lmap.empty
   in
@@ -544,7 +548,7 @@ and step_let_cont (e:let_cont_expr) : core_exp =
               List.fold_left
                 (fun acc (cont, (slot, _)) ->
                    subst_cont_id cont
-                     (Named (Literal (Slot (phi, Function_slot slot)))) acc)
+                     (Expr.create_named (Literal (Slot (phi, Function_slot slot)))) acc)
                 body in_order_with_cont
             in
             subst_singleton_set_of_closures ~bound:phi ~clo e2))
@@ -557,9 +561,9 @@ and subst_cont_id (cont : Continuation.t) (e1 : core_exp) (e2 : core_exp) =
        | (Cont k | Res_cont (Return k)) ->
          if Continuation.equal cont k
          then e1
-         else Named (Literal x)
+         else Expr.create_named (Literal x)
        | (Simple _ | Res_cont Never_returns | Slot _ | Code_id _) ->
-         Named (Literal x)) () e2
+         Expr.create_named (Literal x)) () e2
 
 and step_fun_decls (decls : function_declarations) =
   Function_slot.Lmap.mapi
@@ -575,7 +579,7 @@ and step_fun_decls (decls : function_declarations) =
                  my_region}
                 e ->
                 let default =
-                  Lambda
+                  Expr.create_lambda
                     (Core_lambda.create
                        {return_continuation;exn_continuation;params;my_region}
                     e)
@@ -598,10 +602,10 @@ and step_fun_decls (decls : function_declarations) =
                         Continuation.equal cont return_continuation &&
                         Continuation.equal exn_cont exn_continuation
                       then
-                        Handler
+                        Expr.create_handler
                           (Core_continuation_handler.create
                              params
-                              (Apply_cont
+                              (Expr.create_apply_cont
                                 {k = callee;
                                 args = apply_args}))
                       else default
@@ -616,17 +620,18 @@ and step_fun_decls (decls : function_declarations) =
 
 and step_apply_no_beta_redex callee continuation exn_continuation region apply_args =
   let default =
-    Apply {callee;continuation;exn_continuation;region;apply_args}
+    Expr.create_apply {callee;continuation;exn_continuation;region;apply_args}
   in
-  match callee with
+  match Expr.descr callee with
   | Named (Closure_expr (phi, slot, {function_decls; value_slots})) ->
     let function_decls =
       step_fun_decls function_decls
     in
-    (match Function_slot.Lmap.find_opt slot function_decls with
+    (match Function_slot.Lmap.find_opt slot function_decls |>
+            Option.map Expr.descr with
      | Some (Handler _) ->
-       Apply_cont
-         { k = Named (Closure_expr (phi, slot, {function_decls; value_slots}));
+       Expr.create_apply_cont
+         { k = Expr.create_named (Closure_expr (phi, slot, {function_decls; value_slots}));
            args = apply_args }
      | (Some (Named _ | Let _ | Let_cont _ | Apply _ | Apply_cont _ | Switch _
               | Lambda _ | Invalid _) | None) -> default)
@@ -639,9 +644,10 @@ and step_apply_no_beta_redex callee continuation exn_continuation region apply_a
 
 and step_apply_function_decls phi slot function_decls
       callee continuation exn_continuation region apply_args =
-  match Function_slot.Lmap.find_opt slot function_decls with
+  match Function_slot.Lmap.find_opt slot function_decls |>
+        Option.map Expr.descr with
   | Some (Lambda exp) ->
-    if does_not_occur (Simple (Simple.var phi)) true (Lambda exp) then
+    if does_not_occur (Simple (Simple.var phi)) true (Expr.create_lambda exp) then
       step_apply_lambda exp continuation exn_continuation region apply_args
     else
       step_apply_no_beta_redex callee continuation exn_continuation region apply_args
@@ -663,13 +669,13 @@ and step_apply_lambda lambda_expr continuation exn_continuation region apply_arg
                  then continuation
                  else if Continuation.equal k bound.exn_continuation
                  then exn_continuation
-                 else (Named (Literal l))
+                 else (Expr.create_named (Literal l))
                | Simple s ->
                  if (Simple.same (Simple.var bound.my_region) s)
                  then region
-                 else (Named (Literal l))
+                 else (Expr.create_named (Literal l))
                | (Res_cont Never_returns | Slot _ | Code_id _) ->
-                 Named (Literal l)
+                 Expr.create_named (Literal l)
             ) () exp
         in
         subst_params params exp apply_args |> step)
@@ -680,7 +686,7 @@ and step_apply callee continuation exn_continuation region apply_args : core_exp
   let exn_continuation = step exn_continuation in
   let region = step region in
   let apply_args = List.map step apply_args in
-  match callee with
+  match Expr.descr callee with
   | Named (Closure_expr (phi, slot,
                          {function_decls; value_slots = _})) ->
     step_apply_function_decls phi slot function_decls
@@ -710,7 +716,7 @@ and step_apply_cont k args : core_exp =
   | Some handler ->
     Core_continuation_handler.pattern_match handler
       (fun params e -> subst_params params e args) |> step
-  | None -> Apply_cont {k; args}
+  | None -> Expr.create_apply_cont {k; args}
 
 and step_static_const (phi : Bound_for_let.t) (const : static_const) : static_const =
   match const with
@@ -747,7 +753,7 @@ and step_static_const_group (phi : Bound_codelike.Pattern.t list)
   (* If the set of closures is non-empty, substitute in the list of code
      blocks into the set of closures *)
   match set_of_closures with
-  | [] -> (phi, Named (Static_consts consts))
+  | [] -> (phi, Expr.create_named (Static_consts consts))
   | _ ->
    (let code, static_consts =
       List.partition (fun (_, x) -> is_code x) static_consts
@@ -776,7 +782,7 @@ and step_static_const_group (phi : Bound_codelike.Pattern.t list)
             in
             let code =
               subst_code_id_set_of_closures code_id
-                ~let_body:(Named (Static_consts [Code x])) acc
+                ~let_body:(Expr.create_named (Static_consts [Code x])) acc
             in
             code
           | (Static_const _ | Deleted_code) ->
@@ -806,7 +812,7 @@ and step_static_const_group (phi : Bound_codelike.Pattern.t list)
     let phi =
       List.filter (fun x -> not (Bound_codelike.Pattern.is_code x)) phi
     in
-    (phi, Named (Static_consts consts)))
+    (phi, Expr.create_named (Static_consts consts)))
 
 (* N.B. This normalization is rather inefficient;
    Right now (for the sake of clarity) it goes through three passes of the
@@ -856,7 +862,7 @@ and subst_my_closure (phi : Bound_for_let.t) (slot : Function_slot.t)
       Core_function_params_and_body.pattern_match fn_expr
         ~f:(fun bff e ->
           (* bff is the "my_closure" variable *)
-          Lambda
+          Expr.create_lambda
             (Core_lambda.pattern_match e
                ~f:(fun bound body ->
                  (* Note: Can't use [Renaming] because it is bidirectional:
@@ -870,21 +876,21 @@ and subst_my_closure (phi : Bound_for_let.t) (slot : Function_slot.t)
                         | Simple simple ->
                             if (Simple.same (Simple.var (Bound_var.var bff)) simple)
                             then
-                              Named (Literal (Slot (phi, Function_slot slot)))
-                            else (Named (Literal s))
-                        | (Cont _ | Res_cont _ | Slot _ | Code_id _) -> Named (Literal s))
+                              Expr.create_named (Literal (Slot (phi, Function_slot slot)))
+                            else (Expr.create_named (Literal s))
+                        | (Cont _ | Res_cont _ | Slot _ | Code_id _) -> Expr.create_named (Literal s))
                      () body
                  in
                 Core_lambda.create bound (subst_my_closure_body phi clo body)))))
   | Static ((Code _ | Block_like _ | Set_of_closures _) :: _ | []) ->
-    Named (Static_consts [Code {expr=fn_expr; anon}]))
+    Expr.create_named (Static_consts [Code {expr=fn_expr; anon}]))
 
 (* N.B. [Projection reduction]
     When we substitute in a set of closures for primitives,
     (Here is where the `Projection` primitives occur),
     we eliminate the projection. *)
 and subst_my_closure_body phi (clo: set_of_closures) (e : core_exp) : core_exp =
-  match e with
+  match Expr.descr e with
   | Named e -> subst_my_closure_body_named phi clo e
   | Let e ->
     let_fix (subst_my_closure_body phi clo) e
@@ -906,32 +912,33 @@ and subst_my_closure_body_named _phi
     ({function_decls;value_slots}: set_of_closures) (e : named)
   : core_exp =
   (match e with
-   | Prim (Unary (Project_value_slot slot,
-                  Named (Closure_expr (_, _, {function_decls = _ ; value_slots})))) ->
-     (match Value_slot.Map.find_opt slot.value_slot value_slots with
-      | Some exp -> exp
-      | None -> Named e)
-   | Prim (Unary (Project_value_slot slot, _)) ->
-    (match Value_slot.Map.find_opt slot.value_slot value_slots with
-    | Some exp ->
-      (match must_have_closure exp with
-        | Some _ -> exp
-        | None ->
-          (match must_be_function_slot_expr exp with
-            | Some (phi, slot) ->
-              (match Function_slot.Lmap.find_opt slot function_decls with
-              | Some e -> e
-              | None -> (Named (Literal (Slot (phi, Function_slot slot)))))
-            | None -> exp))
-     | None -> Named e)
+   | Prim (Unary (Project_value_slot slot, arg)) ->
+     (match must_be_named arg with
+      | Some (Closure_expr (_, _, {function_decls = _ ; value_slots})) ->
+          (match Value_slot.Map.find_opt slot.value_slot value_slots with
+            | Some exp -> exp
+            | None -> Expr.create_named e)
+      | _ ->
+        (match Value_slot.Map.find_opt slot.value_slot value_slots with
+         | Some exp ->
+           (match must_have_closure exp with
+            | Some _ -> exp
+            | None ->
+              (match must_be_function_slot_expr exp with
+               | Some (phi, slot) ->
+                 (match Function_slot.Lmap.find_opt slot function_decls with
+                  | Some e -> e
+                  | None -> (Expr.create_named (Literal (Slot (phi, Function_slot slot)))))
+               | None -> exp))
+         | None -> Expr.create_named e))
   | Prim (Unary (Project_function_slot {move_from ; move_to}, arg)) ->
     (match must_be_function_slot_expr arg with
      | Some (phi, slot) ->
        (if (move_from = slot) then
-        Named (Literal (Slot (phi, Function_slot move_to)))
+        Expr.create_named (Literal (Slot (phi, Function_slot move_to)))
         else
-          Named e)
-     | None -> Named e)
+          Expr.create_named e)
+     | None -> Expr.create_named e)
   | (Prim (Unary
              ((Reinterpret_int64_as_float | Tag_immediate | Untag_immediate
               | Duplicate_block _ | Duplicate_array _
@@ -941,7 +948,7 @@ and subst_my_closure_body_named _phi
               | Is_boxed_float | Is_flat_float_array | Begin_try_region | End_region
               | Obj_dup), _) | Nullary _ | Binary _ | Ternary _ | Variadic _)
     | Literal _ | Closure_expr _ | Set_of_closures _
-    | Static_consts _ | Rec_info _) -> Named e)[@ocaml.warning "-4"]
+    | Static_consts _ | Rec_info _) -> Expr.create_named e)[@ocaml.warning "-4"]
 
 (* This is a "normalization" of [named] expression, in quotations because there
   is some simple evaluation that occurs for primitive arithmetic expressions *)
@@ -949,7 +956,7 @@ and step_named (body : named) : core_exp =
   match body with
   | Literal _ (* A [Simple] is a register-sized value *)
   | Rec_info _ (* Information about inlining recursive calls, an integer variable *) ->
-    Named (body)
+    Expr.create_named (body)
   | Closure_expr (phi, slot, {function_decls; value_slots}) ->
     let function_decls =
       Function_slot.Lmap.map step function_decls
@@ -957,7 +964,7 @@ and step_named (body : named) : core_exp =
     let value_slots =
       Value_slot.Map.map step value_slots
     in
-    Named (Closure_expr (phi, slot, {function_decls; value_slots}))
+    Expr.create_named (Closure_expr (phi, slot, {function_decls; value_slots}))
   | Set_of_closures {function_decls; value_slots} ->
     let function_decls =
       Function_slot.Lmap.map step function_decls
@@ -965,7 +972,7 @@ and step_named (body : named) : core_exp =
     let value_slots =
       Value_slot.Map.map step value_slots
     in
-    Named (Set_of_closures {function_decls; value_slots})
+    Expr.create_named (Set_of_closures {function_decls; value_slots})
   | Static_consts e ->
     static_const_group_fix step e
   | Prim v -> Eval_prim.eval v
@@ -977,12 +984,12 @@ and step_named_for_let (var: Bound_for_let.t) (body : named)
   match body with
   | Literal _ (* A [Simple] is a register-sized value *)
   | Rec_info _ (* Information about inlining recursive calls, an integer variable *) ->
-    (var, Named (body))
+    (var, Expr.create_named (body))
   | Closure_expr (phi, slot, set) ->
-    (var, Named (Closure_expr (phi, slot, step_set_of_closures var set)))
+    (var, Expr.create_named (Closure_expr (phi, slot, step_set_of_closures var set)))
   | Set_of_closures set -> (* Map of [Code_id]s and [Simple]s corresponding to
                          function and value slots*)
-    (var, Named (Set_of_closures (step_set_of_closures var set)))
+    (var, Expr.create_named (Set_of_closures (step_set_of_closures var set)))
   | Static_consts consts -> (* [Static_consts] are statically-allocated values *)
     (match var with
      | Static var ->
@@ -996,9 +1003,9 @@ and step_named_for_let (var: Bound_for_let.t) (body : named)
 
 (* Inline non-recursive continuation handlers first *)
 let rec inline_handlers (e : core_exp) =
-  match e with
+  match Expr.descr e with
   | Named e ->
-    named_fix inline_handlers (fun () x -> Named (Literal x)) () e
+    named_fix inline_handlers (fun () x -> Expr.create_named (Literal x)) () e
   | Let e ->
     let_fix inline_handlers e
   | Let_cont e -> inline_let_cont e
@@ -1070,7 +1077,7 @@ and inline_let_cont (e:let_cont_expr) : core_exp =
               List.fold_left
                 (fun acc (cont, (slot, _)) ->
                    subst_cont_id cont
-                     (Named (Literal (Slot (phi, Function_slot slot)))) acc)
+                     (Expr.create_named (Literal (Slot (phi, Function_slot slot)))) acc)
                 body in_order_with_cont
             in
             subst_singleton_set_of_closures ~bound:phi ~clo e2))
