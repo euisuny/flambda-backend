@@ -34,8 +34,6 @@
    simplifier has not changed and shows a syntactic equality up to
    alpha-equivalence. **)
 
-type env
-
 val comp_unit : Compilation_unit.t ref
 
-val normalize : Flambda2_core.core_exp -> Flambda2_core.core_exp
+val normalize : Translate.clo -> Flambda2_core.core_exp -> Flambda2_core.core_exp

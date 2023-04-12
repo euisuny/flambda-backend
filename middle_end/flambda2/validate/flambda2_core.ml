@@ -103,12 +103,12 @@ and function_params_and_body =
     anon: bool }
 
 and static_const_or_code =
-  | Code of function_params_and_body
-  | Deleted_code
+  | Code of function_params_and_body (* FIXME: Remove *)
+  | Deleted_code (* FIXME: Remove *)
   | Static_const of static_const
 
 and static_const =
-  | Static_set_of_closures of set_of_closures
+  | Static_set_of_closures of set_of_closures (* FIXME: Remove *)
   | Block of Tag.Scannable.t * Mutability.t * core_exp list
   | Boxed_float of Numeric_types.Float_by_bit_pattern.t Or_variable.t
   | Boxed_int32 of Int32.t Or_variable.t
@@ -131,25 +131,8 @@ and let_cont_expr =
      [fun x -> e2] = handler
      bound variable [k] = Bound_continuation.t
      [e1] = body (has bound variable [k] in scope) *)
-  | Non_recursive of
-    { handler : continuation_handler;
-      body : (Bound_continuation.t, core_exp) Name_abstraction.t;}
-
-  (* Recursive case, we have a set of (mutually recursive) continuations
-     [let rec K x in e] where [K] is a map of continuations
-     [x] is the set of invariant parameters
-     bound variable [K] is in the scope of [e]
-
-     [x] = invariant_params (Bound_parameters.t)
-     [K] = continuation_map
-     [e] = body *)
-  | Recursive of
-      (Bound_continuations.t, recursive_let_expr) Name_abstraction.t
-
-and recursive_let_expr =
-  { continuation_map :
-      (Bound_parameters.t, continuation_handler_map) Name_abstraction.t;
-    body : core_exp; }
+  { handler : continuation_handler;
+    body : (Bound_continuation.t, core_exp) Name_abstraction.t;}
 
 and continuation_handler_map =
   continuation_handler Continuation.Map.t
@@ -416,32 +399,16 @@ and apply_renaming_function_params_and_body {expr; anon} renaming =
 
 
 (* renaming for [Let_cont] *)
-and apply_renaming_let_cont t renaming : let_cont_expr =
-  match t with
-  | Non_recursive { handler; body } ->
-    let handler =
-      apply_renaming_cont_handler handler renaming
-    in
-    let body =
-      Name_abstraction.apply_renaming
-        (module Bound_continuation)
-        body renaming ~apply_renaming_to_term:apply_renaming
-    in
-    Non_recursive { handler = handler ; body = body }
-  | Recursive t ->
-    Recursive (Name_abstraction.apply_renaming
-        (module Bound_continuations)
-        t renaming ~apply_renaming_to_term:apply_renaming_recursive_let_expr)
-
-and apply_renaming_recursive_let_expr {continuation_map; body} renaming
-  : recursive_let_expr =
-  let continuation_map =
-    Name_abstraction.apply_renaming
-      (module Bound_parameters)
-      continuation_map renaming ~apply_renaming_to_term:apply_renaming_cont_map
+and apply_renaming_let_cont {handler; body} renaming : let_cont_expr =
+  let handler =
+    apply_renaming_cont_handler handler renaming
   in
-  { continuation_map = continuation_map ;
-    body = apply_renaming body renaming }
+  let body =
+    Name_abstraction.apply_renaming
+      (module Bound_continuation)
+      body renaming ~apply_renaming_to_term:apply_renaming
+  in
+  { handler ; body }
 
 and apply_renaming_cont_handler t renaming : continuation_handler =
   Name_abstraction.apply_renaming
@@ -936,29 +903,21 @@ and print_function_params_and_body ppf ({expr;anon=_}:function_params_and_body) 
         Variable.print (Bound_var.var t)
         print_lambda expr)
 
-and print_let_cont ppf (t : let_cont_expr) =
-  match t with
-  | Non_recursive {handler; body} ->
-    Name_abstraction.pattern_match_for_printing
-      (module Bound_continuation) body
-      ~apply_renaming_to_term:apply_renaming
-      ~f:(fun cont body ->
-        Name_abstraction.pattern_match_for_printing
-          (module Bound_parameters) handler
-          ~apply_renaming_to_term:apply_renaming
-          ~f:(fun k expr_body ->
-            fprintf ppf
-              "@[(%a)@; (@[<hov 1>where %a (%a) = @;%a)@]@]"
-              print body
-              print_cont cont
-              print_params k
-              print expr_body))
-  | Recursive t ->
-    fprintf ppf "let_cont rec@ ";
-    Name_abstraction.pattern_match_for_printing
-      (module Bound_continuations) t
-      ~apply_renaming_to_term:apply_renaming_recursive_let_expr
-      ~f:(fun k body -> print_recursive_let_cont ppf k body)
+and print_let_cont ppf ({handler; body} : let_cont_expr) =
+  Name_abstraction.pattern_match_for_printing
+    (module Bound_continuation) body
+    ~apply_renaming_to_term:apply_renaming
+    ~f:(fun cont body ->
+      Name_abstraction.pattern_match_for_printing
+        (module Bound_parameters) handler
+        ~apply_renaming_to_term:apply_renaming
+        ~f:(fun k expr_body ->
+          fprintf ppf
+            "@[(%a)@; (@[<hov 1>where %a (%a) = @;%a)@]@]"
+            print body
+            print_cont cont
+            print_params k
+            print expr_body))
 
 and print_params ppf (k : Bound_parameters.t) =
   Format.fprintf ppf "@[<hov 0>%a@]"
@@ -970,27 +929,6 @@ and print_param ppf (k : Bound_parameter.t) =
 
 and print_cont ppf (k : Bound_continuation.t) =
   fprintf ppf "%a" Continuation.print k
-
-and print_recursive_let_cont ppf (k : Bound_continuations.t)
-      ({continuation_map; body} : recursive_let_expr) =
-  fprintf ppf "[@ %a@ ]@ " Bound_continuations.print k;
-  Name_abstraction.pattern_match_for_printing
-    (module Bound_parameters) continuation_map
-    ~apply_renaming_to_term:apply_renaming_cont_map
-    ~f:(fun k body ->
-      fprintf ppf "(%a)\n" Bound_parameters.print k;
-      Continuation.Map.iter (print_continuation_handler ppf) body;
-    );
-  fprintf ppf "@ in\n@ %a" print body
-
-and print_continuation_handler ppf key (t : continuation_handler) =
-  Name_abstraction.pattern_match_for_printing
-    (module Bound_parameters) t
-    ~apply_renaming_to_term:apply_renaming
-    ~f:(fun k body ->
-      fprintf ppf "@[<hov 1>%s:@ fun %a@ ->@ %a@]"
-        (Continuation.name key)
-        Bound_parameters.print k print body)
 
 and print_handler ppf (t : continuation_handler) =
   Name_abstraction.pattern_match_for_printing
@@ -1178,27 +1116,13 @@ and ids_for_export_function_params_and_body {expr; anon=_} =
     ~ids_for_export_of_term:ids_for_export_lambda
 
 (* ids for [Let_cont] *)
-and ids_for_export_let_cont (t : let_cont_expr) =
-  match t with
-  | Non_recursive { handler; body } ->
-    let handler_ids = ids_for_export_cont_handler handler in
-    let body_ids =
-      Name_abstraction.ids_for_export
-        (module Bound_continuation)
-        body ~ids_for_export_of_term:ids_for_export in
-    Ids_for_export.union handler_ids body_ids
-  | Recursive t ->
+and ids_for_export_let_cont ({handler; body} : let_cont_expr) =
+  let handler_ids = ids_for_export_cont_handler handler in
+  let body_ids =
     Name_abstraction.ids_for_export
-      (module Bound_continuations)
-      t ~ids_for_export_of_term:ids_for_export_recursive_let_expr
-
-and ids_for_export_recursive_let_expr ({continuation_map; body} : recursive_let_expr) =
-  let cont_map_ids =
-    Name_abstraction.ids_for_export
-      (module Bound_parameters)
-      continuation_map ~ids_for_export_of_term:ids_for_export_cont_map in
-  let body_ids = ids_for_export body in
-  Ids_for_export.union cont_map_ids body_ids
+      (module Bound_continuation)
+      body ~ids_for_export_of_term:ids_for_export in
+  Ids_for_export.union handler_ids body_ids
 
 and ids_for_export_cont_handler (t : continuation_handler) =
   Name_abstraction.ids_for_export
@@ -1278,12 +1202,6 @@ module ContMap = struct
   let ids_for_export = ids_for_export_cont_map
 end
 
-module RecursiveLetExpr = struct
-  type t = recursive_let_expr
-  let apply_renaming = apply_renaming_recursive_let_expr
-  let ids_for_export = ids_for_export_recursive_let_expr
-end
-
 module Core_let = struct
   module A = Name_abstraction.Make (Bound_for_let) (Expr)
   type t = let_expr
@@ -1358,28 +1276,6 @@ module Core_continuation_map = struct
   type t = (Bound_parameters.t, continuation_handler_map) Name_abstraction.t
   let create = A.create
   let pattern_match = A.pattern_match
-  let pattern_match_pair = A.pattern_match_pair
-end
-
-module Core_recursive = struct
-  module A = Name_abstraction.Make (Bound_continuations) (RecursiveLetExpr)
-  type t = (Bound_continuations.t, recursive_let_expr) Name_abstraction.t
-
-  let create = A.create
-  let pattern_match = A.pattern_match
-  let pattern_match_pair (t1 : A.t) (t2 : A.t)
-    (f : Bound_parameters.t ->
-         core_exp ->
-         core_exp -> continuation_handler_map -> continuation_handler_map -> 'a)
-    = A.pattern_match_pair t1 t2
-        ~f:(fun (_:Bound_continuations.t)
-                (t1 : recursive_let_expr)
-                (t2 : recursive_let_expr) ->
-          let body1 = t1.body in
-          let body2 = t2.body in
-          Core_continuation_map.pattern_match_pair
-            t1.continuation_map t2.continuation_map
-            ~f:(fun params h1 h2 -> f params body1 body2 h1 h2))
 end
 
 module Core_letcont = struct
@@ -1387,13 +1283,9 @@ module Core_letcont = struct
 
   let print = print_let_cont
 
-  let create_non_recursive handler ~body =
-    Expr.create_let_cont
-      (Non_recursive {handler; body})
+  let create handler ~body =
+    Expr.create_let_cont {handler; body}
 
-  let create_recursive conts handlers =
-    Expr.create_let_cont
-      (Recursive (Core_recursive.create conts handlers))
 end
 
 module Core_lambda = struct
@@ -1452,40 +1344,18 @@ let let_fix (f : core_exp -> core_exp) {let_abst; expr_body} =
         ~e1:(f e1)
         ~e2:(f e2)))
 
-let let_cont_fix (f : core_exp -> core_exp) (e : let_cont_expr) =
-  (match e with
-  | Non_recursive {handler; body} ->
-    let handler =
-      Core_continuation_handler.pattern_match handler
-        (fun param exp ->
-           Core_continuation_handler.create param (f exp))
-    in
-    let body =
-      Core_letcont_body.pattern_match body
-        (fun cont exp ->
-           Core_letcont_body.create cont (f exp))
-    in
-    Core_letcont.create_non_recursive handler ~body
-  | Recursive body ->
-    Core_recursive.pattern_match body
-      ~f:(fun bound {continuation_map; body} ->
-        Core_continuation_map.pattern_match continuation_map
-          ~f:(fun bound_cm continuation_map ->
-            let continuation_map =
-              Continuation.Map.map
-                (fun x ->
-                  Core_continuation_handler.pattern_match x
-                    (fun param exp ->
-                        Core_continuation_handler.create param
-                          (f exp))) continuation_map
-            in
-            Core_letcont.create_recursive bound
-              {continuation_map =
-                 Core_continuation_map.create bound_cm continuation_map;
-               body = f body}
-            (* Let_cont (Recursive body) *)
-          )
-      ))
+let let_cont_fix (f : core_exp -> core_exp) ({handler; body} : let_cont_expr) =
+  let handler =
+    Core_continuation_handler.pattern_match handler
+      (fun param exp ->
+          Core_continuation_handler.create param (f exp))
+  in
+  let body =
+    Core_letcont_body.pattern_match body
+      (fun cont exp ->
+          Core_letcont_body.create cont (f exp))
+  in
+  Core_letcont.create handler ~body
 
 let handler_fix (f : core_exp -> core_exp)
       (handler : continuation_handler) =

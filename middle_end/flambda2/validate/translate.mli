@@ -16,14 +16,29 @@ open! Flambda2_core
 
 type substitutions
 
+module Clo : sig
+  type 'a t
+  val find : Variable.t -> 'a t -> 'a
+end
+
+type clo = set_of_closures Clo.t
+
+type code
+
+type env = substitutions * clo * code
+
+val create_env : env
+
 val simple_to_core : Simple.t -> core_exp
 
 val prim_to_core : Flambda_primitive.t -> primitive
 
-val flambda_expr_to_core :
-  Flambda.expr -> substitutions ->
-  core_exp * substitutions
+(* The environment keeps track of the closures.
 
-val flambda_unit_to_core : Flambda_unit.t -> core_exp
+   Translation pass creates consistent phi-nodes for all lambda-like code bindings *)
+val flambda_expr_to_core :
+  Flambda.expr -> env -> core_exp * env
+
+val flambda_unit_to_core : Flambda_unit.t -> core_exp * clo
 
 val tagged_immediate_to_core : Targetint_31_63.t -> core_exp

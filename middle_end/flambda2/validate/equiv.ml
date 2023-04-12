@@ -380,29 +380,15 @@ and equiv_primitives env prim1 prim2 : eq =
     false
 
 (* [let_cont_expr] *)
-and equiv_let_cont env let_cont1 let_cont2 : eq =
-  match let_cont1, let_cont2 with
-  | Non_recursive {handler = handler1; body = body1},
-    Non_recursive {handler = handler2; body = body2} ->
-    equiv_cont_handler env handler1 handler2 &&
-    Core_letcont_body.pattern_match_pair body1 body2
-      (fun _bound b1 b2 -> equiv env b1 b2)
-  | Recursive handlers1, Recursive handlers2 ->
-    Core_recursive.pattern_match_pair handlers1 handlers2
-      (fun (_params : Bound_parameters.t)
-        (body1 : core_exp) (body2 : core_exp)
-        (map1 : continuation_handler_map) (map2 : continuation_handler_map) ->
-        equiv env body1 body2 &&
-        equiv_cont_handler_map env map1 map2)
-  | (Non_recursive _ | Recursive _), _ -> false
+and equiv_let_cont env
+      {handler = handler1; body = body1} {handler = handler2; body = body2}: eq =
+  equiv_cont_handler env handler1 handler2 &&
+  Core_letcont_body.pattern_match_pair body1 body2
+    (fun _bound b1 b2 -> equiv env b1 b2)
 
 and equiv_cont_handler env handler1 handler2 =
   Core_continuation_handler.pattern_match_pair handler1 handler2
     (fun _bound h1 h2 -> equiv env h1 h2)
-
-and equiv_cont_handler_map env
-      (map1 : continuation_handler_map) (map2 : continuation_handler_map) =
-  Continuation.Map.equal (equiv_cont_handler env) map1 map2
 
 (* [apply] *)
 and equiv_apply env (e1 : apply_expr) (e2 : apply_expr) : eq =

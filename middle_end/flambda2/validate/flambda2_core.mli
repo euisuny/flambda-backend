@@ -98,25 +98,8 @@ and let_cont_expr =
      [fun x -> e2] = handler
      bound variable [k] = Bound_continuation.t
      [e1] = body (has bound variable [k] in scope) *)
-  | Non_recursive of
-    { handler : continuation_handler;
-      body : (Bound_continuation.t, core_exp) Name_abstraction.t;}
-
-  (* Recursive case, we have a set of (mutually recursive) continuations
-     [let rec K x in e] where [K] is a map of continuations
-     [x] is the set of invariant parameters
-     bound variable [K] is in the scope of [e]
-
-     [x] = invariant_params (Bound_parameters.t)
-     [K] = continuation_map
-     [e] = body *)
-  | Recursive of
-      (Bound_continuations.t, recursive_let_expr) Name_abstraction.t
-
-and recursive_let_expr =
-  { continuation_map :
-      (Bound_parameters.t, continuation_handler_map) Name_abstraction.t;
-    body : core_exp; }
+  { handler : continuation_handler;
+    body : (Bound_continuation.t, core_exp) Name_abstraction.t;}
 
 and continuation_handler_map =
   continuation_handler Continuation.Map.t
@@ -215,12 +198,6 @@ module ContMap : sig
   val ids_for_export : t -> Ids_for_export.t
 end
 
-module RecursiveLetExpr : sig
-  type t = recursive_let_expr
-  val apply_renaming : t -> Renaming.t -> t
-  val ids_for_export : t -> Ids_for_export.t
-end
-
 module Core_let : sig
   type t = let_expr
   val create : x:Bound_for_let.t -> e1:core_exp -> e2 :core_exp -> core_exp
@@ -256,36 +233,14 @@ module Core_letcont_body : sig
     t -> t -> (Bound_continuation.t -> core_exp -> core_exp -> 'a) -> 'a
 end
 
-module Core_recursive : sig
-
-  type t = (Bound_continuations.t, recursive_let_expr) Name_abstraction.t
-
-  val create : Bound_continuations.t -> recursive_let_expr -> t
-
-  val pattern_match :
-    t ->
-    f:(Bound_continuations.t -> recursive_let_expr -> 'a) -> 'a
-
-  val pattern_match_pair :
-    t -> t ->
-    (Bound_parameters.t ->
-     core_exp ->
-     core_exp -> continuation_handler_map -> continuation_handler_map -> 'a) -> 'a
-end
-
 module Core_letcont : sig
   type t
 
   val print : Format.formatter -> let_cont_expr -> unit
 
-  val create_non_recursive :
+  val create :
     continuation_handler ->
     body:((Bound_continuation.t, core_exp) Name_abstraction.t) ->
-    core_exp
-
-  val create_recursive :
-    Bound_continuations.t ->
-    recursive_let_expr ->
     core_exp
 end
 

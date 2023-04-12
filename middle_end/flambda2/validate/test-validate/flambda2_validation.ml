@@ -7,7 +7,7 @@ let extension = ".fl"
 
 (** Test file locations **)
 let alpha_test_dir = "./alpha/"
-let test_dir = "./tests/"
+let test_dir = "/usr/local/home/iyoon/workspaces/validation/flambda-backend/middle_end/flambda2/validate/test-validate/tests/"
 
 let print = Flambda2_core.print
 
@@ -43,10 +43,10 @@ let check_alpha_equivalence file1 file2 : unit =
   Format.fprintf Format.std_formatter
    "..............................................................................@.";
   let fl_output = parse_flambda (alpha_test_dir ^ file1) in
-  let core_output = flambda_unit_to_core fl_output in
+  let core_output, _ = flambda_unit_to_core fl_output in
 
   let fl_output_alpha = parse_flambda (alpha_test_dir ^ file2) in
-  let core_output_alpha = flambda_unit_to_core fl_output_alpha in
+  let core_output_alpha, _ = flambda_unit_to_core fl_output_alpha in
 
   (* Alpha equivalence check *)
   print Format.std_formatter core_output;
@@ -84,8 +84,8 @@ let simplify_term file : unit =
     "---------------------------↓↓--[simplify]--↓↓-------------------------------@.";
   Format.fprintf Format.std_formatter "%a@.@." Flambda_unit.print simplify_result;
 
-  let src_core = flambda_unit_to_core fl_output in
-  let tgt_core = flambda_unit_to_core simplify_result in
+  let src_core, _ = flambda_unit_to_core fl_output in
+  let tgt_core, _ = flambda_unit_to_core simplify_result in
 
   Format.fprintf Format.std_formatter
     "-----------------------------------------------------------------------------@.";
@@ -119,16 +119,16 @@ let normalize_term file : unit =
     "---------------------------↓↓--[simplify]--↓↓-------------------------------@.";
   Format.fprintf Format.std_formatter "%a@.@." Flambda_unit.print simplify_result;
 
-  let src_core = flambda_unit_to_core fl_output in
-  let tgt_core = flambda_unit_to_core simplify_result in
+  let src_core, src_env = flambda_unit_to_core fl_output in
+  let tgt_core, tgt_env = flambda_unit_to_core simplify_result in
 
   Format.fprintf Format.std_formatter
     "\t\t\t\tNormalizing...\t\t\t@.";
   Format.fprintf Format.std_formatter
     "------------------------------------------------------------------------------@.";
 
-  let src_core = src_core |> normalize in
-  let tgt_core = tgt_core |> normalize in
+  let src_core = src_core |> normalize src_env in
+  let tgt_core = tgt_core |> normalize tgt_env in
 
   let alpha_eq = Equiv.core_eq src_core tgt_core in
 
@@ -148,5 +148,5 @@ let normalize_term file : unit =
 (** Top-level driver for alpha equivalence checker and verbose validator tests **)
 let () =
   (* alpha_equivalence_test_suite (); *)
-  (* normalize_term "arith.fl"; *)
+  normalize_term "apply_orig.fl";
   ()
