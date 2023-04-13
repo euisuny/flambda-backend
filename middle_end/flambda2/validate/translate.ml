@@ -118,13 +118,38 @@ and named_to_core (t : Bound_pattern.t) (e : Flambda.named) (s : env) :
   | Static static, Static_consts e ->
     let static = Bound_static.to_list static in
     let body = Static_const_group.to_list e in
-    let var, group, s = static_consts_to_core (List.combine static body) ([], []) s in
+    let var, group, (s, code) =
+      static_consts_to_core (List.combine static body) ([], []) s
+    in
     let e = Expr.create_named (Static_consts group) in
-    (Static (Bound_codelike.create var), Some e, s)
+    let e = apply_subst s e in
+    (* LATER: Not very efficient *)
+    (match must_be_static_consts e with
+     | Some group ->
+        let var, group, code = add_code (List.combine var group) ([], []) code in
+        let e = Expr.create_named (Static_consts group) in
+        (Static (Bound_codelike.create var), Some e, (s, code))
+     | None -> Misc.fatal_error "Unreachable")
   | Singleton v, Rec_info t ->
     let e = Expr.create_named (Rec_info t) in
     (Singleton v, Some e, s)
   | _, _ -> Misc.fatal_error "Mismatched let binding with expression")[@ocaml.warning "-4"]
+
+and add_code
+      (l : (Bound_codelike.Pattern.t * static_const_or_code) list) (pat_acc, acc) code:
+  (Bound_codelike.Pattern.t list) * Flambda2_core.static_const_group * code =
+  match l with
+  | [] -> pat_acc, acc, code
+  | (var, x) :: l ->
+    let pat_acc, acc, code =
+      (match var, x with
+       | Bound_codelike.Pattern.Code v, Code e ->
+         let code = Code.add v e code in
+         pat_acc, acc, code
+       | _, _ ->
+         var :: pat_acc, x :: acc, code)[@ocaml.warning "-4"]
+    in
+    add_code l (pat_acc, acc) code
 
 and static_consts_to_core
       (l : (Bound_static.Pattern.t * Static_const_or_code.t) list) (pat_acc, acc) (s, code):
@@ -138,8 +163,8 @@ and static_consts_to_core
          let e, (s, code) =
            Code0.params_and_body e |> function_params_and_body_to_core (s, code) var
          in
-         let code = Code.add v e code in
-         pat_acc, acc, s, code
+         (Bound_codelike.Pattern.code v) :: pat_acc,
+         (Code e) :: acc, s, code
        | Block_like v, Static_const t ->
          let e = static_const_to_core t in
          (Bound_codelike.Pattern.block_like v) :: pat_acc,
