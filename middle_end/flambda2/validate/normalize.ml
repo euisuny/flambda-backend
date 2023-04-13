@@ -533,15 +533,28 @@ and step_apply_lambda c lambda_expr continuation exn_continuation region apply_a
                  Expr.create_named (Literal l)
             ) () exp
         in
-        subst_params params exp apply_args |> step c)
+        let e = subst_params params exp apply_args in
+        (c, e))
+        (* match must_be_apply e with *)
+        (* | Some _ -> (c, e)
+         * | None -> step c e) *)
+        (* (c, subst_params params exp apply_args)) *)
 
 and step_apply c callee continuation exn_continuation region apply_args : clo * core_exp =
-  let c, callee = step c callee in
+  (let c, callee = step c callee in
   let c, continuation = step c continuation in
   let c, exn_continuation = step c exn_continuation in
   let c, region = step c region in
   let apply_args = List.map (fun x -> let _, x = step c x in x) apply_args in
   match Expr.descr callee with
+  | Named (Literal (Slot (phi, Function_slot slot))) ->
+    (let {function_decls; value_slots = _} = Clo.find phi c in
+     let expr = Function_slot.Lmap.find slot function_decls in
+     match must_be_lambda expr with
+     | Some expr ->
+       step_apply_lambda c expr continuation exn_continuation region apply_args
+     | None ->
+       step_apply_no_beta_redex c callee continuation exn_continuation region apply_args)
   | Named (Closure_expr (phi, slot,
                          {function_decls; value_slots = _})) ->
     step_apply_function_decls c phi slot function_decls
@@ -553,6 +566,7 @@ and step_apply c callee continuation exn_continuation region apply_args : clo * 
            | Rec_info _)
      | Handler _ | Let _ | Let_cont _ | Apply _ | Apply_cont _ | Switch _ | Invalid _) ->
     step_apply_no_beta_redex c callee continuation exn_continuation region apply_args
+  )[@ocaml.warning "-4"]
 
 (* Note that the beta-reduction for [apply_cont] is implemented in
    [step_let_cont] (LATER: Refactor) *)
@@ -567,177 +581,6 @@ and step_apply_cont c k args : clo * core_exp =
     Core_continuation_handler.pattern_match handler
       (fun params e -> subst_params params e args) |> step c
   | None -> c, Expr.create_apply_cont {k; args}
-
-and step_static_const c (phi : Bound_for_let.t) (const : static_const)
-  : clo * static_const =
-  match const with
-  | Static_set_of_closures set ->
-    let c, e = step_set_of_closures c phi set in
-    c, Static_set_of_closures e
-  | Block (tag, mut, list) ->
-    c, Block (tag, mut, List.map (fun x -> let _, x = step c x in x) list)
-  | (Boxed_float _ | Boxed_int32 _ | Boxed_int64 _ | Boxed_nativeint _
-    | Immutable_float_block _ | Immutable_float_array _ | Immutable_value_array _
-    | Empty_array | Mutable_string _ | Immutable_string _) -> c, const (* CHECK *)
-
-and step_static_const_or_code c (phi : Bound_for_let.t)
-      (const_or_code : static_const_or_code) : clo * static_const_or_code =
-  match const_or_code with
-  | Code {expr=code; anon}->
-    Core_function_params_and_body.pattern_match code
-      ~f:(fun param y ->
-        Core_lambda.pattern_match y
-          ~f:(fun bound body ->
-            let c, body = step c body in
-            let params_and_body =
-              Core_function_params_and_body.create param
-                (Core_lambda.create bound body)
-            in
-            c, Code {expr=params_and_body; anon}))
-  | Static_const const ->
-    let c, e = step_static_const c phi const in
-    c, Static_const e
-  | Deleted_code -> c, Deleted_code
-
-and step_static_const_group c (phi : Bound_codelike.Pattern.t list)
-      (consts : static_const_group) : Bound_codelike.Pattern.t list * core_exp =
-  let phi_consts = List.combine phi consts in
-  let set_of_closures, static_consts =
-    List.partition (fun (_, x) -> is_static_set_of_closures x) phi_consts
-  in
-  (* If the set of closures is non-empty, substitute in the list of code
-     blocks into the set of closures *)
-  match set_of_closures with
-  | [] -> (phi, Expr.create_named (Static_consts consts))
-  | _ ->
-   (let code, static_consts =
-      List.partition (fun (_, x) -> is_code x) static_consts
-    in
-    let anon_code, code =
-      List.partition (fun (_, x) ->
-        (match x with
-        | Code {expr=_; anon} -> anon
-        | (Static_const _ | Deleted_code) -> false)) code
-    in
-    (* Substitute in the anonymous functions first, partition them into
-       "anon-fn"-prefixed code and non anonymous functions.
-       This is because anonymous functions get its set of closures declaration
-       locally inside of a code block after simplification *)
-    let code = code @ anon_code
-    in
-    let process_set_of_closures (set : set_of_closures) =
-      List.fold_left
-        (fun acc (id, x) ->
-          match x with
-          | Code x ->
-            let code_id : Code_id.t =
-              (match Bound_codelike.Pattern.must_be_code id with
-                | Some id -> id
-                | None -> Misc.fatal_error "Expected code id")
-            in
-            let code =
-              subst_code_id_set_of_closures code_id
-                ~let_body:(Expr.create_named (Static_consts [Code x])) acc
-            in
-            code
-          | (Static_const _ | Deleted_code) ->
-            Misc.fatal_error "Expected code bound") set code
-    in
-    let set_of_closures =
-      List.map
-        (fun (phi, x) ->
-          match x with
-          | Static_const x ->
-            (match must_be_static_set_of_closures x with
-              | Some x ->
-                let phi = Bound_for_let.Static (Bound_codelike.create [phi])
-                in
-                let c, e = (process_set_of_closures x |> step_set_of_closures c phi) in
-                c, Static_const (Static_set_of_closures e)
-              | None -> Misc.fatal_error "Expected set of closures")
-          | (Code _ | Deleted_code) ->
-            Misc.fatal_error "Expected set of closures") set_of_closures
-    in
-    let static_consts =
-      List.map (fun (_, x) ->
-        step_static_const_or_code c
-                     (Bound_for_let.Static (Bound_codelike.create phi)) x)
-        static_consts
-    in
-    let consts = set_of_closures @ static_consts in
-    let phi =
-      List.filter (fun x -> not (Bound_codelike.Pattern.is_code x)) phi
-    in
-    let consts = List.map (fun (_, x) -> x) consts in
-    (phi, Expr.create_named (Static_consts consts)))
-
-(* N.B. This normalization is rather inefficient;
-   Right now (for the sake of clarity) it goes through three passes of the
-   value and function expressions *)
-and step_set_of_closures c (phi : Bound_for_let.t)
-      {function_decls; value_slots}
-  : clo  * set_of_closures =
-  let value_slots =
-    Value_slot.Map.map (fun x -> let _, x = step c x in x) value_slots
-  in
-  (* [ClosureVal] and [ClosureFn]
-     substituting in value slots for [Project_value_slots] and
-     substituting in function slots for [Project_function_slots] *)
-  let in_order =
-    Function_slot.Lmap.mapi
-      (fun slot x ->
-        (match must_be_code x with
-          | Some code ->
-            let params_and_body =
-              subst_my_closure phi slot code
-                {function_decls;value_slots}
-            in
-            params_and_body
-          | None -> x))
-      function_decls
-  in
-  (* step function slots
-     NOTE (for later):
-     This might need to change when we're dealing with effectful functions *)
-  let function_decls =
-    Function_slot.Lmap.map (fun x -> let _, x = step c x in x) in_order in
-  c, { function_decls ; value_slots }
-
-(* For every occurrence of the "my_closure" argument in [fn_expr],
-   substitute in [Slot(phi, clo)] *)
-and subst_my_closure (phi : Bound_for_let.t) (slot : Function_slot.t)
-      ({expr=fn_expr;anon} : function_params_and_body)
-      (clo : set_of_closures) : core_exp =
-  (match phi with
-  | Singleton var
-  | Static [Set_of_closures var] ->
-    (let phi = Bound_var.var var
-     in
-      Core_function_params_and_body.pattern_match fn_expr
-        ~f:(fun bff e ->
-          (* bff is the "my_closure" variable *)
-          Expr.create_lambda
-            (Core_lambda.pattern_match e
-               ~f:(fun bound body ->
-                 (* Note: Can't use [Renaming] because it is bidirectional:
-                    we only want to substitute in one direction here, namely
-                    if we see any occurrence of a [my_closure], substitute in
-                    the closure [phi] variable. *)
-                 let body =
-                   core_fmap
-                     (fun _ s ->
-                        match s with
-                        | Simple simple ->
-                            if (Simple.same (Simple.var (Bound_var.var bff)) simple)
-                            then
-                              Expr.create_named (Literal (Slot (phi, Function_slot slot)))
-                            else (Expr.create_named (Literal s))
-                        | (Cont _ | Res_cont _ | Slot _ | Code_id _) -> Expr.create_named (Literal s))
-                     () body
-                 in
-                Core_lambda.create bound (subst_my_closure_body phi clo body)))))
-  | Static ((Code _ | Block_like _ | Set_of_closures _) :: _ | []) ->
-    Expr.create_named (Static_consts [Code {expr=fn_expr; anon}]))
 
 (* N.B. [Projection reduction]
     When we substitute in a set of closures for primitives,
@@ -838,25 +681,14 @@ and step_named_for_let (c : clo) (var: Bound_for_let.t) (body: named)
   match body with
   | Literal _ (* A [Simple] is a register-sized value *)
   | Rec_info _ (* Information about inlining recursive calls, an integer variable *) ->
-    (var, c, Expr.create_named (body))
+    (var, c, Expr.create_named body)
   | Closure_expr (phi, slot, set) ->
-    let c, e = step_set_of_closures c var set in
-    (var, c, Expr.create_named (Closure_expr (phi, slot, e)))
+    (var, c, Expr.create_named (Closure_expr (phi, slot, set)))
   | Set_of_closures set -> (* Map of [Code_id]s and [Simple]s corresponding to
                               function and value slots*)
-    let c, e = step_set_of_closures c var set in
-    (var, c, Expr.create_named (Set_of_closures e))
+    (var, c, Expr.create_named (Set_of_closures set))
   | Static_consts consts -> (* [Static_consts] are statically-allocated values *)
-    (match var with
-     | Static var ->
-       let bound_vars = Bound_codelike.to_list var in
-       let phi, exp = step_static_const_group c bound_vars consts in
-       (Static (Bound_codelike.create phi), c, exp)
-     | Singleton _ ->
-       let consts =
-         static_const_group_fix
-           (fun x -> let _, x = step c x in x) consts in
-       (var, c, consts))
+    (var, c, Expr.create_named (Static_consts consts))
   | Prim v -> (var, c, Eval_prim.eval v)
 
 (* Inline non-recursive continuation handlers first *)
@@ -899,6 +731,69 @@ let subst_phi (clo, e) =
          Expr.create_named (Literal e))
     () e
 
+let concretize_my_closure phi (slot : Function_slot.t)
+      ({expr=fn_expr;anon=_} : function_params_and_body)
+      (clo : set_of_closures) : core_exp =
+  Core_function_params_and_body.pattern_match fn_expr
+    ~f:(fun bff e ->
+      (* bff is the "my_closure" variable *)
+      Expr.create_lambda
+        (Core_lambda.pattern_match e
+            ~f:(fun bound body ->
+              (* Note: Can't use [Renaming] because it is bidirectional:
+                we only want to substitute in one direction here, namely
+                if we see any occurrence of a [my_closure], substitute in
+                the closure [phi] variable. *)
+              let body =
+                core_fmap
+                  (fun _ s ->
+                    match s with
+                    | Simple simple ->
+                        if (Simple.same (Simple.var (Bound_var.var bff)) simple)
+                        then
+                          Expr.create_named (Literal (Slot (phi, Function_slot slot)))
+                        else (Expr.create_named (Literal s))
+                    | (Cont _ | Res_cont _ | Slot _ | Code_id _) ->
+                      Expr.create_named (Literal s))
+                  () body
+              in
+            Core_lambda.create bound (subst_my_closure_body phi clo body))))
+
+let step_clo var
+      {function_decls; value_slots} : set_of_closures =
+  (* [ClosureVal] and [ClosureFn]
+     substituting in value slots for [Project_value_slots] and
+     substituting in function slots for [Project_function_slots] *)
+  let function_decls =
+    Function_slot.Lmap.mapi
+      (fun slot x ->
+         (match must_be_code x with
+          | Some code ->
+            let params_and_body =
+              concretize_my_closure var slot code {function_decls;value_slots}
+            in
+            params_and_body
+          | None -> x))
+      function_decls
+  in
+  { function_decls ; value_slots }
+
+let normalize_clo (c : clo) : clo =
+  let c = Clo.mapi (fun k v -> step_clo k v) c in
+  let c =
+    Clo.map
+      (fun {function_decls; value_slots} ->
+         let function_decls =
+           Function_slot.Lmap.map
+             (fun x ->
+                let _, x = step c x in
+                x) function_decls
+         in
+         { function_decls ; value_slots }) c
+  in
+  c
+
 let normalize clo e =
   let e = inline_handlers e in
+  let clo = normalize_clo clo in
   step clo e |> subst_phi

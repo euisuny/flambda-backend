@@ -103,7 +103,8 @@ and let_to_core (e : Let_expr.t) (s : env) :
       let e2, (s, clo, code) = flambda_expr_to_core body s in
       let e2 = apply_subst s e2 in
       match e1 with
-      | Some e1 -> Core_let.create ~x ~e1 ~e2, (s, clo, code)
+      | Some e1 ->
+        Core_let.create ~x ~e1 ~e2, (s, clo, code)
       | None -> e2, (s, clo, code))
 
 and named_to_core (t : Bound_pattern.t) (e : Flambda.named) (s : env) :
@@ -139,8 +140,8 @@ and static_consts_to_core
     let pat_acc, acc, s, clo, code =
       (match var, x with
        | Code v, Code e ->
-         let e =
-           Code0.params_and_body e |> function_params_and_body_to_core var
+         let e, (s, clo, code) =
+           Code0.params_and_body e |> function_params_and_body_to_core (s, clo, code) var
          in
          let code = Code.add v e code in
          pat_acc, acc, s, clo, code
@@ -220,10 +221,9 @@ and field_of_static_block_to_core (e : Field_of_static_block.t) : core_exp =
   | Dynamically_computed (var, _) ->
     Expr.create_named (Literal (Simple (Simple.var var)))
 
-and function_params_and_body_to_core
+and function_params_and_body_to_core s
       (var : Bound_static.Pattern.t)
-      (t : Flambda.function_params_and_body):
-  Flambda2_core.function_params_and_body =
+      (t : Flambda.function_params_and_body) =
   let name =
     (match var with
      | Code id -> id
@@ -232,27 +232,28 @@ and function_params_and_body_to_core
   let anon =
     String.starts_with ~prefix:"anon-fn[" (Code_id.name name)
   in
-  { expr =
-      Function_params_and_body.pattern_match' t
-        ~f:(fun (bound: Bound_for_function.t) ~body ->
-          let my_closure = Bound_for_function.my_closure bound
-          in
-          let body, _ = flambda_expr_to_core body (Sub.empty, Clo.empty, Code.empty) in
-          Core_function_params_and_body.create
-            (Bound_var.create my_closure Name_mode.normal)
-            (Core_lambda.create
-              (Bound_for_lambda.create
-                  ~return_continuation:
-                    (Bound_for_function.return_continuation bound)
-                  ~exn_continuation:
-                    (Bound_for_function.exn_continuation bound)
-                  ~params:
-                    (Bound_for_function.params bound)
-                  ~my_region:
-                    (Bound_for_function.my_region bound))
-              body)
-        );
-    anon}
+  let bound, my_closure, (body, s) =
+    Function_params_and_body.pattern_match' t
+      ~f:(fun (bound: Bound_for_function.t) ~body ->
+        let my_closure = Bound_for_function.my_closure bound in
+        bound, my_closure, flambda_expr_to_core body s)
+  in
+  let expr =
+    Core_function_params_and_body.create
+      (Bound_var.create my_closure Name_mode.normal)
+      (Core_lambda.create
+         (Bound_for_lambda.create
+            ~return_continuation:
+              (Bound_for_function.return_continuation bound)
+            ~exn_continuation:
+              (Bound_for_function.exn_continuation bound)
+            ~params:
+              (Bound_for_function.params bound)
+            ~my_region:
+              (Bound_for_function.my_region bound))
+         body)
+  in
+  ({expr; anon}, s)
 
 and subst_cont_id (cont : Continuation.t) (e1 : core_exp) (e2 : core_exp) : core_exp =
   core_fmap
@@ -456,58 +457,69 @@ and switch_to_core (e : Switch.t) (s : env)
   in
   e, s
 
-let subst_env (_, clo, code) =
-  let anon, code = Code.partition (fun _ {expr=_; anon} -> anon) code in
-  (* Substitute anonymous functions in code *)
-  let code =
-    Code.fold
-      (fun anon_id {expr; anon=_} acc ->
-         Code.map
-           (fun {expr=v; anon} ->
-              let expr =
-                Core_function_params_and_body.pattern_match v
-                  ~f:(fun my_closure e ->
-                     Core_lambda.pattern_match e
-                       ~f:(fun b v ->
-                         let e =
-                            core_fmap (fun () l ->
-                              match l with
-                              | Code_id id ->
-                                if (Code_id.compare anon_id id = 0)
-                                then
-                                  Expr.create_named (Static_consts [Code {expr; anon}])
-                                else v
-                              | (Simple _ | Cont _ | Res_cont _ | Slot _) ->
-                                Expr.create_named (Literal l)) () v
-                         in
-                         Core_function_params_and_body.create my_closure
-                           (Core_lambda.create b e)))
-              in
-              {expr; anon}
-           ) acc
-      ) anon code in
-  let clo =
-    Code.fold
-      (fun anon_id {expr; anon} acc ->
-         Clo.map
-           (fun {function_decls;value_slots} ->
-              let fn =
-                Function_slot.Lmap.map
+let subst_env (sub, clo, code) =
+  (* let anon, code = Code.partition (fun _ {expr=_; anon} -> anon) code in
+   * (* Substitute anonymous functions in code *)
+   * let code =
+   *   Code.fold
+   *     (fun anon_id {expr; anon=_} acc ->
+   *        Code.map
+   *          (fun {expr=v; anon} ->
+   *             let expr =
+   *               Core_function_params_and_body.pattern_match v
+   *                 ~f:(fun my_closure e ->
+   *                    Core_lambda.pattern_match e
+   *                      ~f:(fun b v ->
+   *                        let e =
+   *                           core_fmap (fun () l ->
+   *                             match l with
+   *                             | Code_id id ->
+   *                               if (Code_id.compare anon_id id = 0)
+   *                               then
+   *                                 Expr.create_named (Static_consts [Code {expr; anon}])
+   *                               else v
+   *                             | (Simple _ | Cont _ | Res_cont _ | Slot _) ->
+   *                               Expr.create_named (Literal l)) () v
+   *                        in
+   *                        Core_function_params_and_body.create my_closure
+   *                          (Core_lambda.create b e)))
+   *             in
+   *             {expr; anon}
+   *          ) acc
+   *     ) anon code in *)
+  Code.fold
+    (fun anon_id {expr; anon} acc ->
+        Clo.map
+          (fun {function_decls;value_slots} ->
+            let fn =
+              Function_slot.Lmap.map
+              (fun e ->
+                  core_fmap
+                    (fun () l ->
+                      match l with
+                      | Code_id id ->
+                        if (Code_id.compare anon_id id = 0)
+                        then
+                          Expr.create_named (Static_consts [Code {expr; anon}])
+                        else e
+                      | (Simple _ | Cont _ | Res_cont _ | Slot _) ->
+                        Expr.create_named (Literal l)) () e) function_decls
+            in
+            let value_slots =
+              Value_slot.Map.map
                 (fun e ->
-                   core_fmap
-                     (fun () l ->
+                    core_fmap
+                      (fun () l ->
                         match l with
-                        | Code_id id ->
-                          if (Code_id.compare anon_id id = 0)
-                          then
-                            Expr.create_named (Static_consts [Code {expr; anon}])
-                          else e
-                        | (Simple _ | Cont _ | Res_cont _ | Slot _) ->
-                          Expr.create_named (Literal l)) () e) function_decls
-              in
-              {function_decls=fn; value_slots}) acc) code clo
-  in
-  clo
+                        | Simple s ->
+                          (match Sub.find_opt s sub with
+                            | Some s -> s
+                            | None -> e)
+                        | (Code_id _ | Cont _ | Res_cont _ | Slot _) ->
+                          Expr.create_named (Literal l)) () e) value_slots
+            in
+            {function_decls=fn; value_slots}) acc) code clo
+
 
 let flambda_unit_to_core e =
   let e, env =

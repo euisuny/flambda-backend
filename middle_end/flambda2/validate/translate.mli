@@ -16,10 +16,11 @@ open! Flambda2_core
 
 type substitutions
 
-module Clo : sig
-  type 'a t
-  val find : Variable.t -> 'a t -> 'a
-end
+module Clo : Map.S with type key = Variable.t
+(* module Clo : sig
+ *   type 'a t
+ *   val find : Variable.t -> 'a t -> 'a
+ * end *)
 
 type clo = set_of_closures Clo.t
 
