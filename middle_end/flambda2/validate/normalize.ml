@@ -7,6 +7,10 @@ open! Translate
     - CBV-style reduction for [let] and [letcont] expressions
     - Assumes that the [typeopt/value_kind] flag is [false] *)
 
+(* Environment that keeps track of code *)
+module Code = Map.Make (Code_id)
+type code = function_params_and_body Code.t
+
 (* The current compilation unit; initialized to dummy unit *)
 let comp_unit : Compilation_unit.t ref =
   ref (Compilation_unit.create Compilation_unit.Prefix.empty
@@ -54,7 +58,6 @@ let rec does_not_occur (v : literal) acc (exp : core_exp) =
     does_not_occur v acc scrutinee &&
     Targetint_31_63.Map.fold
       (fun _ x acc -> acc && does_not_occur v acc x) arms true
-
 
 (* Substitution funtions for β-reduction *)
 (* [Let-β]
@@ -751,6 +754,25 @@ and step_named_for_let (c : code) (var: Bound_for_let.t) (body: named)
     in
     (var, c, Expr.create_named (Set_of_closures set))
   | Static_consts consts -> (* [Static_consts] are statically-allocated values *)
+    let c =
+      (match var with
+       | Static binding ->
+         let l = List.combine binding consts in
+         List.fold_left (fun acc (var, x) ->
+           match var, x with
+           | Bound_codelike.Pattern.Code var, Code x ->
+              Code.add var x acc
+           | _, _ -> acc) c l
+       | _ -> c)[@ocaml.warning "-4"]
+    in
+    let var, consts =
+      (match var with
+      | Static binding ->
+        let l = List.combine binding consts in
+        List.filter (fun (_, x) -> match x with Code _ -> false | _ -> true) l |>
+        List.split
+      | _ -> Misc.fatal_error "Unreachable")[@ocaml.warning "-4"]
+    in
     (* FIXME *)
     (let consts =
       List.map (
@@ -771,7 +793,8 @@ and step_named_for_let (c : code) (var: Bound_for_let.t) (body: named)
             Static_const (Static_set_of_closures {function_decls; value_slots})
           | _ -> x) consts
     in
-    (var, c, Expr.create_named (Static_consts consts)))[@ocaml.warning "-4"]
+    (Static (Bound_codelike.create var),
+     c, Expr.create_named (Static_consts consts)))[@ocaml.warning "-4"]
   | Prim v -> (var, c, Eval_prim.eval v)
 
 and concretize_my_closure phi (slot : Function_slot.t)
@@ -853,6 +876,6 @@ and inline_let_cont ({handler; body}:let_cont_expr) : core_exp =
           )
     ) |> inline_handlers
 
-let normalize code e =
+let normalize e =
   let e = inline_handlers e in
-  let _, e = step code e in e
+  let _, e = step Code.empty e in e

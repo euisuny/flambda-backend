@@ -15,10 +15,8 @@ open! Flambda2_core
     while normalizing [core_exp] terms. **)
 
 type substitutions
-module Code : Map.S with type key = Code_id.t
-type code = function_params_and_body Code.t
 
-type env = substitutions * code
+type env = substitutions
 
 val create_env : env
 
@@ -32,6 +30,6 @@ val prim_to_core : Flambda_primitive.t -> primitive
 val flambda_expr_to_core :
   Flambda.expr -> env -> core_exp * env
 
-val flambda_unit_to_core : Flambda_unit.t -> core_exp * code
+val flambda_unit_to_core : Flambda_unit.t -> core_exp
 
 val tagged_immediate_to_core : Targetint_31_63.t -> core_exp
