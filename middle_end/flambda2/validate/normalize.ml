@@ -631,6 +631,7 @@ and step_apply c callee continuation exn_continuation region apply_args : code *
 (* Note that the beta-reduction for [apply_cont] is implemented in
    [step_let_cont] (LATER: Refactor) *)
 and step_apply_cont c k args : code * core_exp =
+  let c, k = step c k in
   (* [ApplyCont]
             args ⟶ args'
       --------------------------
