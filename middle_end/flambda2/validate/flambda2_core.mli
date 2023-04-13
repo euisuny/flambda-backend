@@ -138,6 +138,8 @@ val is_static_set_of_closures : static_const_or_code -> bool
 
 val is_code : static_const_or_code -> bool
 
+val must_be_literal : core_exp -> literal option
+
 val must_be_named : core_exp -> named option
 
 val must_be_prim : core_exp -> primitive option

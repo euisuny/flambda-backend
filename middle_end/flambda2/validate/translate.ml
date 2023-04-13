@@ -13,17 +13,13 @@ let comp_unit : Compilation_unit.t ref =
 module Sub = Map.Make (Simple)
 type substitutions = core_exp Sub.t
 
-(* Environment that keeps track of closures *)
-module Clo = Map.Make (Variable)
-type clo = set_of_closures Clo.t
-
-(* Environment that keeps track of closures *)
+(* Environment that keeps track of code *)
 module Code = Map.Make (Code_id)
 type code = function_params_and_body Code.t
 
-type env = substitutions * clo * code
+type env = substitutions * code
 
-let create_env = (Sub.empty, Clo.empty, Code.empty)
+let create_env = (Sub.empty, Code.empty)
 
 (** Translation from flambda2 terms to simplified core language **)
 let simple_to_core (v : Simple.t) : core_exp =
@@ -46,7 +42,7 @@ let apply_subst (s : substitutions) (e : core_exp) : core_exp =
 
 let subst_var_slot
       (vars : Bound_var.t list)
-      (e : core_exp) ((s, clo, code) : env) : Bound_for_let.t * env =
+      (e : core_exp) ((s, code) : env) : Bound_for_let.t * env =
   let phivar = Variable.create "ϕ" in
   let phi = Bound_var.create phivar Name_mode.normal in
   match descr e with
@@ -60,8 +56,7 @@ let subst_var_slot
           (Expr.create_named (Literal (Slot (Bound_var.var phi, Function_slot slot)))) s)) s
       (List.combine vars in_order)
     in
-    let clo = Clo.add phivar soc clo in
-    (Singleton phi, (s, clo, code))
+    (Singleton phi, (s, code))
   | (Named (Literal _ | Prim _ | Closure_expr _ | Static_consts _ | Rec_info _) |
      Let _ | Let_cont _ | Apply _ | Apply_cont _ | Lambda _ | Handler _ | Switch _
     | Invalid _ ) ->
@@ -100,12 +95,12 @@ and let_to_core (e : Let_expr.t) (s : env) :
          the prefix starts with [anon-fn]) *)
       let x, e1, s = named_to_core var (Let_expr.defining_expr e) s in
       (* let x, e1, s = bound_pattern_to_core var e1 s in *)
-      let e2, (s, clo, code) = flambda_expr_to_core body s in
+      let e2, (s, code) = flambda_expr_to_core body s in
       let e2 = apply_subst s e2 in
       match e1 with
       | Some e1 ->
-        Core_let.create ~x ~e1 ~e2, (s, clo, code)
-      | None -> e2, (s, clo, code))
+        Core_let.create ~x ~e1 ~e2, (s, code)
+      | None -> e2, (s, code))
 
 and named_to_core (t : Bound_pattern.t) (e : Flambda.named) (s : env) :
   Bound_for_let.t * core_exp option * env =
@@ -119,7 +114,7 @@ and named_to_core (t : Bound_pattern.t) (e : Flambda.named) (s : env) :
   | Set_of_closures vars, Set_of_closures e ->
     let e = Set_of_closures (set_of_closures_to_core e) |> Expr.create_named in
     let var, s = subst_var_slot vars e s in
-    (var, None, s)
+    (var, Some e, s)
   | Static static, Static_consts e ->
     let static = Bound_static.to_list static in
     let body = Static_const_group.to_list e in
@@ -132,37 +127,37 @@ and named_to_core (t : Bound_pattern.t) (e : Flambda.named) (s : env) :
   | _, _ -> Misc.fatal_error "Mismatched let binding with expression")[@ocaml.warning "-4"]
 
 and static_consts_to_core
-      (l : (Bound_static.Pattern.t * Static_const_or_code.t) list) (pat_acc, acc) (s, clo, code):
+      (l : (Bound_static.Pattern.t * Static_const_or_code.t) list) (pat_acc, acc) (s, code):
   (Bound_codelike.Pattern.t list) * Flambda2_core.static_const_group * env =
   match l with
-  | [] -> pat_acc, acc, (s, clo, code)
+  | [] -> pat_acc, acc, (s, code)
   | (var, x) :: l ->
-    let pat_acc, acc, s, clo, code =
+    let pat_acc, acc, s, code =
       (match var, x with
        | Code v, Code e ->
-         let e, (s, clo, code) =
-           Code0.params_and_body e |> function_params_and_body_to_core (s, clo, code) var
+         let e, (s, code) =
+           Code0.params_and_body e |> function_params_and_body_to_core (s, code) var
          in
          let code = Code.add v e code in
-         pat_acc, acc, s, clo, code
+         pat_acc, acc, s, code
        | Block_like v, Static_const t ->
          let e = static_const_to_core t in
          (Bound_codelike.Pattern.block_like v) :: pat_acc,
-         (Static_const e) :: acc, s, clo, code
+         (Static_const e) :: acc, s, code
        | Set_of_closures bound, Static_const (Set_of_closures soc) ->
          let phivar = (Variable.create "ϕ") in
          let phi = Bound_var.create phivar Name_mode.normal in
          (* substitue in new variable *)
          let soc = set_of_closures_to_core soc in
          let s = subst_static_slot bound phi s in
-         let clo = Clo.add phivar soc clo in
-         pat_acc, acc, s, clo, code
+         (Bound_codelike.Pattern.set_of_closures phi)::pat_acc,
+         (Static_const (Static_set_of_closures soc))::acc, s, code
        | Code v, Deleted_code ->
          (Bound_codelike.Pattern.code v) :: pat_acc,
-         Deleted_code :: acc, s, clo, code
+         Deleted_code :: acc, s, code
        | _, _ -> Misc.fatal_error "Mismatched static consts binding")[@ocaml.warning "-4"]
     in
-    static_consts_to_core l (pat_acc, acc) (s, clo, code)
+    static_consts_to_core l (pat_acc, acc) (s, code)
 
 and set_of_closures_to_core (e : Set_of_closures.t) : set_of_closures =
   let function_decls =
@@ -457,72 +452,8 @@ and switch_to_core (e : Switch.t) (s : env)
   in
   e, s
 
-let subst_env (sub, clo, code) =
-  (* let anon, code = Code.partition (fun _ {expr=_; anon} -> anon) code in
-   * (* Substitute anonymous functions in code *)
-   * let code =
-   *   Code.fold
-   *     (fun anon_id {expr; anon=_} acc ->
-   *        Code.map
-   *          (fun {expr=v; anon} ->
-   *             let expr =
-   *               Core_function_params_and_body.pattern_match v
-   *                 ~f:(fun my_closure e ->
-   *                    Core_lambda.pattern_match e
-   *                      ~f:(fun b v ->
-   *                        let e =
-   *                           core_fmap (fun () l ->
-   *                             match l with
-   *                             | Code_id id ->
-   *                               if (Code_id.compare anon_id id = 0)
-   *                               then
-   *                                 Expr.create_named (Static_consts [Code {expr; anon}])
-   *                               else v
-   *                             | (Simple _ | Cont _ | Res_cont _ | Slot _) ->
-   *                               Expr.create_named (Literal l)) () v
-   *                        in
-   *                        Core_function_params_and_body.create my_closure
-   *                          (Core_lambda.create b e)))
-   *             in
-   *             {expr; anon}
-   *          ) acc
-   *     ) anon code in *)
-  Code.fold
-    (fun anon_id {expr; anon} acc ->
-        Clo.map
-          (fun {function_decls;value_slots} ->
-            let fn =
-              Function_slot.Lmap.map
-              (fun e ->
-                  core_fmap
-                    (fun () l ->
-                      match l with
-                      | Code_id id ->
-                        if (Code_id.compare anon_id id = 0)
-                        then
-                          Expr.create_named (Static_consts [Code {expr; anon}])
-                        else e
-                      | (Simple _ | Cont _ | Res_cont _ | Slot _) ->
-                        Expr.create_named (Literal l)) () e) function_decls
-            in
-            let value_slots =
-              Value_slot.Map.map
-                (fun e ->
-                    core_fmap
-                      (fun () l ->
-                        match l with
-                        | Simple s ->
-                          (match Sub.find_opt s sub with
-                            | Some s -> s
-                            | None -> e)
-                        | (Code_id _ | Cont _ | Res_cont _ | Slot _) ->
-                          Expr.create_named (Literal l)) () e) value_slots
-            in
-            {function_decls=fn; value_slots}) acc) code clo
-
-
 let flambda_unit_to_core e =
-  let e, env =
-    flambda_expr_to_core (Flambda_unit.body e) (Sub.empty, Clo.empty, Code.empty)
+  let e, (_, env) =
+    flambda_expr_to_core (Flambda_unit.body e) (Sub.empty, Code.empty)
   in
-  e, subst_env env
+  e, env
