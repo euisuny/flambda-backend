@@ -145,10 +145,10 @@ let equiv_code_ids _ _ _ = true
 let rec equiv (env:Env.t) e1 e2 : eq =
   match Expr.descr e1, Expr.descr e2 with
   | Named (Closure_expr (_, slot1, {function_decls;_})), Lambda _ ->
-    let e1 = Function_slot.Lmap.find slot1 function_decls in
+    let e1 = SlotMap.find slot1 function_decls in
     equiv env e1 e2
   | Lambda _, Named (Closure_expr (_, slot1, {function_decls;_}))  ->
-    let e2 = Function_slot.Lmap.find slot1 function_decls in
+    let e2 = SlotMap.find slot1 function_decls in
     equiv env e1 e2
   | Named v1, Named v2 -> equiv_named env v1 v2
   | Let e1, Let e2 -> equiv_let env e1 e2
@@ -278,7 +278,7 @@ and equiv_set_of_closures env
   let function_slots_and_fun_decls_by_code_id (set : set_of_closures)
       : (core_exp * (Function_slot.t * core_exp)) list =
     let map = set.function_decls in
-    Function_slot.Lmap.bindings map
+    SlotMap.bindings map
     |> List.map (fun (function_slot, code_id) ->
       code_id, (function_slot, code_id))
   in
@@ -434,5 +434,6 @@ and equiv_switch env
   Targetint_31_63.Map.equal (equiv env) arms1 arms2
 
 let core_eq e1 e2 =
-  try (equiv (Env.create ()) e1 e2) with
-  Invalid_argument _ -> unequal e1 e2
+  try (let result = equiv (Env.create ()) e1 e2 in
+       Int_ids.Variable.initialise (); Gc.full_major (); result) with
+  Invalid_argument _ -> false

@@ -6,6 +6,7 @@ let fprintf = Format.fprintf
    (2) Ignore [Num_occurrences] (which is used for making inlining decisions)
    (3) Ignored traps for now *)
 
+module SlotMap = Map.Make (Function_slot)
 
 (* This signature ensures absolutely that the insides of an expression cannot be
    accessed before any necessary delayed renaming has been applied. *)
@@ -89,7 +90,7 @@ and set_of_closures =
     value_slots : core_exp Value_slot.Map.t}
 
 (* functions that are in-order *)
-and function_declarations = core_exp Function_slot.Lmap.t
+and function_declarations = core_exp SlotMap.t
 
 and primitive =
   | Nullary of P.nullary_primitive
@@ -260,10 +261,19 @@ and apply_renaming_named t renaming : named =
   | Rec_info info ->
     Rec_info (Rec_info_expr.apply_renaming info renaming)
 
+(* let rec map_sharing f l0 =
+ *   match l0 with
+ *   | a :: l ->
+ *     let a' = f a in
+ *     let l' = map_sharing f l in
+ *     if a' == a && l' == l then l0 else a' :: l'
+ *   | [] -> [] *)
+
+(* FIXME: Try to use [map_sharing]*)
 and apply_renaming_function_declarations
-      (funs : function_declarations) renaming :
-  function_declarations =
-  Function_slot.Lmap.map_sharing (fun x -> apply_renaming x renaming) funs
+      (funs : function_declarations) renaming =
+  SlotMap.map (fun x -> apply_renaming x renaming)
+    funs
 
 and apply_renaming_set_of_closures
       ({ function_decls; value_slots } as t : set_of_closures)
@@ -790,8 +800,14 @@ and print_value_slot ppf value =
   Format.fprintf ppf "@[(%a)@]" print value
 
 and print_function_declaration ppf in_order =
-  Format.fprintf ppf "(%a)"
-    (Function_slot.Lmap.print print) in_order
+  Format.fprintf ppf "@[<hov 1>{%a}@]"
+    (Format.pp_print_list ~pp_sep:Format.pp_print_space
+       (fun ppf (key, datum) ->
+          Format.fprintf ppf "@[<hov 1>(%a@ %a)@]"
+            Function_slot.print key print
+            datum)) (in_order |> SlotMap.bindings)
+  (* Format.fprintf ppf "(%a)"
+   *   (SlotMap.print print) (in_order |> SlotMap.bindings) *)
 
 and print_prim ppf (t : primitive) =
   match t with
@@ -1015,7 +1031,7 @@ and ids_for_export_named (t : named) =
   | Rec_info info -> Rec_info_expr.ids_for_export info
 
 and ids_for_export_function_decls funs =
-  Function_slot.Lmap.fold
+  SlotMap.fold
     (fun _function_slot fn_expr ids ->
        Ids_for_export.union (ids_for_export fn_expr) ids)
     funs Ids_for_export.empty
@@ -1393,7 +1409,7 @@ let switch_fix (f : core_exp -> core_exp)
 
 let set_of_closures_fix
       (fix : core_exp -> core_exp) {function_decls; value_slots} =
-  let function_decls = Function_slot.Lmap.map fix function_decls in
+  let function_decls = SlotMap.map fix function_decls in
   let value_slots =
     Value_slot.Map.map (fun x -> fix x) value_slots
   in
@@ -1467,6 +1483,7 @@ let named_fix (fix : core_exp -> core_exp)
     Named e
     |> With_delayed_renaming.create
 
+(* LATER: Make this first order? *)
 let rec core_fmap
   (f : 'a -> literal -> core_exp) (arg : 'a) (e : core_exp) : core_exp =
   match descr e with

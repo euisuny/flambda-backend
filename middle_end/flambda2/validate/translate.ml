@@ -43,7 +43,7 @@ let subst_var_slot
   let phi = Bound_var.create phivar Name_mode.normal in
   match descr e with
   | Named (Set_of_closures soc) ->
-    let in_order = Function_slot.Lmap.bindings soc.function_decls
+    let in_order = SlotMap.bindings soc.function_decls
     in
     let s =
       List.fold_left
@@ -120,33 +120,10 @@ and named_to_core (t : Bound_pattern.t) (e : Flambda.named) (s : env) :
     let e = Expr.create_named (Static_consts group) in
     let e = apply_subst s e in
     (Static (Bound_codelike.create var), Some e, s)
-    (* (* LATER: Not very efficient *)
-     * (match must_be_static_consts e with
-     *  | Some group ->
-     *     let var, group, code = add_code (List.combine var group) ([], []) code in
-     *     let e = Expr.create_named (Static_consts group) in
-     *     (Static (Bound_codelike.create var), Some e, (s, code))
-     *  | None -> Misc.fatal_error "Unreachable") *)
   | Singleton v, Rec_info t ->
     let e = Expr.create_named (Rec_info t) in
     (Singleton v, Some e, s)
   | _, _ -> Misc.fatal_error "Mismatched let binding with expression")[@ocaml.warning "-4"]
-
-(* and add_code
- *       (l : (Bound_codelike.Pattern.t * static_const_or_code) list) (pat_acc, acc) code:
- *   (Bound_codelike.Pattern.t list) * Flambda2_core.static_const_group * code =
- *   match l with
- *   | [] -> pat_acc, acc, code
- *   | (var, x) :: l ->
- *     let pat_acc, acc, code =
- *       (match var, x with
- *        | Bound_codelike.Pattern.Code v, Code e ->
- *          let code = Code.add v e code in
- *          pat_acc, acc, code
- *        | _, _ ->
- *          var :: pat_acc, x :: acc, code)[@ocaml.warning "-4"]
- *     in
- *     add_code l (pat_acc, acc) code *)
 
 and static_consts_to_core
       (l : (Bound_static.Pattern.t * Static_const_or_code.t) list) (pat_acc, acc) s:
@@ -190,8 +167,9 @@ and set_of_closures_to_core (e : Set_of_closures.t) : set_of_closures =
   { function_decls; value_slots }
 
 and function_declarations_to_core (e : Function_declarations.t) : function_declarations =
-  Function_declarations.funs_in_order e |>
-  Function_slot.Lmap.map (fun x -> Expr.create_named (Literal (Code_id x)))
+    Function_declarations.funs_in_order e |>
+    Function_slot.Lmap.map (fun x -> Expr.create_named (Literal (Code_id x))) |>
+    Function_slot.Lmap.bindings |> List.to_seq |> SlotMap.of_seq
 
 and value_slots_to_core
       (e : (Simple.t) Value_slot.Map.t) : core_exp Value_slot.Map.t =
@@ -290,7 +268,7 @@ and handler_map_to_closures (phi : Variable.t) (v : Bound_parameter.t list)
   let in_order =
     Continuation.Map.fold
       (fun (key : Continuation.t) (e : continuation_handler)
-        (fun_decls: core_exp Function_slot.Lmap.t) ->
+        (fun_decls) ->
        (* add handler as a lambda to set of function decls *)
        let slot =
          Function_slot.create !comp_unit ~name:(Continuation.name key)
@@ -310,8 +288,8 @@ and handler_map_to_closures (phi : Variable.t) (v : Bound_parameter.t list)
        (* for every occurence of [key] in [e], substitute
           with Slot(phi, Function_slot slot) *)
        let lambda = Expr.create_handler e in
-       Function_slot.Lmap.add slot lambda fun_decls) m
-    Function_slot.Lmap.empty
+       SlotMap.add slot lambda fun_decls) m
+    SlotMap.empty
   in
   { function_decls = in_order;
     value_slots = Value_slot.Map.empty }
@@ -349,7 +327,7 @@ and let_cont_to_core (e : Let_cont_expr.t) (sub : env) :
              handler_map_to_closures phi
                (Bound_parameters.to_list invariant_params) handlers
            in
-           let in_order = clo.function_decls |> Function_slot.Lmap.bindings in
+           let in_order = clo.function_decls |> SlotMap.bindings in
            let in_order_with_cont =
              List.combine (Bound_continuations.to_list bound) in_order
            in
@@ -389,15 +367,15 @@ and subst_singleton_set_of_closures_named ~bound ~clo (e : named) : core_exp =
     | Simple v ->
       (if Simple.same v (Simple.var bound) then
          (let {function_decls; value_slots=_} = clo in
-          match Function_slot.Lmap.get_singleton function_decls with
-          | Some (slot, _) ->
+          match SlotMap.bindings function_decls with
+          | [(slot, _)] ->
               Expr.create_named (Closure_expr (bound, slot, clo))
-          | None ->
+          | ([] | _::_)->
             Expr.create_named (Set_of_closures clo))
       else
         Expr.create_named (Literal (Simple v)))
     | Slot (phi, Function_slot slot) ->
-      (let decls = Function_slot.Lmap.bindings clo.function_decls in
+      (let decls = SlotMap.bindings clo.function_decls in
        let bound_closure = List.find_opt (fun (x, _) -> x = slot) decls in
        (match bound_closure with
         | None -> Expr.create_named e

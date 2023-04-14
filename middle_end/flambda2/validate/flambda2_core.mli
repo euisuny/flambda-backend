@@ -4,6 +4,7 @@ module P = Flambda_primitive
 (* (1) Simple.t -> core_exp for [Apply*] expressions
    (2) Ignore [Num_occurrences] (which is used for making inlining decisions)
    (3) Ignored traps for now *)
+module SlotMap : Map.S with type key = Function_slot.t
 
 module With_delayed_renaming : sig
   type 'descr t
@@ -55,7 +56,7 @@ and set_of_closures =
   { function_decls : function_declarations;
     value_slots : core_exp Value_slot.Map.t}
 
-and function_declarations = core_exp Function_slot.Lmap.t
+and function_declarations = core_exp SlotMap.t
 
 and primitive =
   | Nullary of P.nullary_primitive
