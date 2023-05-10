@@ -148,5 +148,5 @@ let normalize_term file : unit =
 (** Top-level driver for alpha equivalence checker and verbose validator tests **)
 let () =
   (* alpha_equivalence_test_suite (); *)
-  (* normalize_term "apply_orig.fl"; *)
+  (* normalize_term "tests12.fl"; *)
   ()

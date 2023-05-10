@@ -376,9 +376,9 @@ let rec step (c: code) (e: core_exp) : code * core_exp =
   | Handler e -> step_handler c e
   | Switch {scrutinee; arms} ->
     let c, scrutinee = step c scrutinee in
-    (* let arms =
-     *   Targetint_31_63.Map.map (fun x -> let _, e = step c x in e) arms
-     * in *)
+    let arms =
+      Targetint_31_63.Map.map (fun x -> let _, e = step c x in e) arms
+    in
     c, step_switch scrutinee arms
   | Named e -> step_named c e
   | Invalid _ -> c, e
@@ -403,7 +403,7 @@ and step_handler c (e : continuation_handler) =
 and step_switch scrutinee arms : core_exp =
   let default =
     (* ((* if the arms are all the same, collapse them to a single arm *) *)
-      Expr.create_switch {scrutinee;arms}
+      Expr.create_switch {scrutinee; arms}
     (* let bindings = Targetint_31_63.Map.bindings arms in
      * let (_, hd) = List.hd bindings in
      * Equiv.debug := false;
@@ -425,6 +425,8 @@ and step_switch scrutinee arms : core_exp =
       | None -> default)
   | None -> default
 
+(* FIXME: normalize apply tailcall if other expressions are not inlined yet
+          (should happen for non-tailcalls as well) *)
 and step_let c let_abst body : code * core_exp =
   Core_let.pattern_match {let_abst; expr_body = body}
     ~f:(fun ~x ~e1 ~e2 ->
@@ -433,7 +435,7 @@ and step_let c let_abst body : code * core_exp =
         -------------------------------------
        let x = e1 in e2 ⟶ let x = e1' in e2 *)
     (* If the let-bound value is a closure, store the normalized value into the
-       cloironment. *)
+       environment. *)
     let x, c, e1 =
       (match must_be_named e1 with
        | Some e -> step_named_for_let c x e
@@ -441,21 +443,23 @@ and step_let c let_abst body : code * core_exp =
     in
     (* [Let-β]
        let x = v in e1 ⟶ e2 [x\v] *)
-    if can_inline e1
-    then
-      (subst_pattern ~bound:x ~let_body:e1 e2 |> step c)
-    else
-      (let c, e2 =
-         (if returns_unit e1 then
-            let e2 =
-              subst_pattern ~bound:x
-                ~let_body:(Expr.create_named (Literal (Simple
-                (Simple.const Int_ids.Const.const_zero)))) e2
-            in
-            e2
-          else e2) |> step c
-       in
-       c, Core_let.create ~x ~e1 ~e2))
+    (* if can_inline e1 *)
+    (* then *)
+      (subst_pattern ~bound:x ~let_body:e1 e2 |> step c))
+(*     else *)
+(*       ( *)
+(* (\* let c, e2 = step c e2 in *\) *)
+(*        let c, e2 = *)
+(*          (if returns_unit e1 then *)
+(*             let e2 = *)
+(*               subst_pattern ~bound:x *)
+(*                 ~let_body:(create_named (Literal (Simple *)
+(*                 (Simple.const Int_ids.Const.const_zero)))) e2 *)
+(*             in *)
+(*             e2 *)
+(*           else e2) |> step c *)
+(*        in *)
+(*        c, Core_let.create ~x ~e1 ~e2)) *)
 
 and step_let_cont c ({handler; body}:let_cont_expr) : code * core_exp =
   Core_continuation_handler.pattern_match handler
