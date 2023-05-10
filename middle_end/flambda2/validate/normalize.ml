@@ -7,9 +7,9 @@ open! Translate
     - CBV-style reduction for [let] and [letcont] expressions
     - Assumes that the [typeopt/value_kind] flag is [false] *)
 
-(* Environment that keeps track of code *)
-module Code = Map.Make (Code_id)
-type code = function_params_and_body Code.t
+(* Hash-consing environment that keeps track of code *)
+type code = (Code_id.t, function_params_and_body) Hashtbl.t
+let env : code = Hashtbl.create 10
 
 (* The current compilation unit; initialized to dummy unit *)
 let comp_unit : Compilation_unit.t ref =
@@ -361,48 +361,48 @@ let rec subst_cont (cont_e1: core_exp) (k: Bound_continuation.t)
     switch_fix (fun e -> subst_cont e k args cont_e2) e
   | Invalid _ -> cont_e1
 
-let rec step (c: code) (e: core_exp) : code * core_exp =
+let rec step (e: core_exp) : core_exp =
   match Expr.descr e with
   | Let { let_abst; expr_body } ->
-    step_let c let_abst expr_body
+    step_let let_abst expr_body
   | Let_cont e ->
-    step_let_cont c e
+    step_let_cont e
   | Apply {callee; continuation; exn_continuation; region; apply_args} ->
-    step_apply c callee continuation exn_continuation region apply_args
+    step_apply callee continuation exn_continuation region apply_args
   | Apply_cont {k ; args} ->
     (* The recursive call for [apply_cont] is done for the arguments *)
-    step_apply_cont c k args
-  | Lambda e -> step_lambda c e
-  | Handler e -> step_handler c e
+    step_apply_cont k args
+  | Lambda e -> step_lambda e
+  | Handler e -> step_handler e
   | Switch {scrutinee; arms} ->
-    let c, scrutinee = step c scrutinee in
+    let scrutinee = step scrutinee in
     let arms =
-      Targetint_31_63.Map.map (fun x -> let _, e = step c x in e) arms
+      Targetint_31_63.Map.map (fun x -> let e = step x in e) arms
     in
-    c, step_switch scrutinee arms
-  | Named e -> step_named c e
-  | Invalid _ -> c, e
+    step_switch scrutinee arms
+  | Named e -> step_named e
+  | Invalid _ -> e
 
-and step_lambda c (e : lambda_expr) =
+and step_lambda (e : lambda_expr) =
   Core_lambda.pattern_match e
     ~f:(fun {return_continuation; exn_continuation; params; my_region} e ->
-      let c, e = step c e in
-      c, Expr.create_lambda
+      let e = step e in
+      Expr.create_lambda
         (Core_lambda.create
            {return_continuation;exn_continuation;params;my_region}
             e))
 
-and step_handler c (e : continuation_handler) =
+and step_handler (e : continuation_handler) =
   Core_continuation_handler.pattern_match e
     (fun param e ->
-       let c, e = step c e in
-       c, Expr.create_handler
+       let e = step e in
+       Expr.create_handler
          (Core_continuation_handler.create param e))
 
 (* NOTE: [List.for_all] could be inefficient *)
 and step_switch scrutinee arms : core_exp =
   let default =
-    (* ((* if the arms are all the same, collapse them to a single arm *) *)
+    (* if the arms are all the same, collapse them to a single arm *)
       Expr.create_switch {scrutinee; arms}
     (* let bindings = Targetint_31_63.Map.bindings arms in
      * let (_, hd) = List.hd bindings in
@@ -427,7 +427,7 @@ and step_switch scrutinee arms : core_exp =
 
 (* FIXME: normalize apply tailcall if other expressions are not inlined yet
           (should happen for non-tailcalls as well) *)
-and step_let c let_abst body : code * core_exp =
+and step_let let_abst body : core_exp =
   Core_let.pattern_match {let_abst; expr_body = body}
     ~f:(fun ~x ~e1 ~e2 ->
     (* [LetL]
@@ -436,16 +436,16 @@ and step_let c let_abst body : code * core_exp =
        let x = e1 in e2 ⟶ let x = e1' in e2 *)
     (* If the let-bound value is a closure, store the normalized value into the
        environment. *)
-    let x, c, e1 =
+    let x, e1 =
       (match must_be_named e1 with
-       | Some e -> step_named_for_let c x e
-      | None -> let c, e1 = step c e1 in x, c, e1)
+       | Some e -> step_named_for_let x e
+      | None -> let e1 = step e1 in x, e1)
     in
     (* [Let-β]
        let x = v in e1 ⟶ e2 [x\v] *)
     (* if can_inline e1 *)
     (* then *)
-      (subst_pattern ~bound:x ~let_body:e1 e2 |> step c))
+      (subst_pattern ~bound:x ~let_body:e1 e2 |> step))
 (*     else *)
 (*       ( *)
 (* (\* let c, e2 = step c e2 in *\) *)
@@ -461,7 +461,7 @@ and step_let c let_abst body : code * core_exp =
 (*        in *)
 (*        c, Core_let.create ~x ~e1 ~e2)) *)
 
-and step_let_cont c ({handler; body}:let_cont_expr) : code * core_exp =
+and step_let_cont ({handler; body}:let_cont_expr) : core_exp =
   Core_continuation_handler.pattern_match handler
     (fun args e2 ->
         Core_letcont_body.pattern_match body
@@ -471,7 +471,7 @@ and step_let_cont c ({handler; body}:let_cont_expr) : code * core_exp =
             let result = subst_cont e1 k args e2 in
             result
           )
-    ) |> step c
+    ) |> step
 
 and step_fun_decls (decls : function_declarations) =
   SlotMap.mapi
@@ -526,10 +526,10 @@ and step_fun_decls (decls : function_declarations) =
        | None -> x
     ) decls
 
-and step_apply_no_beta_redex c callee continuation exn_continuation region apply_args :
-  code * core_exp =
+and step_apply_no_beta_redex callee continuation exn_continuation region apply_args :
+  core_exp =
   let default =
-    c, Expr.create_apply {callee;continuation;exn_continuation;region;apply_args}
+    Expr.create_apply {callee;continuation;exn_continuation;region;apply_args}
   in
   match Expr.descr callee with
   | Named (Closure_expr (phi, slot, {function_decls; value_slots})) ->
@@ -539,7 +539,7 @@ and step_apply_no_beta_redex c callee continuation exn_continuation region apply
     (match SlotMap.find_opt slot function_decls |>
             Option.map Expr.descr with
      | Some (Handler _) ->
-       c, Expr.create_apply_cont
+       Expr.create_apply_cont
          { k = Expr.create_named (Closure_expr (phi, slot, {function_decls; value_slots}));
            args = apply_args }
      | (Some (Named _ | Let _ | Let_cont _ | Apply _ | Apply_cont _ | Switch _
@@ -551,22 +551,22 @@ and step_apply_no_beta_redex c callee continuation exn_continuation region apply
     | Handler _ | Let _ | Let_cont _ | Apply _ | Apply_cont _ | Switch _ | Invalid _) ->
     default
 
-and step_apply_function_decls c phi slot function_decls
-      callee continuation exn_continuation region apply_args : code * core_exp =
+and step_apply_function_decls phi slot function_decls
+      callee continuation exn_continuation region apply_args : core_exp =
   match SlotMap.find_opt slot function_decls |>
         Option.map Expr.descr with
   | Some (Lambda exp) ->
     if does_not_occur (Simple (Simple.var phi)) true (Expr.create_lambda exp) then
-      step_apply_lambda c exp continuation exn_continuation region apply_args
+      step_apply_lambda exp continuation exn_continuation region apply_args
     else
-      step_apply_no_beta_redex c callee continuation exn_continuation region apply_args
+      step_apply_no_beta_redex callee continuation exn_continuation region apply_args
   | (Some (
     (Named _ | Let _ | Let_cont _ | Apply _ | Apply_cont _ | Switch _
     | Handler _ | Invalid _)) | None) ->
-    step_apply_no_beta_redex c callee continuation exn_continuation region apply_args
+    step_apply_no_beta_redex callee continuation exn_continuation region apply_args
 
-and step_apply_lambda c lambda_expr continuation exn_continuation region apply_args :
-  code * core_exp =
+and step_apply_lambda lambda_expr continuation exn_continuation region apply_args :
+  core_exp =
   Core_lambda.pattern_match lambda_expr
     ~f:(fun bound exp ->
         let params = bound.params in
@@ -588,43 +588,42 @@ and step_apply_lambda c lambda_expr continuation exn_continuation region apply_a
                  Expr.create_named (Literal l)
             ) () exp
         in
-        let e = subst_params params exp apply_args in
-        (c, e))
+        subst_params params exp apply_args)
 
-and step_apply c callee continuation exn_continuation region apply_args : code * core_exp =
-  (let c, callee = step c callee in
-  let c, continuation = step c continuation in
-  let c, exn_continuation = step c exn_continuation in
-  let c, region = step c region in
-  let apply_args = List.map (fun x -> let _, x = step c x in x) apply_args in
+and step_apply callee continuation exn_continuation region apply_args : core_exp =
+  (let callee = step callee in
+  let continuation = step continuation in
+  let exn_continuation = step exn_continuation in
+  let region = step region in
+  let apply_args = List.map step apply_args in
   match Expr.descr callee with
   | Named (Closure_expr (phi, slot,
                          {function_decls; value_slots = _})) ->
-    step_apply_function_decls c phi slot function_decls
+    step_apply_function_decls phi slot function_decls
       callee continuation exn_continuation region apply_args
   | Lambda expr ->
-    step_apply_lambda c expr continuation exn_continuation region apply_args
+    step_apply_lambda expr continuation exn_continuation region apply_args
   | (Named (Static_consts ((Code _ | Deleted_code | Static_const _)::_ | [])
            | Literal _ | Prim _ | Set_of_closures _
            | Rec_info _)
      | Handler _ | Let _ | Let_cont _ | Apply _ | Apply_cont _ | Switch _ | Invalid _) ->
-    step_apply_no_beta_redex c callee continuation exn_continuation region apply_args
+    step_apply_no_beta_redex callee continuation exn_continuation region apply_args
   )[@ocaml.warning "-4"]
 
 (* Note that the beta-reduction for [apply_cont] is implemented in
    [step_let_cont] (LATER: Refactor) *)
-and step_apply_cont c k args : code * core_exp =
-  let c, k = step c k in
+and step_apply_cont k args : core_exp =
+  let k = step k in
   (* [ApplyCont]
             args ⟶ args'
       --------------------------
      k args ⟶ k args'       *)
-  let args = List.map (fun x -> let _, x = step c x in x) args in
+  let args = List.map step args in
   match must_be_handler k with
   | Some handler ->
     Core_continuation_handler.pattern_match handler
-      (fun params e -> subst_params params e args) |> step c
-  | None -> c, Expr.create_apply_cont {k; args}
+      (fun params e -> subst_params params e args) |> step
+  | None -> Expr.create_apply_cont {k; args}
 
 (* N.B. [Projection reduction]
     When we substitute in a set of closures for primitives,
@@ -693,62 +692,52 @@ and subst_my_closure_body_named _phi
 
 (* This is a "normalization" of [named] expression, in quotations because there
   is some simple evaluation that occurs for primitive arithmetic expressions *)
-and step_named c (body : named) : code * core_exp =
+and step_named (body : named) : core_exp =
   match body with
   | Literal _ (* A [Simple] is a register-sized value *)
   | Rec_info _ (* Information about inlining recursive calls, an integer variable *) ->
-    c, Expr.create_named (body)
+    Expr.create_named (body)
   | Closure_expr (phi, slot, {function_decls; value_slots}) ->
-    let function_decls =
-      SlotMap.map (fun x -> let _, x = step c x in x) function_decls
-    in
-    let value_slots =
-      Value_slot.Map.map (fun x -> let _, x = step c x in x) value_slots
-    in
-    c, Expr.create_named (Closure_expr (phi, slot, {function_decls; value_slots}))
+    let function_decls = SlotMap.map step function_decls in
+    let value_slots = Value_slot.Map.map step value_slots in
+    Expr.create_named (Closure_expr (phi, slot, {function_decls; value_slots}))
   | Set_of_closures {function_decls; value_slots} ->
-    let function_decls =
-      SlotMap.map (fun x -> let _, x = step c x in x) function_decls
-    in
-    let value_slots =
-      Value_slot.Map.map (fun x -> let _, x = step c x in x) value_slots
-    in
-    c, Expr.create_named (Set_of_closures {function_decls; value_slots})
-  | Static_consts e ->
-    c, static_const_group_fix (fun x -> let _, x = step c x in x) e
-  | Prim v -> c, Eval_prim.eval v
+    let function_decls = SlotMap.map step function_decls in
+    let value_slots = Value_slot.Map.map step value_slots in
+    Expr.create_named (Set_of_closures {function_decls; value_slots})
+  | Static_consts e -> static_const_group_fix step e
+  | Prim v -> Eval_prim.eval v
 
 (* This is a "normalization" of [named] expression, in quotations because there
   is some simple evaluation that occurs for primitive arithmetic expressions *)
-and step_named_for_let (c : code) (var: Bound_for_let.t) (body: named)
-  : Bound_for_let.t * code * core_exp =
+and step_named_for_let (var: Bound_for_let.t) (body: named)
+  : Bound_for_let.t * core_exp =
   match body with
   | Literal _ (* A [Simple] is a register-sized value *)
   | Rec_info _ (* Information about inlining recursive calls, an integer variable *) ->
-    (var, c, Expr.create_named body)
+    (var, Expr.create_named body)
   | Closure_expr (phi, slot, set) ->
-    (var, c, Expr.create_named (Closure_expr (phi, slot, set)))
+    (var, Expr.create_named (Closure_expr (phi, slot, set)))
   | Set_of_closures set -> (* Map of [Code_id]s and [Simple]s corresponding to
                               function and value slots*)
     let set =
       (match var with
       | Singleton var | Static [Set_of_closures var] ->
-        let phi = Bound_var.var var in step_set_of_closures c phi set
+        let phi = Bound_var.var var in step_set_of_closures phi set
       | _ -> set)[@ocaml.warning "-4"]
     in
-    (var, c, Expr.create_named (Set_of_closures set))
+    (var, Expr.create_named (Set_of_closures set))
   | Static_consts consts -> (* [Static_consts] are statically-allocated values *)
-    let c =
-      (match var with
-       | Static binding ->
-         let l = List.combine binding consts in
-         List.fold_left (fun acc (var, x) ->
-           match var, x with
-           | Bound_codelike.Pattern.Code var, Code x ->
-              Code.add var x acc
-           | _, _ -> acc) c l
-       | _ -> c)[@ocaml.warning "-4"]
-    in
+    let _ = (match var with
+      | Static binding ->
+        let l = List.combine binding consts in
+        let _ =
+          List.map (fun (var, x) ->
+            match var, x with
+            | Bound_codelike.Pattern.Code var, Code x -> Hashtbl.add env var x
+            | _, _ -> ()) l
+        in ()
+      | _ -> ())[@ocaml.warning "-4"] in
     (match var with
     | Static binding ->
       let l = List.combine binding consts in
@@ -766,7 +755,7 @@ and step_named_for_let (c : code) (var: Bound_for_let.t) (body: named)
                     (fun x ->
                       match must_be_literal x with
                       | Some (Code_id id) ->
-                        let {expr=fn_expr;anon=_} = Code.find id c in
+                        let {expr=fn_expr;anon=_} = Hashtbl.find env id in
                         (* LATER : See if not creating this lambda improves performance *)
                         Core_function_params_and_body.pattern_match fn_expr
                           ~f:(fun _ e -> Expr.create_lambda e)
@@ -777,7 +766,7 @@ and step_named_for_let (c : code) (var: Bound_for_let.t) (body: named)
               | _ -> x) consts
         in
         (Static (Bound_codelike.create var),
-        c, Expr.create_named (Static_consts consts)))
+        Expr.create_named (Static_consts consts)))
     | _ ->
       (let consts =
          List.map (
@@ -789,7 +778,7 @@ and step_named_for_let (c : code) (var: Bound_for_let.t) (body: named)
                    (fun x ->
                       match must_be_literal x with
                       | Some (Code_id id) ->
-                        let {expr=fn_expr;anon=_} = Code.find id c in
+                        let {expr=fn_expr;anon=_} = Hashtbl.find env id in
                         Core_function_params_and_body.pattern_match fn_expr
                           ~f:(fun _ e -> Expr.create_lambda e)
                       | _ -> x)
@@ -798,9 +787,8 @@ and step_named_for_let (c : code) (var: Bound_for_let.t) (body: named)
                Static_const (Static_set_of_closures {function_decls; value_slots})
              | _ -> x) consts
        in
-       (var, c,
-        Expr.create_named (Static_consts consts))))[@ocaml.warning "-4"]
-  | Prim v -> (var, c, Eval_prim.eval v)
+       (var, Expr.create_named (Static_consts consts))))[@ocaml.warning "-4"]
+  | Prim v -> (var, Eval_prim.eval v)
 
 and concretize_my_closure phi (slot : Function_slot.t)
       ({expr=fn_expr;anon=_} : function_params_and_body)
@@ -830,8 +818,7 @@ and concretize_my_closure phi (slot : Function_slot.t)
               in
             Core_lambda.create bound (subst_my_closure_body phi clo body))))
 
-and step_set_of_closures
-      (c: code) var
+and step_set_of_closures var
       {function_decls; value_slots} : set_of_closures =
   (* [ClosureVal] and [ClosureFn]
      substituting in value slots for [Project_value_slots] and
@@ -841,7 +828,7 @@ and step_set_of_closures
       (fun slot x ->
          (match must_be_literal x with
           | Some (Code_id id) ->
-            let code = Code.find id c in
+            let code = Hashtbl.find env id in
             let params_and_body =
               concretize_my_closure var slot code {function_decls;value_slots}
             in
@@ -883,5 +870,4 @@ and inline_let_cont ({handler; body}:let_cont_expr) : core_exp =
 
 let normalize e =
   let e = inline_handlers e in
-  let _, e = step Code.empty e in
-  e
+  step e
