@@ -434,6 +434,5 @@ and equiv_switch env
   Targetint_31_63.Map.equal (equiv env) arms1 arms2
 
 let core_eq e1 e2 =
-  try (let result = equiv (Env.create ()) e1 e2 in
-       Int_ids.Variable.initialise (); Gc.full_major (); result) with
+  try (let result = equiv (Env.create ()) e1 e2 in result) with
   Invalid_argument _ -> false

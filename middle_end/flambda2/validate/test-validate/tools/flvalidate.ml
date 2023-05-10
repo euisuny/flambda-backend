@@ -37,11 +37,11 @@ let run_validator filename : Outcome.t =
   let {Simplify.unit = simplify_result ; _ } =
     Simplify.run ~cmx_loader ~round:0 fl_output in
 
-  let src_core, src_env = Translate.flambda_unit_to_core fl_output in
-  let tgt_core, tgt_env = Translate.flambda_unit_to_core simplify_result in
+  let src_core = Translate.flambda_unit_to_core fl_output in
+  let tgt_core = Translate.flambda_unit_to_core simplify_result in
 
-  let src_core = src_core |> Normalize.normalize src_env in
-  let tgt_core = tgt_core |> Normalize.normalize tgt_env in
+  let src_core = src_core |> Normalize.normalize in
+  let tgt_core = tgt_core |> Normalize.normalize in
 
   try
     (if Equiv.core_eq src_core tgt_core then
