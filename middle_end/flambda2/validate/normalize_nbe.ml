@@ -32,8 +32,8 @@ type value =
 and named_value =
   | VPrim of primitive_value
   | VClosure_expr of
-      (Variable.t * Function_slot.t * set_of_closures_value)
-  | VSet_of_closures of set_of_closures_value
+      (Variable.t * Function_slot.t * closure)
+  | VSet_of_closures of set_of_closures
   | VStatic_consts of static_const_group_value
   | VRec_info of Rec_info_expr.t
 
@@ -44,24 +44,13 @@ and primitive_value =
   | Ternary of P.ternary_primitive * value * value * value
   | Variadic of P.variadic_primitive * value list
 
-and set_of_closures_value =
-  { function_decls : function_declarations;
-    value_slots : value Value_slot.Map.t}
-
-(* functions that are in-order *)
-and function_declarations = value SlotMap.t
-
-and function_params_and_body_value =
-  { expr: (Bound_var.t, closure) Name_abstraction.t;
-    anon: bool }
-
 and static_const_or_code_value =
-  | Code of function_params_and_body_value
-  | Deleted_code
-  | Static_const of static_const_value
+  | VCode of closure
+  | VDeleted_code
+  | VStatic_const of static_const_value
 
 and static_const_value =
-  | Static_set_of_closures of set_of_closures_value
+  | Static_set_of_closures of closure
   | Block of Tag.Scannable.t * Mutability.t * value list
   | Boxed_float of Numeric_types.Float_by_bit_pattern.t Or_variable.t
   | Boxed_int32 of Int32.t Or_variable.t
@@ -177,19 +166,21 @@ let rec eval (env : (name * value) list) (e : core_exp) =
 and set_of_closures_to_closure
     (phi : Variable.t)
     (env: (name * value) list)
-    ({function_decls; value_slots} : set_of_closures_value)
+    ({function_decls; value_slots} : set_of_closures)
   : (name * value) list =
   (* Substitute in the value slots first *)
   let value_slots_list =
-    Value_slot.Map.to_seq value_slots |> List.of_seq in
+    Value_slot.Map.map (eval env) value_slots |>
+    Value_slot.Map.to_seq |> List.of_seq in
   let value_slots =
     List.map (fun (k, v) ->
-      (NSlot (phi, Value_slot k), v))
-    value_slots_list
+        (NSlot (phi, Value_slot k), v))
+      value_slots_list
   in
   let env = value_slots @ env in
   let function_decls_list =
-    function_decls |> SlotMap.to_seq |> List.of_seq
+    SlotMap.map (eval env) function_decls |>
+    SlotMap.to_seq |> List.of_seq
   in
   let function_decls =
     List.map (fun (k, v) -> (NSlot (phi, Function_slot k), v))
@@ -201,26 +192,41 @@ and eval_named (env : (name * value) list) (e : named) =
   match e with
   | Literal l -> eval_literal env l
   | Prim p -> eval_prim env p
-  | Closure_expr (var, fn, {function_decls; value_slots}) ->
-    let clos =
-      {function_decls =
-        SlotMap.map (eval env) function_decls;
-      value_slots =
-        Value_slot.Map.map (eval env) value_slots}
-    in
+  | Closure_expr (var, fn, clos) ->
     let env =
       set_of_closures_to_closure var env clos
     in
     List.assoc (NSlot (var, Function_slot fn)) env
-  | Set_of_closures {function_decls; value_slots} ->
-    VNamed (VSet_of_closures
-      {function_decls =
-          SlotMap.map (eval env) function_decls;
-        value_slots =
-          Value_slot.Map.map (eval env) value_slots})
-  | Static_consts _consts ->
-    failwith "Unimplemented"
+  | Set_of_closures clos ->
+    VNamed (VSet_of_closures clos)
+  | Static_consts consts ->
+    VNamed
+      (VStatic_consts
+         (List.map (eval_static_const_or_code env) consts))
   | Rec_info v -> VNamed (VRec_info v)
+
+and eval_static_const_or_code (env : (name * value) list)
+    (c : static_const_or_code) :
+  static_const_or_code_value =
+  match c with
+  | Code f -> eval_function_params_and_body env f
+  | Deleted_code -> VDeleted_code
+  | Static_const s -> VStatic_const (eval_static_const env s)
+
+and eval_function_params_and_body (env : (name * value) list) ({expr; _} : Flambda2_core.function_params_and_body) =
+  let v, args, e =
+    Core_function_params_and_body.pattern_match
+      expr ~f:(fun v t ->
+          let args, e =
+            Core_lambda.pattern_match t ~f:(fun b e -> b, e)
+          in (v, args, e))
+  in
+  VCode (Close ([NVar (Bound_var.var v); NLambda args],
+                  env, e))
+
+and eval_static_const
+    (_env : (name * value) list) (_s : static_const) =
+  failwith "Unimplemented"
 
 and eval_literal (env : (name * value) list) (e : literal) =
   match e with
