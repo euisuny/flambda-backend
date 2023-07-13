@@ -8,6 +8,7 @@ module SlotMap : Map.S with type key = Function_slot.t
 
 module With_delayed_renaming : sig
   type 'descr t
+  val create : 'descr -> 'descr t
 end
 
 type core_exp = exp_descr With_delayed_renaming.t

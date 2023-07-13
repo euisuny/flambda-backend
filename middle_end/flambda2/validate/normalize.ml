@@ -377,7 +377,7 @@ let rec step (e: core_exp) : core_exp =
   | Switch {scrutinee; arms} ->
     let scrutinee = step scrutinee in
     let arms =
-      Targetint_31_63.Map.map (fun x -> let e = step x in e) arms
+      Targetint_31_63.Map.map step arms
     in
     step_switch scrutinee arms
   | Named e -> step_named e
