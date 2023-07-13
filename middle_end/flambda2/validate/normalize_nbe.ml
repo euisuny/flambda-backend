@@ -34,8 +34,8 @@ and named_value =
   | VClosure_expr of
       (Variable.t * Function_slot.t * set_of_closures_value)
   | VSet_of_closures of set_of_closures_value
-  | Static_consts of static_const_group_value
-  | Rec_info
+  | VStatic_consts of static_const_group_value
+  | VRec_info of Rec_info_expr.t
 
 and primitive_value =
   | Nullary of P.nullary_primitive
@@ -174,32 +174,53 @@ let rec eval (env : (name * value) list) (e : core_exp) =
   | Named e -> eval_named env e
   | Invalid { message } -> VInvalid { message }
 
+and set_of_closures_to_closure
+    (phi : Variable.t)
+    (env: (name * value) list)
+    ({function_decls; value_slots} : set_of_closures_value)
+  : (name * value) list =
+  (* Substitute in the value slots first *)
+  let value_slots_list =
+    Value_slot.Map.to_seq value_slots |> List.of_seq in
+  let value_slots =
+    List.map (fun (k, v) ->
+      (NSlot (phi, Value_slot k), v))
+    value_slots_list
+  in
+  let env = value_slots @ env in
+  let function_decls_list =
+    function_decls |> SlotMap.to_seq |> List.of_seq
+  in
+  let function_decls =
+    List.map (fun (k, v) -> (NSlot (phi, Function_slot k), v))
+      function_decls_list
+  in
+  function_decls @ env
+
 and eval_named (env : (name * value) list) (e : named) =
   match e with
   | Literal l -> eval_literal env l
   | Prim p -> eval_prim env p
   | Closure_expr (var, fn, {function_decls; value_slots}) ->
-    let _var =
-      List.assoc (NSlot (var, Function_slot fn)) env
+    let clos =
+      {function_decls =
+        SlotMap.map (eval env) function_decls;
+      value_slots =
+        Value_slot.Map.map (eval env) value_slots}
     in
-    let _clos =
-      VSet_of_closures
-        {function_decls =
+    let env =
+      set_of_closures_to_closure var env clos
+    in
+    List.assoc (NSlot (var, Function_slot fn)) env
+  | Set_of_closures {function_decls; value_slots} ->
+    VNamed (VSet_of_closures
+      {function_decls =
           SlotMap.map (eval env) function_decls;
         value_slots =
-          Value_slot.Map.map (eval env) value_slots}
-    in
-    failwith "Unimplemented"
-  | Set_of_closures {function_decls; value_slots} ->
-      VSet_of_closures
-        {function_decls =
-           SlotMap.map (eval env) function_decls;
-         value_slots =
-           Value_slot.Map.map (eval env) value_slots}
+          Value_slot.Map.map (eval env) value_slots})
   | Static_consts _consts ->
     failwith "Unimplemented"
-  | Rec_info _ ->
-    failwith "Unimplemented"
+  | Rec_info v -> VNamed (VRec_info v)
 
 and eval_literal (env : (name * value) list) (e : literal) =
   match e with
