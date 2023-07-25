@@ -8,7 +8,7 @@ type name =
   | NCont of Continuation.t
   | NResCont of Apply_expr.Result_continuation.t
   | NVar of Variable.t
-  | NSimple of Simple.t
+  (* | NSimple of Simple.t *)
   | NSlot of Variable.t * slot
   | NCode of Code_id.t
   | NSymbol of Symbol.t
@@ -29,7 +29,15 @@ type value =
   | VSwitch of switch_value
   | VInvalid of { message : string }
 
+and literal_value =
+  | VSimple of Simple.t
+  | VCont of Continuation.t
+  | VRes_cont of Apply_expr.Result_continuation.t
+  | VSlot of (Variable.t * slot)
+  | VCode_id of Code_id.t
+
 and named_value =
+  | VLiteral of literal_value
   | VPrim of primitive_value
   | VClosure_expr of
       (Variable.t * Function_slot.t * closure)
@@ -50,7 +58,7 @@ and static_const_or_code_value =
   | VStatic_const of static_const_value
 
 and static_const_value =
-  | Static_set_of_closures of closure
+  | Static_set_of_closures of set_of_closures
   | Block of Tag.Scannable.t * Mutability.t * value list
   | Boxed_float of Numeric_types.Float_by_bit_pattern.t Or_variable.t
   | Boxed_int32 of Int32.t Or_variable.t
@@ -111,9 +119,11 @@ let rec eval (env : (name * value) list) (e : core_exp) =
       Core_let.pattern_match e
         ~f:(fun ~x ~e1 ~e2 -> x, e1, e2)
     in
+    Format.fprintf Format.std_formatter "let %a @." print e1;
     let x = let_bound_to_name x in
     eval ((x, eval env e1)::env) e2
   | Let_cont {handler; body} ->
+    Format.fprintf Format.std_formatter "LetCont@.";
     let e2 = With_delayed_renaming.create (Handler handler) in
     let k, e1 =
       Core_letcont_body.pattern_match body
@@ -123,6 +133,7 @@ let rec eval (env : (name * value) list) (e : core_exp) =
   | Apply
       {callee; continuation; exn_continuation;
        region; apply_args} ->
+    Format.fprintf Format.std_formatter "Apply@.";
     let apply_args = List.map (eval env) apply_args in
     (match eval env callee with
     | VLambda (Close (xs, env', t)) ->
@@ -160,10 +171,12 @@ let rec eval (env : (name * value) list) (e : core_exp) =
       scrutinee = eval env scrutinee;
       arms = Targetint_31_63.Map.map (eval env) arms
     }
-  | Named e -> eval_named env e
+  | Named e ->
+    Format.fprintf Format.std_formatter "Named@.";
+    eval_named env e
   | Invalid { message } -> VInvalid { message }
 
-and set_of_closures_to_closure
+and closure_expr_to_closure
     (phi : Variable.t)
     (env: (name * value) list)
     ({function_decls; value_slots} : set_of_closures)
@@ -194,7 +207,7 @@ and eval_named (env : (name * value) list) (e : named) =
   | Prim p -> eval_prim env p
   | Closure_expr (var, fn, clos) ->
     let env =
-      set_of_closures_to_closure var env clos
+      closure_expr_to_closure var env clos
     in
     List.assoc (NSlot (var, Function_slot fn)) env
   | Set_of_closures clos ->
@@ -225,13 +238,46 @@ and eval_function_params_and_body (env : (name * value) list) ({expr; _} : Flamb
                   env, e))
 
 and eval_static_const
-    (_env : (name * value) list) (_s : static_const) =
-  failwith "Unimplemented"
+    (env : (name * value) list) (s : static_const) =
+  match s with
+  | Static_set_of_closures s -> Static_set_of_closures s
+  | Block (tag, mut, l) ->
+    let l = List.map (eval env) l in
+    Block (tag, mut, l)
+  | Boxed_float t -> Boxed_float t
+  | Boxed_int32 t -> Boxed_int32 t
+  | Boxed_int64 t -> Boxed_int64 t
+  | Boxed_nativeint t -> Boxed_nativeint t
+  | Immutable_float_block t -> Immutable_float_block t
+  | Immutable_float_array t -> Immutable_float_array t
+  | Immutable_value_array t -> Immutable_value_array t
+  | Empty_array -> Empty_array
+  | Mutable_string { initial_value } -> Mutable_string { initial_value }
+  | Immutable_string s -> Immutable_string s
+
+and print_name (n : name) =
+  match n with
+  | NVar s ->
+    Format.fprintf Format.std_formatter "var %a @."
+      Variable.print s
+  | _ ->
+    Format.fprintf Format.std_formatter "something @."
+
+and print_env (env : (name * value) list) =
+    List.iter (fun (n, _) -> print_name n) env
 
 and eval_literal (env : (name * value) list) (e : literal) =
+  Format.fprintf Format.std_formatter "Literal %a @." Flambda2_core.print_literal e;
+  print_env env;
   match e with
-  | Simple s -> List.assoc (NSimple s) env
-  | Cont k -> List.assoc (NCont k) env
+  | Simple s ->
+    (match Simple.must_be_var s with
+    | Some (s, _) -> List.assoc (NVar s) env
+    | None -> VNamed (VLiteral (VSimple s)))
+  | Cont k ->
+    (match List.assoc_opt (NCont k) env with
+     | Some s -> s
+     | None -> VNamed (VLiteral (VCont k)))
   | Res_cont k -> List.assoc (NResCont k) env
   | Code_id id -> List.assoc (NCode id) env
   | Slot (var, slot) -> List.assoc (NSlot (var, slot)) env
@@ -254,13 +300,13 @@ let appCl (Close (x, env, t) : closure) (v : value list) : value =
   let env' = List.combine x v in
   eval (env' @ env) t
 
-let quote_named (_e : named_value) : named =
-  failwith "Unimplemented"
+let closure_to_soc _clo : set_of_closures =
+  failwith "Unimplemented closure to soc"
 
 let rec quote (ns : name list) (t : value) : core_exp =
   match t with
   | VNamed e ->
-    With_delayed_renaming.create (Named (quote_named e))
+    With_delayed_renaming.create (Named (quote_named ns e))
   | VApply {callee ; continuation ; exn_continuation ; region ; apply_args} ->
     let e =
       Apply
@@ -306,6 +352,38 @@ let rec quote (ns : name list) (t : value) : core_exp =
     With_delayed_renaming.create (Invalid { message })
   | VLambda _ | VHandler _ ->
     failwith "[VLambda/VHandler-quote] Unexpected closure length"
+
+and quote_named ns (e : named_value) : named =
+  match e with
+  | VLiteral s ->
+    Literal
+      (match s with
+       | VSimple s -> Simple s
+       | VCont k -> Cont k
+       | VRes_cont k -> Res_cont k
+       | VSlot s -> Slot s
+       | VCode_id id -> Code_id id)
+  | VPrim p -> quote_prim ns p
+  | VClosure_expr (var, slot, clo) ->
+    Closure_expr (var, slot, closure_to_soc clo)
+  | VSet_of_closures soc ->
+    Set_of_closures soc (* TODO *)
+  | VStatic_consts _group ->
+    failwith "Unimplemented static_consts"
+  | VRec_info rec_info -> Rec_info rec_info
+
+and quote_prim ns (e : primitive_value) : named =
+  match e with
+  | Nullary e ->
+    (Prim (Nullary e))
+  | Unary (p, e) ->
+    (Prim (Unary (p, quote ns e)))
+  | Binary (p, e1, e2) ->
+    (Prim (Binary (p, quote ns e1, quote ns e2)))
+  | Ternary (p, e1, e2, e3) ->
+    (Prim (Ternary (p, quote ns e1, quote ns e2, quote ns e3)))
+  | Variadic (p, l) ->
+    (Prim (Variadic (p, List.map (quote ns) l)))
 
 let nf (env : (name * value) list) (t : core_exp) =
   quote (List.map fst env) (eval env t)

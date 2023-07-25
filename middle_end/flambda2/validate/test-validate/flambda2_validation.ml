@@ -145,8 +145,52 @@ let normalize_term file : unit =
     "@.==============================================================================@.";
   ()
 
+let normalize_nbe_term file : unit =
+  let comp_unit =
+    Parse_flambda.make_compilation_unit ~extension ~filename:file () in
+  Compilation_unit.set_current (Some comp_unit);
+  let fl_output :Flambda_unit.t = parse_flambda (test_dir ^ file) in
+
+  let cmx_loader = Flambda_cmx.create_loader ~get_module_info in
+
+  let {Simplify.unit = simplify_result ; _ } =
+    Simplify.run ~cmx_loader ~round:0 fl_output in
+
+  Format.fprintf Format.std_formatter
+    "@.[Flambda_unit exprs]-------------------------------------------------------@.@.";
+  Format.fprintf Format.std_formatter "%a@." Flambda_unit.print fl_output;
+  Format.fprintf Format.std_formatter
+    "---------------------------↓↓--[simplify]--↓↓-------------------------------@.";
+  Format.fprintf Format.std_formatter "%a@.@." Flambda_unit.print simplify_result;
+
+  let src_core = flambda_unit_to_core fl_output in
+  let tgt_core = flambda_unit_to_core simplify_result in
+
+  Format.fprintf Format.std_formatter
+    "\t\t\t\tNormalizing...\t\t\t@.";
+  Format.fprintf Format.std_formatter
+    "------------------------------------------------------------------------------@.";
+
+  let src_core = src_core |> Normalize_nbe.normalize in
+  let tgt_core = tgt_core |> Normalize_nbe.normalize in
+
+  let alpha_eq = Equiv.core_eq src_core tgt_core in
+
+  Format.fprintf Format.std_formatter
+  "@.--------------------------------------------------------------------[original]@.";
+  print Format.std_formatter src_core;
+  Format.fprintf Format.std_formatter
+    "@.-------------------------------------------------------------------[simplified]@.";
+  print Format.std_formatter tgt_core;
+  Format.fprintf Format.std_formatter
+    "@..............................[α-equivalent?:%s]............................."
+    (alpha_eq |> Equiv.eq_string |> String.uppercase_ascii);
+  Format.fprintf Format.std_formatter
+    "@.==============================================================================@.";
+  ()
+
 (** Top-level driver for alpha equivalence checker and verbose validator tests **)
 let () =
   (* alpha_equivalence_test_suite (); *)
-  (* normalize_term "tests12.fl"; *)
+  normalize_nbe_term "apply.fl";
   ()
