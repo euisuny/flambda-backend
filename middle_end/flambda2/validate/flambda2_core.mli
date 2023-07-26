@@ -296,6 +296,7 @@ end
 
 val print : Format.formatter -> core_exp -> unit
 val print_literal : Format.formatter -> literal -> unit
+val print_named : Format.formatter -> named -> unit
 val print_static_pattern : Format.formatter -> Bound_codelike.Pattern.t -> unit
 val print_prim : Format.formatter -> primitive -> unit
 val print_bound_pattern : Format.formatter -> Bound_for_let.t -> unit

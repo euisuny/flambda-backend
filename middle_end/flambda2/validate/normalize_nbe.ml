@@ -130,6 +130,7 @@ let rec eval (env : (name * value) list) (e : core_exp) =
        region = eval env region;
        apply_args})[@ocaml.warning "-4"]
   | Apply_cont {k ; args} ->
+    Format.fprintf Format.std_formatter "ApplyCont@.";
     let args = List.map (eval env) args in
     (match eval env k with
      | VHandler (Close (xs, env', t)) ->
@@ -208,6 +209,7 @@ and closure_expr_to_closure
   function_decls @ env
 
 and eval_named (env : (name * value) list) (e : named) =
+  Format.fprintf Format.std_formatter "Eval Named %a@." print_named e;
   match e with
   | Literal l -> eval_literal env l
   | Prim p -> eval env (Eval_prim.eval p)
@@ -265,6 +267,16 @@ and print_name (n : name) =
   | NVar s ->
     Format.fprintf Format.std_formatter "var %a @."
       Variable.print s
+  | NSymbol s ->
+    Format.fprintf Format.std_formatter "symbol %a @."
+      Symbol.print s
+  | NSlot (v, Function_slot s) ->
+    Format.fprintf Format.std_formatter "slot %a %a @."
+      Variable.print v
+      Function_slot.print s
+  | NCode i ->
+    Format.fprintf Format.std_formatter "code id %a @."
+      Code_id.print i
   | _ ->
     Format.fprintf Format.std_formatter "something @."
 
@@ -288,7 +300,9 @@ and eval_literal (env : (name * value) list) (e : literal) =
      | None -> VNamed (VLiteral (VCont k)))
   | Res_cont k -> List.assoc (NResCont k) env
   | Code_id id -> List.assoc (NCode id) env
-  | Slot (var, slot) -> List.assoc (NSlot (var, slot)) env
+  | Slot (var, _) ->
+    (* TODO change -- lookup with actual thing *)
+    List.assoc (NVar var) env
 
 and _eval_prim (env : (name * value) list) (e : primitive) =
   (match e with
