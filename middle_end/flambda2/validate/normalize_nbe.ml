@@ -8,13 +8,12 @@ type name =
   | NCont of Continuation.t
   | NResCont of Apply_expr.Result_continuation.t
   | NVar of Variable.t
-  (* | NSimple of Simple.t *)
   | NSlot of Variable.t * slot
   | NCode of Code_id.t
   | NSymbol of Symbol.t
   | NLambda of Bound_for_lambda.t
   | NParams of Bound_parameters.t
-  | NList of name list
+  | NRec of name list
 
 (* Semantic values of Flambda2 terms
 
@@ -95,22 +94,6 @@ and env = (name * value) list
 (* A closure is a list of names, environment, and a core expression *)
 and closure = Close of name list * env * core_exp
 
-let let_bound_to_name (t : Bound_for_let.t) : name =
-  match t with
-  | Singleton v ->
-    NVar (Bound_var.var v)
-  | Static c ->
-    let l = Bound_codelike.to_list c in
-    let to_name c =
-    (match c with
-     | Bound_codelike.Pattern.Code c -> NCode c
-     | Bound_codelike.Pattern.Set_of_closures v ->
-       NVar (Bound_var.var v)
-     | Bound_codelike.Pattern.Block_like s ->
-       NSymbol s)
-    in
-    NList (List.map to_name l)
-
 (* Analogous to [reflect] *)
 let rec eval (env : (name * value) list) (e : core_exp) =
   match Expr.descr e with
@@ -120,8 +103,8 @@ let rec eval (env : (name * value) list) (e : core_exp) =
         ~f:(fun ~x ~e1 ~e2 -> x, e1, e2)
     in
     Format.fprintf Format.std_formatter "let %a @." print e1;
-    let x = let_bound_to_name x in
-    eval ((x, eval env e1)::env) e2
+    let x = let_bound_to_name env x e1 in
+    eval (x @ env) e2
   | Let_cont {handler; body} ->
     Format.fprintf Format.std_formatter "LetCont@.";
     let e2 = With_delayed_renaming.create (Handler handler) in
@@ -171,10 +154,33 @@ let rec eval (env : (name * value) list) (e : core_exp) =
       scrutinee = eval env scrutinee;
       arms = Targetint_31_63.Map.map (eval env) arms
     }
-  | Named e ->
-    Format.fprintf Format.std_formatter "Named@.";
-    eval_named env e
+  | Named e -> eval_named env e
   | Invalid { message } -> VInvalid { message }
+
+and let_bound_to_name
+    (env : (name * value) list) (t : Bound_for_let.t) (e : core_exp) : (name * value) list =
+  match t with
+  | Singleton v ->
+    [(NVar (Bound_var.var v), eval env e)]
+  | Static c ->
+    let l = Bound_codelike.to_list c in
+    let to_name c =
+      (match c with
+       | Bound_codelike.Pattern.Code c -> NCode c
+       | Bound_codelike.Pattern.Set_of_closures v ->
+         NVar (Bound_var.var v)
+       | Bound_codelike.Pattern.Block_like s ->
+         NSymbol s)
+    in
+    let bound = List.map to_name l in
+    (match must_be_static_consts e with
+     | Some group ->
+       let group =
+         List.map (fun e ->
+             Expr.create_named (Static_consts [e]) |> eval env
+           ) group in
+       List.combine bound group
+     | None -> Misc.fatal_error "Expected static consts body")
 
 and closure_expr_to_closure
     (phi : Variable.t)
@@ -204,7 +210,7 @@ and closure_expr_to_closure
 and eval_named (env : (name * value) list) (e : named) =
   match e with
   | Literal l -> eval_literal env l
-  | Prim p -> eval_prim env p
+  | Prim p -> eval env (Eval_prim.eval p)
   | Closure_expr (var, fn, clos) ->
     let env =
       closure_expr_to_closure var env clos
@@ -219,8 +225,7 @@ and eval_named (env : (name * value) list) (e : named) =
   | Rec_info v -> VNamed (VRec_info v)
 
 and eval_static_const_or_code (env : (name * value) list)
-    (c : static_const_or_code) :
-  static_const_or_code_value =
+    (c : static_const_or_code) : static_const_or_code_value =
   match c with
   | Code f -> eval_function_params_and_body env f
   | Deleted_code -> VDeleted_code
@@ -264,16 +269,19 @@ and print_name (n : name) =
     Format.fprintf Format.std_formatter "something @."
 
 and print_env (env : (name * value) list) =
-    List.iter (fun (n, _) -> print_name n) env
+  List.iter (fun (n, _) -> print_name n) env
 
 and eval_literal (env : (name * value) list) (e : literal) =
   Format.fprintf Format.std_formatter "Literal %a @." Flambda2_core.print_literal e;
   print_env env;
   match e with
   | Simple s ->
-    (match Simple.must_be_var s with
-    | Some (s, _) -> List.assoc (NVar s) env
-    | None -> VNamed (VLiteral (VSimple s)))
+    Simple.pattern_match' s
+      ~var:(fun t ~coercion:_ ->
+          List.assoc (NVar t) env)
+      ~symbol:(fun t ~coercion:_ ->
+          List.assoc (NSymbol t) env)
+      ~const:(fun _ -> VNamed (VLiteral (VSimple s)))
   | Cont k ->
     (match List.assoc_opt (NCont k) env with
      | Some s -> s
@@ -282,7 +290,7 @@ and eval_literal (env : (name * value) list) (e : literal) =
   | Code_id id -> List.assoc (NCode id) env
   | Slot (var, slot) -> List.assoc (NSlot (var, slot)) env
 
-and eval_prim (env : (name * value) list) (e : primitive) =
+and _eval_prim (env : (name * value) list) (e : primitive) =
   (match e with
     | Nullary e ->
       VNamed (VPrim (Nullary e))
@@ -368,9 +376,35 @@ and quote_named ns (e : named_value) : named =
     Closure_expr (var, slot, closure_to_soc clo)
   | VSet_of_closures soc ->
     Set_of_closures soc (* TODO *)
-  | VStatic_consts _group ->
-    failwith "Unimplemented static_consts"
+  | VStatic_consts const ->
+    quote_static_consts ns const
   | VRec_info rec_info -> Rec_info rec_info
+
+and quote_static_consts ns group : named =
+  Static_consts (List.map (quote_static_const_or_code ns) group)
+
+and quote_static_const_or_code ns const : static_const_or_code =
+  match const with
+  | VCode _ -> failwith "closure conversion" (* TODO *)
+  | VDeleted_code -> Deleted_code
+  | VStatic_const s -> Static_const (quote_static_const ns s)
+
+and quote_static_const ns s : static_const =
+  match s with
+  | Static_set_of_closures s -> Static_set_of_closures s
+  | Block (tag, mut, l) ->
+    let l = List.map (quote ns) l in
+    Block (tag, mut, l)
+  | Boxed_float t -> Boxed_float t
+  | Boxed_int32 t -> Boxed_int32 t
+  | Boxed_int64 t -> Boxed_int64 t
+  | Boxed_nativeint t -> Boxed_nativeint t
+  | Immutable_float_block t -> Immutable_float_block t
+  | Immutable_float_array t -> Immutable_float_array t
+  | Immutable_value_array t -> Immutable_value_array t
+  | Empty_array -> Empty_array
+  | Mutable_string { initial_value } -> Mutable_string { initial_value }
+  | Immutable_string s -> Immutable_string s
 
 and quote_prim ns (e : primitive_value) : named =
   match e with
