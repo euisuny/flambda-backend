@@ -40,7 +40,7 @@ and named_value =
   | VPrim of primitive_value
   | VClosure_expr of
       (Variable.t * Function_slot.t * closure)
-  | VSet_of_closures of set_of_closures
+  (* | VSet_of_closures of set_of_closures *)
   | VStatic_consts of static_const_group_value
   | VRec_info of Rec_info_expr.t
 
@@ -57,7 +57,7 @@ and static_const_or_code_value =
   | VStatic_const of static_const_value
 
 and static_const_value =
-  | Static_set_of_closures of set_of_closures
+  (* | Static_set_of_closures of set_of_closures *)
   | Block of Tag.Scannable.t * Mutability.t * value list
   | Boxed_float of Numeric_types.Float_by_bit_pattern.t Or_variable.t
   | Boxed_int32 of Int32.t Or_variable.t
@@ -159,28 +159,50 @@ let rec eval (env : (name * value) list) (e : core_exp) =
   | Invalid { message } -> VInvalid { message }
 
 and let_bound_to_name
-    (env : (name * value) list) (t : Bound_for_let.t) (e : core_exp) : (name * value) list =
+    (env : (name * value) list) (t : Bound_for_let.t) (e : core_exp)
+  : (name * value) list =
   match t with
   | Singleton v ->
-    [(NVar (Bound_var.var v), eval env e)]
+    let nvar = NVar (Bound_var.var v) in
+    (match must_be_named e with
+     | Some e ->
+       (match e with
+        | Literal l ->
+          [(nvar, eval_literal env l)]
+        | Prim p ->
+          [(nvar, eval env (Eval_prim.eval p))]
+        | Closure_expr (var, fn, clos) ->
+          let env =
+            closure_expr_to_closure var env clos
+          in
+          [(nvar, List.assoc (NSlot (var, Function_slot fn)) env)]
+        | Set_of_closures clos ->
+            closure_expr_to_closure (Bound_var.var v) env clos
+        | Static_consts _ ->
+          Misc.fatal_error
+            "Expected static variable to be bound for static constants"
+        | Rec_info v -> [(nvar, VNamed (VRec_info v))])
+     | None ->
+        [(NVar (Bound_var.var v), eval env e)]
+    )
   | Static c ->
-    let l = Bound_codelike.to_list c in
-    let to_name c =
-      (match c with
-       | Bound_codelike.Pattern.Code c -> NCode c
-       | Bound_codelike.Pattern.Set_of_closures v ->
-         NVar (Bound_var.var v)
-       | Bound_codelike.Pattern.Block_like s ->
-         NSymbol s)
-    in
-    let bound = List.map to_name l in
     (match must_be_static_consts e with
      | Some group ->
-       let group =
-         List.map (fun e ->
-             Expr.create_named (Static_consts [e]) |> eval env
-           ) group in
-       List.combine bound group
+       let binding = List.combine c group in
+       let group ((c, e) : Bound_codelike.Pattern.t * static_const_or_code) =
+         (match c with
+          | Bound_codelike.Pattern.Code c ->
+            let e = Expr.create_named (Static_consts [e]) in
+            [(NCode c, eval env e)]
+          | Bound_codelike.Pattern.Set_of_closures v ->
+            (match e with
+             | Static_const (Static_set_of_closures clo) ->
+                closure_expr_to_closure (Bound_var.var v) env clo
+             | _ -> Misc.fatal_error "Expected static closure body")
+          | Bound_codelike.Pattern.Block_like s  ->
+            let e = Expr.create_named (Static_consts [e]) in
+            [(NSymbol s, eval env e)]) in
+       List.map group binding |> List.flatten
      | None -> Misc.fatal_error "Expected static consts body")
 
 and closure_expr_to_closure
@@ -218,14 +240,15 @@ and eval_named (env : (name * value) list) (e : named) =
       closure_expr_to_closure var env clos
     in
     List.assoc (NSlot (var, Function_slot fn)) env
-  | Set_of_closures clos ->
-    VNamed (VSet_of_closures clos)
+  | Set_of_closures _ ->
+    Misc.fatal_error "[eval_named] Unreachable: set of closures"
   | Static_consts consts ->
     VNamed
       (VStatic_consts
          (List.map (eval_static_const_or_code env) consts))
   | Rec_info v -> VNamed (VRec_info v)
 
+(* Change next three functions *)
 and eval_static_const_or_code (env : (name * value) list)
     (c : static_const_or_code) : static_const_or_code_value =
   match c with
@@ -233,7 +256,8 @@ and eval_static_const_or_code (env : (name * value) list)
   | Deleted_code -> VDeleted_code
   | Static_const s -> VStatic_const (eval_static_const env s)
 
-and eval_function_params_and_body (env : (name * value) list) ({expr; _} : Flambda2_core.function_params_and_body) =
+and eval_function_params_and_body (env : (name * value) list)
+    ({expr; _} : Flambda2_core.function_params_and_body) =
   let v, args, e =
     Core_function_params_and_body.pattern_match
       expr ~f:(fun v t ->
@@ -247,7 +271,8 @@ and eval_function_params_and_body (env : (name * value) list) ({expr; _} : Flamb
 and eval_static_const
     (env : (name * value) list) (s : static_const) =
   match s with
-  | Static_set_of_closures s -> Static_set_of_closures s
+  | Static_set_of_closures _ ->
+    Misc.fatal_error "Unreachable: eval_static_const [static_set_of_closures]"
   | Block (tag, mut, l) ->
     let l = List.map (eval env) l in
     Block (tag, mut, l)
@@ -300,9 +325,8 @@ and eval_literal (env : (name * value) list) (e : literal) =
      | None -> VNamed (VLiteral (VCont k)))
   | Res_cont k -> List.assoc (NResCont k) env
   | Code_id id -> List.assoc (NCode id) env
-  | Slot (var, _) ->
-    (* TODO change -- lookup with actual thing *)
-    List.assoc (NVar var) env
+  | Slot (var, slot) ->
+    List.assoc (NSlot (var, slot)) env
 
 and _eval_prim (env : (name * value) list) (e : primitive) =
   (match e with
@@ -388,8 +412,6 @@ and quote_named ns (e : named_value) : named =
   | VPrim p -> quote_prim ns p
   | VClosure_expr (var, slot, clo) ->
     Closure_expr (var, slot, closure_to_soc clo)
-  | VSet_of_closures soc ->
-    Set_of_closures soc (* TODO *)
   | VStatic_consts const ->
     quote_static_consts ns const
   | VRec_info rec_info -> Rec_info rec_info
@@ -405,7 +427,6 @@ and quote_static_const_or_code ns const : static_const_or_code =
 
 and quote_static_const ns s : static_const =
   match s with
-  | Static_set_of_closures s -> Static_set_of_closures s
   | Block (tag, mut, l) ->
     let l = List.map (quote ns) l in
     Block (tag, mut, l)
