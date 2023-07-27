@@ -40,7 +40,6 @@ and named_value =
   | VPrim of primitive_value
   | VClosure_expr of
       (Variable.t * Function_slot.t * closure)
-  (* | VSet_of_closures of set_of_closures *)
   | VStatic_consts of static_const_group_value
   | VRec_info of Rec_info_expr.t
 
@@ -57,7 +56,6 @@ and static_const_or_code_value =
   | VStatic_const of static_const_value
 
 and static_const_value =
-  (* | Static_set_of_closures of set_of_closures *)
   | Block of Tag.Scannable.t * Mutability.t * value list
   | Boxed_float of Numeric_types.Float_by_bit_pattern.t Or_variable.t
   | Boxed_int32 of Int32.t Or_variable.t
@@ -234,7 +232,7 @@ and eval_named (env : (name * value) list) (e : named) =
   Format.fprintf Format.std_formatter "Eval Named %a@." print_named e;
   match e with
   | Literal l -> eval_literal env l
-  | Prim p -> eval env (Eval_prim.eval p)
+  | Prim p -> eval_prim env p
   | Closure_expr (var, fn, clos) ->
     let env =
       closure_expr_to_closure var env clos
@@ -328,7 +326,7 @@ and eval_literal (env : (name * value) list) (e : literal) =
   | Slot (var, slot) ->
     List.assoc (NSlot (var, slot)) env
 
-and _eval_prim (env : (name * value) list) (e : primitive) =
+and eval_prim (env : (name * value) list) (e : primitive) =
   (match e with
     | Nullary e ->
       VNamed (VPrim (Nullary e))
@@ -346,13 +344,13 @@ let appCl (Close (x, env, t) : closure) (v : value list) : value =
   let env' = List.combine x v in
   eval (env' @ env) t
 
+(* TODO: Have not reached this case yet *)
 let closure_to_soc _clo : set_of_closures =
   failwith "Unimplemented closure to soc"
 
 let rec quote (ns : name list) (t : value) : core_exp =
   match t with
-  | VNamed e ->
-    With_delayed_renaming.create (Named (quote_named ns e))
+  | VNamed e -> quote_named ns e
   | VApply {callee ; continuation ; exn_continuation ; region ; apply_args} ->
     let e =
       Apply
@@ -366,7 +364,8 @@ let rec quote (ns : name list) (t : value) : core_exp =
   | VApplyCont { k ; args } ->
     let e =
       Apply_cont
-        { k = quote ns k; args = List.map (quote ns) args }
+        { k = quote ns k;
+          args = List.map (quote ns) args}
     in
     With_delayed_renaming.create e
   | VLambda (Close ([NLambda x], env, t)) ->
@@ -399,31 +398,46 @@ let rec quote (ns : name list) (t : value) : core_exp =
   | VLambda _ | VHandler _ ->
     failwith "[VLambda/VHandler-quote] Unexpected closure length"
 
-and quote_named ns (e : named_value) : named =
+and quote_named ns (e : named_value) : core_exp =
   match e with
   | VLiteral s ->
-    Literal
+    Named (Literal
       (match s with
        | VSimple s -> Simple s
        | VCont k -> Cont k
        | VRes_cont k -> Res_cont k
        | VSlot s -> Slot s
-       | VCode_id id -> Code_id id)
+       | VCode_id id -> Code_id id))
+    |> With_delayed_renaming.create
   | VPrim p -> quote_prim ns p
   | VClosure_expr (var, slot, clo) ->
-    Closure_expr (var, slot, closure_to_soc clo)
+    Named (Closure_expr (var, slot, closure_to_soc clo))
+    |> With_delayed_renaming.create
   | VStatic_consts const ->
-    quote_static_consts ns const
-  | VRec_info rec_info -> Rec_info rec_info
+    Named (quote_static_consts ns const)
+    |> With_delayed_renaming.create
+  | VRec_info rec_info ->
+    Named (Rec_info rec_info)
+    |> With_delayed_renaming.create
 
 and quote_static_consts ns group : named =
   Static_consts (List.map (quote_static_const_or_code ns) group)
 
 and quote_static_const_or_code ns const : static_const_or_code =
   match const with
-  | VCode _ -> failwith "closure conversion" (* TODO *)
+  | VCode clo -> Code ({expr = quote_code clo; anon = false})
   | VDeleted_code -> Deleted_code
   | VStatic_const s -> Static_const (quote_static_const ns s)
+
+and quote_code clo =
+  match clo with
+  | Close (list, _env, e) ->
+    (match list with
+     | [NVar v; NLambda args] ->
+          Core_function_params_and_body.create
+            (Bound_var.create v Name_mode.normal) (Core_lambda.create args e)
+     | _ -> Misc.fatal_error "Mismatched [quote_code]"
+    )[@ocaml.warning "-8"]
 
 and quote_static_const ns s : static_const =
   match s with
@@ -441,18 +455,17 @@ and quote_static_const ns s : static_const =
   | Mutable_string { initial_value } -> Mutable_string { initial_value }
   | Immutable_string s -> Immutable_string s
 
-and quote_prim ns (e : primitive_value) : named =
-  match e with
-  | Nullary e ->
-    (Prim (Nullary e))
-  | Unary (p, e) ->
-    (Prim (Unary (p, quote ns e)))
+and quote_prim ns (e : primitive_value) : core_exp =
+  (match e with
+  | Nullary e -> Nullary e
+  | Unary (p, e) -> Unary (p, quote ns e)
   | Binary (p, e1, e2) ->
-    (Prim (Binary (p, quote ns e1, quote ns e2)))
+    Binary (p, quote ns e1, quote ns e2)
   | Ternary (p, e1, e2, e3) ->
-    (Prim (Ternary (p, quote ns e1, quote ns e2, quote ns e3)))
+   Ternary (p, quote ns e1, quote ns e2, quote ns e3)
   | Variadic (p, l) ->
-    (Prim (Variadic (p, List.map (quote ns) l)))
+    Variadic (p, List.map (quote ns) l))
+  |> Eval_prim.eval
 
 let nf (env : (name * value) list) (t : core_exp) =
   quote (List.map fst env) (eval env t)

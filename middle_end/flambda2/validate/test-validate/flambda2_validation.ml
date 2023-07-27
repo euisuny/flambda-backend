@@ -193,5 +193,6 @@ let normalize_nbe_term file : unit =
 let () =
   (* alpha_equivalence_test_suite (); *)
   (* normalize_nbe_term "apply.fl"; *)
-  normalize_nbe_term "apply1.fl";
+  (* normalize_nbe_term "apply1.fl"; *)
+  normalize_nbe_term "apply2.fl";
   ()
