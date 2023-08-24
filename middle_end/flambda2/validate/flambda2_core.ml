@@ -473,6 +473,20 @@ let must_be_literal (e : core_exp) : literal option =
           | Rec_info _)
     | None) -> None
 
+let must_be_code_id (e : core_exp) : Code_id.t option =
+  match must_be_literal e with
+  | Some (Code_id id) -> Some id
+  | (Some (Cont _ | Res_cont _
+       | Simple _ | Slot _) | None) ->
+    None
+
+let must_be_code_id' (e : core_exp) : Code_id.t =
+  match must_be_literal e with
+  | Some (Code_id id) -> id
+  | (Some (Cont _ | Res_cont _
+          | Simple _ | Slot _) | None) ->
+    Misc.fatal_error "Expected to find code id"
+
 let must_be_cont (e : core_exp) : Continuation.t option =
   match must_be_literal e with
   | Some (Cont k | Res_cont (Return k)) -> Some k

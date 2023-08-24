@@ -146,6 +146,10 @@ val must_be_named : core_exp -> named option
 
 val must_be_prim : core_exp -> primitive option
 
+val must_be_code_id : core_exp -> Code_id.t option
+
+val must_be_code_id' : core_exp -> Code_id.t
+
 val must_be_cont : core_exp -> Continuation.t option
 
 val must_be_slot : core_exp -> (Variable.t * slot) option

@@ -89,10 +89,6 @@ and name =
   | NCode of Code_id.t
   | NSymbol of Symbol.t
   | NLambda of Bound_for_lambda.t
-  | NPhi of (SlotMap.key * Code_id.t) list
-  (* | NParams of Bound_parameters.t *)
-  | NRec of name list
-  | NSym of value
 
 (* Analogous to [reflect] *)
 let rec eval (env : (name * value) list) (e : core_exp) : value =
@@ -102,11 +98,9 @@ let rec eval (env : (name * value) list) (e : core_exp) : value =
       Core_let.pattern_match e
         ~f:(fun ~x ~e1 ~e2 -> x, e1, e2)
     in
-    Format.fprintf Format.std_formatter "let %a @." print e1;
     let x = let_bound_to_name env x e1 in
     eval (x @ env) e2
   | Let_cont {handler; body} ->
-    (* Format.fprintf Format.std_formatter "LetCont@."; *)
     let e2 = With_delayed_renaming.create (Handler handler) in
     let k, e1 =
       Core_letcont_body.pattern_match body
@@ -116,7 +110,6 @@ let rec eval (env : (name * value) list) (e : core_exp) : value =
   | Apply
       {callee; continuation; exn_continuation;
        region; apply_args} ->
-    (* Format.fprintf Format.std_formatter "Apply@."; *)
     let apply_args = List.map (eval env) apply_args in
     (match eval env callee with
     | VLambda (Close (xs, env', t)) ->
@@ -130,9 +123,9 @@ let rec eval (env : (name * value) list) (e : core_exp) : value =
        region = eval env region;
        apply_args})[@ocaml.warning "-4"]
   | Apply_cont {k ; args} ->
-    Format.fprintf Format.std_formatter "ApplyCont@.";
     let args = List.map (eval env) args in
     (match eval env k with
+     (* Double-check on the environment being passed around here *)
      | VHandler (Close (xs, env', t)) ->
        let args = List.combine xs args in
        eval (args @ env') t
@@ -202,6 +195,7 @@ and let_bound_to_name
                 closure_expr_to_closure (Bound_var.var v) env clo
              | _ -> Misc.fatal_error "Expected static closure body")
           | Bound_codelike.Pattern.Block_like s  ->
+            _print_env env;
             let e = Expr.create_named (Static_consts [e]) in
             [(NSymbol s, eval env e)]) in
        List.map group binding |> List.flatten
@@ -210,9 +204,7 @@ and let_bound_to_name
 and closure_expr_to_closure 
     (_phi : Variable.t) 
     (env: (name * value) list)
-    ({function_decls; value_slots} : set_of_closures)
-  : (name * value) list =
-  (* Substitute in the value slots first *)
+    ({function_decls; value_slots} : set_of_closures) =
   let value_slots_list =
     Value_slot.Map.map (eval env) value_slots |>
     Value_slot.Map.to_seq |> List.of_seq in
@@ -221,33 +213,27 @@ and closure_expr_to_closure
       value_slots_list
   in
   let env = value_slots @ env in
-  let function_decls_list : (name * value) list =
+  _print_env env;
+  let function_decls_list : (name * _) list =
     SlotMap.to_seq function_decls |>
     List.of_seq |>
     List.map
       (fun (i, x) ->
-        (NSlot (Function_slot i), eval env x))
+        (NSlot (Function_slot i),
+         match (List.assoc (NCode (must_be_code_id' x)) env) with
+         | (VNamed (VStatic_consts [VCode (Close (list, env', e))])) ->
+           (* Value slot extends the environment captured for a function *)
+           (VNamed (VStatic_consts [VCode (Close (list, value_slots @ env', e))]))
+         | _ -> eval env x))
   in
-  function_decls_list @ env
-  (* (NPhi function_decls_list, VInvalid {message = "dummy"}) :: env *)
-  (* in *)
-  (* let function_decls = *)
-  (*   List.map (fun (k, v) -> *)
-  (*     (NSlot (phi, Function_slot k), v)) *)
-  (*     function_decls_list *)
-  (* in *)
-  (* function_decls @ env *)
+  function_decls_list
 
 and eval_named (env : (name * value) list) (e : named) =
-  (* Format.fprintf Format.std_formatter "Eval Named %a@." print_named e; *)
   match e with
   | Literal l -> eval_literal env l
   | Prim p -> eval_prim env p
-  | Closure_expr (var, fn, clos) ->
-    let env =
-      closure_expr_to_closure var env clos
-    in
-    List.assoc (NSlot (Function_slot fn)) env
+  | Closure_expr _ ->
+    Misc.fatal_error "[eval_named] Unreachable: set of closures"
   | Set_of_closures _ ->
     Misc.fatal_error "[eval_named] Unreachable: set of closures"
   | Static_consts consts ->
@@ -256,7 +242,6 @@ and eval_named (env : (name * value) list) (e : named) =
          (List.map (eval_static_const_or_code env) consts))
   | Rec_info v -> VNamed (VRec_info v)
 
-(* Change next three functions *)
 and eval_static_const_or_code (env : (name * value) list)
     (c : static_const_or_code) : static_const_or_code_value =
   match c with
@@ -270,7 +255,8 @@ and eval_function_params_and_body (env : (name * value) list)
     Core_function_params_and_body.pattern_match
       expr ~f:(fun v t ->
         let args, e =
-          Core_lambda.pattern_match t ~f:(fun b e -> b, e)
+          Core_lambda.pattern_match t
+            ~f:(fun b e -> b, e)
         in (v, args, e))
   in
   VCode (Close ([NVar (Bound_var.var v); NLambda args], env, e))
@@ -303,8 +289,11 @@ and _print_name (n : name) =
     Format.fprintf Format.std_formatter "symbol %a @."
       Symbol.print s
   | NSlot (Function_slot s) ->
-    Format.fprintf Format.std_formatter "slot %a @."
+    Format.fprintf Format.std_formatter "fn slot %a @."
       Function_slot.print s
+  | NSlot (Value_slot s) ->
+    Format.fprintf Format.std_formatter "val slot %a @."
+     Value_slot.print s
   | NCode i ->
     Format.fprintf Format.std_formatter "code id %a @."
       Code_id.print i
@@ -316,9 +305,6 @@ and _print_env (env : (name * value) list) =
   Format.fprintf Format.std_formatter "-------------------@.@."
 
 and eval_literal (env : (name * value) list) (e : literal) =
-  (* Format.fprintf Format.std_formatter "Literal %a @." *)
-  (*   Flambda2_core.print_literal e; *)
-  (* _print_env env; *)
   match e with
   | Simple s ->
     let x =
@@ -348,10 +334,34 @@ and eval_literal (env : (name * value) list) (e : literal) =
      | _ -> x)
 
 and eval_prim (env : (name * value) list) (e : primitive) =
-  Format.fprintf Format.std_formatter "Primitive";
   (match e with
     | Nullary e ->
       VNamed (VPrim (Nullary e))
+    | Unary (Project_value_slot
+        { project_from ; value_slot = slot; kind }, arg) ->
+      let x = List.assoc_opt (NSlot (Value_slot slot)) env in
+      (match x with
+      | Some x -> x
+      | _ ->
+        VNamed
+        (VPrim
+          (Unary
+            (Project_value_slot
+                      { project_from ; value_slot = slot; kind } ,
+            eval env arg))))
+    | Unary (Project_function_slot {move_from ; move_to}, arg) ->
+      let x = List.assoc_opt (NSlot (Function_slot move_to)) env in
+      (match x with
+        | Some x -> x
+        | _ ->
+          Format.fprintf Format.std_formatter "%s"
+            (Function_slot.to_string move_to);
+          VNamed
+                (VPrim
+                    (Unary
+                      (Project_function_slot
+                          { move_from ; move_to} ,
+                        eval env arg))))
     | Unary (p, e) ->
       VNamed (VPrim (Unary (p, eval env e)))
     | Binary (p, e1, e2) ->
@@ -366,8 +376,6 @@ let appCl (Close (x, env, t) : closure) (v : value list) : value =
   let env' = List.combine x v in
   eval (env' @ env) t
 
-(* TODO: Have not reached this case yet because we don't generate
-   [Closure_expr]s *)
 let closure_to_soc _clo : set_of_closures =
   failwith "Unimplemented closure to soc"
 
@@ -392,7 +400,6 @@ let rec quote (ns : name list) (t : value) : core_exp =
     in
     With_delayed_renaming.create e
   | VLambda (Close ([NLambda x], env, t)) ->
-    (* let t = quote (List.map fst env) (eval env t) in *)
     let e =
       Lambda
         (Core_lambda.create
@@ -403,7 +410,6 @@ let rec quote (ns : name list) (t : value) : core_exp =
     in
     With_delayed_renaming.create e
   | VHandler (Close (l, env, t)) ->
-    (* let t = quote (List.map fst env) (eval env t) in *)
     let params =
       List.map
         (fun x ->
@@ -461,11 +467,11 @@ and quote_static_consts ns group : named =
 
 and quote_static_const_or_code ns const : static_const_or_code =
   match const with
-  | VCode clo -> Code {expr = quote_code clo ; anon = false}
+  | VCode clo -> Code {expr = quote_code ns clo ; anon = false}
   | VDeleted_code -> Deleted_code
   | VStatic_const s -> Static_const (quote_static_const ns s)
 
-and quote_code clo =
+and quote_code _ns clo =
   match clo with
   | Close (list, env, e) ->
     (* Full reduction: reduce under a lambda *)
@@ -474,7 +480,11 @@ and quote_code clo =
      | [NVar v; NLambda args] ->
        Core_function_params_and_body.create
          (Bound_var.create v Name_mode.normal)
-          (Core_lambda.create args e)
+          (Core_lambda.create args 
+             (* (quote (NLambda args :: ns) *)
+             (*     (appCl (Close ([NLambda args], env, e)) *)
+             (*       (List.map snd env)))) *)
+             e)
      | _ -> Misc.fatal_error "Mismatched [quote_code]"
     )[@ocaml.warning "-8"]
 
