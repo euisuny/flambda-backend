@@ -58,7 +58,6 @@ and static_const_value =
   | Empty_array
   | Mutable_string of { initial_value : string }
   | Immutable_string of string
-
 and static_const_group_value = static_const_or_code_value list
 
 and apply_value =
@@ -98,8 +97,8 @@ let rec eval (env : (name * value) list) (e : core_exp) : value =
       Core_let.pattern_match e
         ~f:(fun ~x ~e1 ~e2 -> x, e1, e2)
     in
-    let x = let_bound_to_name env x e1 in
-    eval (x @ env) e2
+    let env' = let_bound_to_name env x e1 in
+    eval (env' @ env) e2
   | Let_cont {handler; body} ->
     let e2 = With_delayed_renaming.create (Handler handler) in
     let k, e1 =
@@ -195,7 +194,6 @@ and let_bound_to_name
                 closure_expr_to_closure (Bound_var.var v) env clo
              | _ -> Misc.fatal_error "Expected static closure body")
           | Bound_codelike.Pattern.Block_like s  ->
-            _print_env env;
             let e = Expr.create_named (Static_consts [e]) in
             [(NSymbol s, eval env e)]) in
        List.map group binding |> List.flatten
@@ -213,7 +211,12 @@ and closure_expr_to_closure
       value_slots_list
   in
   let env = value_slots @ env in
-  _print_env env;
+  let _phi_value : (name * _) list =
+    SlotMap.to_seq function_decls |>
+    List.of_seq |>
+    List.map
+      (fun (i, x) -> (NSlot (Function_slot i), must_be_code_id' x))
+  in
   let function_decls_list : (name * _) list =
     SlotMap.to_seq function_decls |>
     List.of_seq |>
@@ -221,9 +224,11 @@ and closure_expr_to_closure
       (fun (i, x) ->
         (NSlot (Function_slot i),
          match (List.assoc (NCode (must_be_code_id' x)) env) with
-         | (VNamed (VStatic_consts [VCode (Close (list, env', e))])) ->
+         | (VNamed (VStatic_consts [VCode (Close ([NVar phi ; NLambda x], env', e))])) ->
            (* Value slot extends the environment captured for a function *)
-           (VNamed (VStatic_consts [VCode (Close (list, value_slots @ env', e))]))
+           eval ((NVar phi, (VNamed (VLiteral (VSimple (Simple.var _phi)))))
+                  :: value_slots @ env' @ env)
+             (With_delayed_renaming.create (Lambda (Core_lambda.create x e)))
          | _ -> eval env x))
   in
   function_decls_list
@@ -280,28 +285,31 @@ and eval_static_const
   | Mutable_string { initial_value } -> Mutable_string { initial_value }
   | Immutable_string s -> Immutable_string s
 
-and _print_name (n : name) =
+and _print_name fmt (n : name) =
   match n with
   | NVar s ->
-    Format.fprintf Format.std_formatter "var %a @."
+    Format.fprintf fmt "var %a @."
       Variable.print s
   | NSymbol s ->
-    Format.fprintf Format.std_formatter "symbol %a @."
+    Format.fprintf fmt "symbol %a @."
       Symbol.print s
   | NSlot (Function_slot s) ->
-    Format.fprintf Format.std_formatter "fn slot %a @."
+    Format.fprintf fmt "fn slot %a @."
       Function_slot.print s
   | NSlot (Value_slot s) ->
-    Format.fprintf Format.std_formatter "val slot %a @."
+    Format.fprintf fmt "val slot %a @."
      Value_slot.print s
   | NCode i ->
-    Format.fprintf Format.std_formatter "code id %a @."
+    Format.fprintf fmt "code id %a @."
       Code_id.print i
+  | NLambda i ->
+      Format.fprintf fmt "Lambda %a @."
+        Bound_for_lambda.print i
   | _ -> ()
 
 and _print_env (env : (name * value) list) =
   Format.fprintf Format.std_formatter "------- env -------@.";
-  List.iter (fun (n, _) -> _print_name n) env;
+  List.iter (fun (n, _) -> _print_name Format.std_formatter n) env;
   Format.fprintf Format.std_formatter "-------------------@.@."
 
 and eval_literal (env : (name * value) list) (e : literal) =
@@ -354,8 +362,7 @@ and eval_prim (env : (name * value) list) (e : primitive) =
       (match x with
         | Some x -> x
         | _ ->
-          Format.fprintf Format.std_formatter "%s"
-            (Function_slot.to_string move_to);
+          Format.fprintf Format.std_formatter "%s" (Function_slot.to_string move_to);
           VNamed
                 (VPrim
                     (Unary
@@ -372,13 +379,26 @@ and eval_prim (env : (name * value) list) (e : primitive) =
     | Variadic (p, list) ->
       VNamed (VPrim (Variadic (p, List.map (eval env) list))))
 
-let appCl (Close (x, env, t) : closure) (v : value list) : value =
-  let env' = List.combine x v in
-  eval (env' @ env) t
+let rec partial_combine_aux (acc : ('a * 'b) list) (l : 'a list) (l' : 'b list)
+  : ('a * 'b) list * 'a list * 'b list =
+  match l, l' with
+  | _, [] -> (acc, l, [])
+  | [], _ -> (acc, [], l')
+  | a :: xs, b :: xs' -> ((a, b)::acc, xs, xs')
+
+let _partial_combine = partial_combine_aux []
+
+let take n (l : 'a list) = List.filteri (fun i _ -> i < n) l
+let drop n (l : 'a list) = List.filteri (fun i _ -> i >= n) l
+
+let appCl (Close (x, env, t) : closure) : value =
+  let env' = List.combine x (take (List.length x) (List.map snd env)) in
+  eval (env' @ (drop (List.length x) env)) t
 
 let closure_to_soc _clo : set_of_closures =
   failwith "Unimplemented closure to soc"
 
+(* What is the [ns] name list for? *)
 let rec quote (ns : name list) (t : value) : core_exp =
   match t with
   | VNamed e -> quote_named ns e
@@ -399,14 +419,22 @@ let rec quote (ns : name list) (t : value) : core_exp =
           args = List.map (quote ns) args}
     in
     With_delayed_renaming.create e
-  | VLambda (Close ([NLambda x], env, t)) ->
+  | VLambda (Close ([NVar phi; NLambda x], env, t)) ->
     let e =
       Lambda
         (Core_lambda.create
           x
-          (quote (NLambda x :: ns)
-              (appCl (Close ([NLambda x], env, t))
-                              (List.map snd env))))
+          (quote ([NVar phi; NLambda x] @ ns)
+             (appCl (Close ([NVar phi; NLambda x], env, t)))))
+    in
+    With_delayed_renaming.create e
+  | VLambda (Close ([NLambda x], env, t)) ->
+    let e =
+      Lambda
+        (Core_lambda.create
+           x
+           (quote ([NLambda x] @ ns)
+              (appCl (Close ([NLambda x], env, t)))))
     in
     With_delayed_renaming.create e
   | VHandler (Close (l, env, t)) ->
@@ -426,8 +454,7 @@ let rec quote (ns : name list) (t : value) : core_exp =
         (Core_continuation_handler.create
            params
            (quote (l @ ns)
-              (appCl (Close (l, env, t))
-                 (List.map snd env))))
+              (appCl (Close (l, env, t)))))
     in
     With_delayed_renaming.create e
   | VSwitch { scrutinee ; arms } ->
@@ -438,7 +465,7 @@ let rec quote (ns : name list) (t : value) : core_exp =
   | VInvalid { message } ->
     With_delayed_renaming.create (Invalid { message })
   | VLambda _ ->
-    failwith "[VLambda/VHandler-quote] Unexpected closure length"
+    Misc.fatal_error "Mismatched lambda arguments on quoting"
 
 and quote_named ns (e : named_value) : core_exp =
   match e with
@@ -473,9 +500,9 @@ and quote_static_const_or_code ns const : static_const_or_code =
 
 and quote_code _ns clo =
   match clo with
-  | Close (list, env, e) ->
+  | Close (list, _env, e) ->
     (* Full reduction: reduce under a lambda *)
-    let e = quote (List.map fst env) (eval env e) in
+    (* let e = quote (List.map fst env) (eval env e) in *)
     (match list with
      | [NVar v; NLambda args] ->
        Core_function_params_and_body.create

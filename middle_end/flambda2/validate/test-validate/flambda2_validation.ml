@@ -167,6 +167,18 @@ let normalize_nbe_term file : unit =
   let tgt_core = flambda_unit_to_core simplify_result in
 
   Format.fprintf Format.std_formatter
+    "⟪ Translated Core Exprs ⟫----------------------------------------------------@.";
+  Format.fprintf Format.std_formatter
+    "-----------------------------------------------------------------------------@.@.";
+
+  print Format.std_formatter src_core;
+  Format.fprintf Format.std_formatter
+    "@.-----------------------------------------------------------------------------@.@.";
+  print Format.std_formatter tgt_core;
+
+  Format.fprintf Format.std_formatter
+  "@.-----------------------------------------------------------------------------@.@.";
+  Format.fprintf Format.std_formatter
     "\t\t\t\tNormalizing...\t\t\t@.";
   Format.fprintf Format.std_formatter
     "------------------------------------------------------------------------------@.";
@@ -194,5 +206,16 @@ let () =
   (* alpha_equivalence_test_suite (); *)
   (* normalize_nbe_term "apply.fl"; *)
   (* normalize_nbe_term "apply1.fl"; *)
-  normalize_nbe_term "apply2.fl";
+  (* normalize_term "apply2.fl"; *)
+  (* let current_time = Unix.gettimeofday () in *)
+  (* normalize_term "apply2.fl"; *)
+  (* let current_time2 = Unix.gettimeofday () in *)
+  normalize_nbe_term "apply_orig.fl";
+  (* let current_time3 = Unix.gettimeofday () in *)
+  (* Format.fprintf Format.std_formatter "Current time %f @. Nbe time %f @. time %f @." *)
+  (*   current_time *)
+  (*   (current_time2 -. current_time) *)
+  (*   (current_time3 -. current_time2); *)
+  (* TODO *)
+  (* normalize_nbe_term "apply_orig.fl"; *)
   ()

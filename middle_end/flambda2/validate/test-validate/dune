@@ -33,6 +33,7 @@
  (libraries
    ocamlcommon
    ocamloptcomp
+   unix
    flambda2
    flambda2_compare
    flambda2_parser
