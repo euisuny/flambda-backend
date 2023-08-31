@@ -76,7 +76,7 @@ and switch_value =
 
 and value_env = (name * value) list
 
-and function_env = (fun_name * (SlotMap.key * Code_id.t) list) list
+and function_env = (fun_name * (SlotMap.key * value) list) list
 
 (* A closure is a list of names, environment, and a core expression *)
 and closure =
@@ -138,13 +138,12 @@ let rec eval fenv (venv : (name * value) list) (e : core_exp) : value =
 
   | Apply_cont {k ; args} ->
     let args = List.map (eval fenv venv) args in
-    (match eval fenv venv k with
+     (match eval fenv venv k with
      | VHandler {names; fun_env; val_env; exp} ->
        let args = List.combine names args in
        eval (fun_env @ fenv) (args @ val_env) exp
      | t ->
-       VApplyCont {k = t; args}
-    )[@ocaml.warning "-4"]
+       VApplyCont {k = t; args})[@ocaml.warning "-4"]
   | Lambda t ->
     let x, e =
       Core_lambda.pattern_match t ~f:(fun b e -> b, e)
@@ -186,14 +185,19 @@ and let_bound_to_name (fenv : function_env) (venv : value_env)
      | Some e ->
        (match e with
         | Literal l ->
-          [(nvar, eval_literal venv l)]
+          [(nvar, eval_literal fenv venv l)]
         | Prim p ->
           [(nvar, eval fenv venv (Eval_prim.eval p))]
         | Closure_expr (var, fn, clos) ->
+          let slot =
+            Named (Literal (Slot (var, Function_slot fn)))
+            |> With_delayed_renaming.create
+          in
           let env =
             closure_expr_to_closure fenv var venv clos
           in
-          [(nvar, List.assoc (NSlot (Function_slot fn)) env)]
+          let x = eval fenv (env @ venv) slot in
+          [(nvar, x)]
         | Set_of_closures clos ->
             closure_expr_to_closure
               fenv (Bound_var.var v)
@@ -241,7 +245,7 @@ and closure_expr_to_closure
   let phi_value =
     SlotMap.to_seq function_decls |>
     List.of_seq |>
-    List.map (fun (i, x) -> (i, must_be_code_id' x))
+    List.map (fun (i, x) -> (i, eval fenv venv x))
   in
   let function_decls_list : (name * _) list =
     SlotMap.to_seq function_decls |>
@@ -249,27 +253,40 @@ and closure_expr_to_closure
     List.map
       (fun (i, x) ->
         (NSlot (Function_slot i),
-         match (List.assoc (NCode (must_be_code_id' x)) env) with
-         | (VNamed (VStatic_consts
-              [VCode { names; fun_env; val_env; exp }])) ->
-           (* Value slot extends the environment captured for a function *)
-           VLambda
-             { names = names;
-               fun_env = (NFun phi, phi_value) :: fenv @ fun_env;
-               val_env = (NVar phi, VFun phi) ::
-                   value_slots @ val_env @ venv;
-               exp = exp}
-         | _ -> eval fenv venv x))
+         match must_be_code_id x with
+         | Some id ->
+           (match (List.assoc_opt (NCode id) env) with
+            | Some (VNamed (VStatic_consts
+                  [VCode { names; fun_env; val_env; exp }])) ->
+              (* Value slot extends the environment captured for a function *)
+              VLambda
+                { names = names;
+                  fun_env = (NFun phi, phi_value) :: fenv @ fun_env;
+                  val_env = (NVar phi, VFun phi) ::
+                      value_slots @ val_env @ venv;
+                  exp = exp}
+            | _ ->
+              eval ((NFun phi, phi_value) :: fenv)
+                    ((NVar phi, VFun phi):: venv) x)
+        | None -> eval ((NFun phi, phi_value) :: fenv)
+                        ((NVar phi, VFun phi):: venv) x))
   in
   function_decls_list
 
 and eval_named
     (fenv : function_env) (venv : value_env) (e : named) =
   match e with
-  | Literal l -> eval_literal venv l
+  | Literal l -> eval_literal fenv venv l
   | Prim p -> eval_prim fenv venv p
-  | Closure_expr _ ->
-    Misc.fatal_error "[eval_named] Unreachable: set of closures"
+  | Closure_expr (var, fn, clos) ->
+    let slot =
+      Named (Literal (Slot (var, Function_slot fn)))
+        |> With_delayed_renaming.create
+    in
+    let env =
+      closure_expr_to_closure fenv var venv clos
+    in
+    eval fenv (env @ venv) slot
   | Set_of_closures _ ->
     Misc.fatal_error "[eval_named] Unreachable: set of closures"
   | Static_consts consts ->
@@ -348,11 +365,23 @@ and _print_name fmt (n : name) =
     Format.fprintf fmt "cont %a @." Continuation.print i
 
 and _print_env (env : (name * value) list) =
-  Format.fprintf Format.std_formatter "------- env -------@.";
+  Format.fprintf Format.std_formatter "------- val_env -------@.";
   List.iter (fun (n, _) -> _print_name Format.std_formatter n) env;
   Format.fprintf Format.std_formatter "-------------------@.@."
 
-and eval_literal (env : (name * value) list) (e : literal) =
+and _print_fenv (fenv : function_env) =
+  Format.fprintf Format.std_formatter "------- fun_env -------@.";
+  List.iter (fun (NFun n, env) ->
+      Format.fprintf
+      Format.std_formatter "Var %a@." Variable.print n;
+      List.iter (fun (k, _) ->
+          Format.fprintf
+          Format.std_formatter "Slot %a@."
+          Function_slot.print k) env)
+    fenv;
+  Format.fprintf Format.std_formatter "-------------------@.@."
+
+and eval_literal _fenv (env : (name * value) list) (e : literal) =
   match e with
   | Simple s ->
     let x =
@@ -365,7 +394,9 @@ and eval_literal (env : (name * value) list) (e : literal) =
     in
     (match x with
       | Some (VNamed (VLiteral (VCode_id i))) ->
-          List.assoc (NCode i) env
+          (match (List.assoc_opt (NCode i) env) with
+            | Some x -> x
+            | None -> Misc.fatal_error "Literal not found")
       | Some s -> s
       | _ -> (VNamed (VLiteral (VSimple s))))
   | Cont k ->
@@ -374,13 +405,46 @@ and eval_literal (env : (name * value) list) (e : literal) =
      | None -> VNamed (VLiteral (VCont k)))
   | Res_cont (Return k) -> List.assoc (NCont k) env
   | Res_cont _ -> Misc.fatal_error "Res_cont : Never returns"
-  | Code_id id -> List.assoc (NCode id) env
-  | Slot (_, slot) ->
-    let x  = List.assoc (NSlot slot) env in
+  | Code_id id ->
+    (match List.assoc_opt (NCode id) env with
+     | Some x -> x
+     | None -> VNamed (VLiteral (VCode_id id)))
+  | Slot (var, Function_slot slot) ->
+    _print_fenv _fenv;
+    _print_env env;
+    VNamed (VLiteral (VSlot (var, Function_slot slot)))
+    (* TODO: Uncomment and add fuel so it doesn't diverge *)
+    (* Format.fprintf Format.std_formatter "%a" Function_slot.print slot; *)
+    (* _print_fenv fenv; *)
+    (* _print_env env; *)
+    (* (match (List.assoc_opt (NFun var) fenv) with *)
+    (* | Some x -> *)
+    (*   (let x = List.assoc_opt slot x in *)
+    (*   (match x with *)
+    (*   | Some (VNamed (VLiteral (VCode_id i))) -> *)
+    (*       (match (List.assoc_opt (NCode i) env) with *)
+    (*         | Some x' -> x' *)
+    (*         | None -> (VNamed (VLiteral (VCode_id i)))) *)
+    (*   | Some x -> x *)
+    (*   | None -> Misc.fatal_error "Not found: function_slot")) *)
+    (* | None -> *)
+    (*   let x  = List.assoc_opt (NSlot (Function_slot slot)) env in *)
+    (*   (match x with *)
+    (*    | Some (VNamed (VLiteral (VCode_id i))) -> *)
+    (*      (match (List.assoc_opt (NCode i) env) with *)
+    (*       | Some x' -> x' *)
+    (*       | None -> (VNamed (VLiteral (VCode_id i)))) *)
+    (*    | Some x -> x *)
+    (*    | None -> Misc.fatal_error "Not found: value_slot")) *)
+  | Slot (_, Value_slot slot) ->
+    let x  = List.assoc_opt (NSlot (Value_slot slot)) env in
     (match x with
-     | (VNamed (VLiteral (VCode_id i))) ->
-        List.assoc (NCode i) env
-     | _ -> x)
+     | Some (VNamed (VLiteral (VCode_id i))) ->
+       (match (List.assoc_opt (NCode i) env) with
+        | Some x' -> x'
+        | None -> (VNamed (VLiteral (VCode_id i))))
+     | Some x -> x
+     | None -> Misc.fatal_error "Not found: value_slot")
 
 and eval_prim (fenv : function_env) (venv : value_env)
     (e : primitive) =
