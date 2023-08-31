@@ -9,6 +9,7 @@ module P = Flambda_primitive
    Each term gets translated into an open singleton term with names and closures
    in place of abstraction *)
 type value =
+  | VFun of Variable.t
   | VNamed of named_value
   | VApply of apply_value
   | VApplyCont of apply_cont_value
@@ -27,8 +28,6 @@ and literal_value =
 and named_value =
   | VLiteral of literal_value
   | VPrim of primitive_value
-  | VClosure_expr of
-      (Variable.t * Function_slot.t * closure)
   | VStatic_consts of static_const_group_value
   | VRec_info of Rec_info_expr.t
 
@@ -75,35 +74,37 @@ and switch_value =
   { scrutinee : value;
     arms : value Targetint_31_63.Map.t }
 
-and env = (name * value) list
+and value_env = (name * value) list
+
+and function_env = (fun_name * (SlotMap.key * Code_id.t) list) list
 
 (* A closure is a list of names, environment, and a core expression *)
 and closure =
   { names : name list;
-    closures : (Variable.t * expr) list;
-    environ : env;
+    fun_env : function_env;
+    val_env : value_env;
     exp: core_exp }
 
 and name =
   | NCont of Continuation.t
-  | NResCont of Apply_expr.Result_continuation.t
   | NVar of Variable.t
   | NSlot of slot
   | NCode of Code_id.t
   | NSymbol of Symbol.t
 
+and fun_name =
+    | NFun of Variable.t
+
 (* Analogous to [reflect] *)
-let rec eval
-    (clo : (Variable.t * expr) list)
-    (env : (name * value) list) (e : core_exp) : value =
+let rec eval fenv (venv : (name * value) list) (e : core_exp) : value =
   match Expr.descr e with
   | Let e ->
     let x, e1, e2 =
       Core_let.pattern_match e
         ~f:(fun ~x ~e1 ~e2 -> x, e1, e2)
     in
-    let env' = let_bound_to_name clo env x e1 in
-    eval clo (env' @ env) e2
+    let env' = let_bound_to_name fenv venv x e1 in
+    eval fenv (env' @ venv) e2
 
   | Let_cont {handler; body} ->
     let e2 = With_delayed_renaming.create (Handler handler) in
@@ -111,36 +112,30 @@ let rec eval
       Core_letcont_body.pattern_match body
         (fun k e1 -> k, e1)
     in
-    eval clo ((NCont k, eval clo env e2)::env) e1
+    eval fenv ((NCont k, eval fenv venv e2)::venv) e1
 
   | Apply
       {callee; continuation; exn_continuation;
        region; apply_args} ->
-    let apply_args' = List.map (eval clo env) apply_args in
-    (match eval clo env callee with
-    | VLambda
-        (Close
-          (NCont ret :: NCont exn :: NVar reg :: xs,
-              env', t)) ->
-      let l = [(NCont ret, eval clo env continuation);
-               (NCont exn, eval clo env exn_continuation);
-               (NVar reg, eval clo env region)] in
-      let args = List.combine xs apply_args' in
-      eval clo (l @ args @ env') t
+    let apply_args' = List.map (eval fenv venv) apply_args in
+    (match eval fenv venv callee with
+    | VLambda {names ; fun_env ; val_env ; exp } ->
+      List.iter (_print_name Format.std_formatter) names;
+      _print_env val_env;
+      eval (fun_env @ fenv) (val_env @ venv) exp
     | t ->
       VApply
       {callee = t;
-       continuation = eval clo env continuation;
-       exn_continuation = eval clo env exn_continuation;
-       region = eval clo env region;
+       continuation = eval fenv venv continuation;
+       exn_continuation = eval fenv venv exn_continuation;
+       region = eval fenv venv region;
        apply_args = apply_args'})[@ocaml.warning "-4"]
   | Apply_cont {k ; args} ->
-    let args = List.map (eval clo env) args in
-    (match eval clo env k with
-     (* Double-check on the environment being passed around here *)
-     | VHandler (Close (xs, env', t)) ->
-       let args = List.combine xs args in
-       eval clo (args @ env') t
+    let args = List.map (eval fenv venv) args in
+    (match eval fenv venv k with
+     | VHandler {names; fun_env; val_env; exp} ->
+       let args = List.combine names args in
+       eval (fun_env @ fenv) (args @ val_env) exp
      | t ->
        VApplyCont {k = t; args}
     )[@ocaml.warning "-4"]
@@ -150,10 +145,14 @@ let rec eval
     in
     let params = x.params |> Bound_parameters.to_list |>
                  List.map (fun x -> NVar (Bound_parameter.var x)) in
-    VLambda (Close (
-      [NCont x.return_continuation;
-        NCont x.exn_continuation;
-        NVar x.my_region] @ params, env, e))
+    VLambda
+      { names =
+        [NCont x.return_continuation;
+          NCont x.exn_continuation;
+          NVar x.my_region] @ params;
+        fun_env = fenv;
+        val_env = venv;
+        exp = e }
   | Handler t ->
     let x, e =
       Core_continuation_handler.pattern_match t
@@ -161,17 +160,18 @@ let rec eval
     in
     let x = Bound_parameters.to_list x |>
             List.map (fun x -> (NVar (Bound_parameter.var x))) in
-    VHandler (Close (x, env, e))
+    VHandler
+      { names = x; fun_env = fenv; val_env = venv; exp = e }
   | Switch {scrutinee; arms} ->
     VSwitch {
-      scrutinee = eval clo env scrutinee;
-      arms = Targetint_31_63.Map.map (eval clo env) arms
+      scrutinee = eval fenv venv scrutinee;
+      arms = Targetint_31_63.Map.map (eval fenv venv) arms
     }
-  | Named e -> eval_named env e
+  | Named e -> eval_named fenv venv e
   | Invalid { message } -> VInvalid { message }
 
-and let_bound_to_name clo
-    (env : (name * value) list) (t : Bound_for_let.t) (e : core_exp)
+and let_bound_to_name (fenv : function_env) (venv : value_env)
+    (t : Bound_for_let.t) (e : core_exp)
   : (name * value) list =
   match t with
   | Singleton v ->
@@ -180,22 +180,24 @@ and let_bound_to_name clo
      | Some e ->
        (match e with
         | Literal l ->
-          [(nvar, eval_literal env l)]
+          [(nvar, eval_literal venv l)]
         | Prim p ->
-          [(nvar, eval clo env (Eval_prim.eval p))]
+          [(nvar, eval fenv venv (Eval_prim.eval p))]
         | Closure_expr (var, fn, clos) ->
           let env =
-            closure_expr_to_closure var env clos
+            closure_expr_to_closure fenv var venv clos
           in
           [(nvar, List.assoc (NSlot (Function_slot fn)) env)]
         | Set_of_closures clos ->
-            closure_expr_to_closure (Bound_var.var v) env clos
+            closure_expr_to_closure
+              fenv (Bound_var.var v)
+              venv clos
         | Static_consts _ ->
           Misc.fatal_error
             "Expected static variable to be bound for static constants"
         | Rec_info v -> [(nvar, VNamed (VRec_info v))])
      | None ->
-        [(NVar (Bound_var.var v), eval clo env e)]
+        [(NVar (Bound_var.var v), eval fenv venv e)]
     )
   | Static c ->
     (match must_be_static_consts e with
@@ -205,35 +207,35 @@ and let_bound_to_name clo
          (match c with
           | Bound_codelike.Pattern.Code c ->
             let e = Expr.create_named (Static_consts [e]) in
-            [(NCode c, eval clo env e)]
+            [(NCode c, eval fenv venv e)]
           | Bound_codelike.Pattern.Set_of_closures v ->
             (match e with
-             | Static_const (Static_set_of_closures clo) ->
-                closure_expr_to_closure (Bound_var.var v) env clo
+             | Static_const (Static_set_of_closures clos) ->
+                closure_expr_to_closure fenv (Bound_var.var v) venv clos
              | _ -> Misc.fatal_error "Expected static closure body")
           | Bound_codelike.Pattern.Block_like s  ->
             let e = Expr.create_named (Static_consts [e]) in
-            [(NSymbol s, eval clo env e)]) in
+            [(NSymbol s, eval fenv venv e)]) in
        List.map group binding |> List.flatten
      | None -> Misc.fatal_error "Expected static consts body")
 
-and closure_expr_to_closure clo
-    (_phi : Variable.t) 
-    (env: (name * value) list)
+and closure_expr_to_closure
+    (fenv : function_env)
+    (phi : Variable.t)
+    (venv: (name * value) list)
     ({function_decls; value_slots} : set_of_closures) =
   let value_slots_list =
-    Value_slot.Map.map (eval clo env) value_slots |>
+    Value_slot.Map.map (eval fenv venv) value_slots |>
     Value_slot.Map.to_seq |> List.of_seq in
   let value_slots =
     List.map (fun (k, v) -> (NSlot (Value_slot k), v))
       value_slots_list
   in
-  let env = value_slots @ env in
-  let _phi_value : (name * _) list =
+  let env = value_slots @ venv in
+  let phi_value =
     SlotMap.to_seq function_decls |>
     List.of_seq |>
-    List.map
-      (fun (i, x) -> (NSlot (Function_slot i), must_be_code_id' x))
+    List.map (fun (i, x) -> (i, must_be_code_id' x))
   in
   let function_decls_list : (name * _) list =
     SlotMap.to_seq function_decls |>
@@ -243,26 +245,23 @@ and closure_expr_to_closure clo
         (NSlot (Function_slot i),
          match (List.assoc (NCode (must_be_code_id' x)) env) with
          | (VNamed (VStatic_consts
-              [VCode (Close (NVar phi :: l, env', e))])) ->
+              [VCode { names; fun_env; val_env; exp }])) ->
            (* Value slot extends the environment captured for a function *)
            VLambda
-             (Close
-              (l,
-               (VNamed (VLiteral (VSimple (Simple.var _phi))))
-                  :: value_slots @ env' @ env, e))
-             (* NVar phi,  *)
-           (* eval ((NVar phi, *)
-           (*        (VNamed (VLiteral (VSimple (Simple.var _phi))))) *)
-           (*        :: value_slots @ env' @ env) *)
-           (*   (With_delayed_renaming.create (Lambda (Core_lambda.create x e))) *)
-         | _ -> eval clo env x))
+             { names = names;
+               fun_env = (NFun phi, phi_value) :: fenv @ fun_env;
+               val_env = (NVar phi, VFun phi) ::
+                   value_slots @ val_env @ venv;
+               exp = exp}
+         | _ -> eval fenv venv x))
   in
   function_decls_list
 
-and eval_named (env : (name * value) list) (e : named) =
+and eval_named
+    (fenv : function_env) (venv : value_env) (e : named) =
   match e with
-  | Literal l -> eval_literal env l
-  | Prim p -> eval_prim env p
+  | Literal l -> eval_literal venv l
+  | Prim p -> eval_prim fenv venv p
   | Closure_expr _ ->
     Misc.fatal_error "[eval_named] Unreachable: set of closures"
   | Set_of_closures _ ->
@@ -270,17 +269,19 @@ and eval_named (env : (name * value) list) (e : named) =
   | Static_consts consts ->
     VNamed
       (VStatic_consts
-         (List.map (eval_static_const_or_code env) consts))
+         (List.map (eval_static_const_or_code fenv venv) consts))
   | Rec_info v -> VNamed (VRec_info v)
 
-and eval_static_const_or_code (env : (name * value) list)
+and eval_static_const_or_code
+    (fenv : function_env) (venv : value_env)
     (c : static_const_or_code) : static_const_or_code_value =
   match c with
-  | Code f -> eval_function_params_and_body env f
+  | Code f -> eval_function_params_and_body fenv venv f
   | Deleted_code -> VDeleted_code
-  | Static_const s -> VStatic_const (eval_static_const env s)
+  | Static_const s -> VStatic_const (eval_static_const fenv venv s)
 
-and eval_function_params_and_body (env : (name * value) list)
+and eval_function_params_and_body
+    (fenv : function_env) (venv : value_env)
     ({expr; _} : Flambda2_core.function_params_and_body) =
   let v, args, e =
     Core_function_params_and_body.pattern_match
@@ -292,18 +293,22 @@ and eval_function_params_and_body (env : (name * value) list)
   in
   let params = args.params |> Bound_parameters.to_list |>
                List.map (fun x -> NVar (Bound_parameter.var x)) in
-  VCode (Close ([NVar (Bound_var.var v);
-                 NCont args.return_continuation;
-                 NCont args.exn_continuation;
-                 NVar args.my_region] @ params, env, e))
+  VCode
+    {names = [NVar (Bound_var.var v);
+              NCont args.return_continuation;
+              NCont args.exn_continuation;
+              NVar args.my_region] @ params;
+     fun_env = fenv;
+     val_env = venv;
+     exp = e}
 
-and eval_static_const 
-    (env : (name * value) list) (s : static_const) =
+and eval_static_const
+    (fenv : function_env) (venv : value_env) (s : static_const) =
   match s with
   | Static_set_of_closures _ ->
     Misc.fatal_error "Unreachable: eval_static_const [static_set_of_closures]"
   | Block (tag, mut, l) ->
-    let l = List.map (eval clo env) l in
+    let l = List.map (eval fenv venv) l in
     Block (tag, mut, l)
   | Boxed_float t -> Boxed_float t
   | Boxed_int32 t -> Boxed_int32 t
@@ -333,7 +338,8 @@ and _print_name fmt (n : name) =
   | NCode i ->
     Format.fprintf fmt "code id %a @."
       Code_id.print i
-  | _ -> ()
+  | NCont i ->
+    Format.fprintf fmt "cont %a @." Continuation.print i
 
 and _print_env (env : (name * value) list) =
   Format.fprintf Format.std_formatter "------- env -------@.";
@@ -360,7 +366,8 @@ and eval_literal (env : (name * value) list) (e : literal) =
     (match List.assoc_opt (NCont k) env with
      | Some s -> s
      | None -> VNamed (VLiteral (VCont k)))
-  | Res_cont k -> List.assoc (NResCont k) env
+  | Res_cont (Return k) -> List.assoc (NCont k) env
+  | Res_cont _ -> Misc.fatal_error "Res_cont : Never returns"
   | Code_id id -> List.assoc (NCode id) env
   | Slot (_, slot) ->
     let x  = List.assoc (NSlot slot) env in
@@ -369,13 +376,14 @@ and eval_literal (env : (name * value) list) (e : literal) =
         List.assoc (NCode i) env
      | _ -> x)
 
-and eval_prim (env : (name * value) list) (e : primitive) =
+and eval_prim (fenv : function_env) (venv : value_env)
+    (e : primitive) =
   (match e with
     | Nullary e ->
       VNamed (VPrim (Nullary e))
     | Unary (Project_value_slot
         { project_from ; value_slot = slot; kind }, arg) ->
-      let x = List.assoc_opt (NSlot (Value_slot slot)) env in
+      let x = List.assoc_opt (NSlot (Value_slot slot)) venv in
       (match x with
       | Some x -> x
       | _ ->
@@ -384,9 +392,9 @@ and eval_prim (env : (name * value) list) (e : primitive) =
           (Unary
             (Project_value_slot
                       { project_from ; value_slot = slot; kind } ,
-            eval clo env arg))))
+            eval fenv venv arg))))
     | Unary (Project_function_slot {move_from ; move_to}, arg) ->
-      let x = List.assoc_opt (NSlot (Function_slot move_to)) env in
+      let x = List.assoc_opt (NSlot (Function_slot move_to)) venv in
       (match x with
         | Some x -> x
         | _ ->
@@ -396,16 +404,16 @@ and eval_prim (env : (name * value) list) (e : primitive) =
                     (Unary
                       (Project_function_slot
                           { move_from ; move_to} ,
-                        eval clo env arg))))
+                        eval fenv venv arg))))
     | Unary (p, e) ->
-      VNamed (VPrim (Unary (p, eval clo env e)))
+      VNamed (VPrim (Unary (p, eval fenv venv e)))
     | Binary (p, e1, e2) ->
-      VNamed (VPrim (Binary (p, eval clo env e1, eval clo env e2)))
+      VNamed (VPrim (Binary (p, eval fenv venv e1, eval fenv venv e2)))
     | Ternary (p, e1, e2, e3) ->
       VNamed (VPrim (Ternary
-        (p, eval clo env e1, eval clo env e2, eval clo env e3)))
+        (p, eval fenv venv e1, eval fenv venv e2, eval fenv venv e3)))
     | Variadic (p, list) ->
-      VNamed (VPrim (Variadic (p, List.map (eval clo env) list))))
+      VNamed (VPrim (Variadic (p, List.map (eval fenv venv) list))))
 
 let rec partial_combine_aux (acc : ('a * 'b) list) (l : 'a list) (l' : 'b list)
   : ('a * 'b) list * 'a list * 'b list =
@@ -416,15 +424,23 @@ let rec partial_combine_aux (acc : ('a * 'b) list) (l : 'a list) (l' : 'b list)
 
 let _partial_combine = partial_combine_aux []
 
-let take n (l : 'a list) = List.filteri (fun i _ -> i < n) l
-let drop n (l : 'a list) = List.filteri (fun i _ -> i >= n) l
+(* let take n (l : 'a list) = List.filteri (fun i _ -> i < n) l *)
+let _drop n (l : 'a list) = List.filteri (fun i _ -> i >= n) l
 
-let appCl (Close (x, env, t) : closure) : value =
-  let env' = List.combine x (take (List.length x) (List.map snd env)) in
-  eval (env' @ (drop (List.length x) env)) t
-
-let closure_to_soc _clo : set_of_closures =
-  failwith "Unimplemented closure to soc"
+let appCl ({names = _; fun_env; val_env; exp} : closure) : value =
+  (* let (env', names, _) = partial_combine names (List.map snd val_env) in *)
+  (* Format.fprintf Format.std_formatter "@.==== appCl ==== @."; *)
+  (* List.iter (_print_name Format.std_formatter) names; *)
+  (* _print_env val_env; *)
+  (* Format.fprintf Format.std_formatter "@.================ @."; *)
+  (* let env' = *)
+  (*   List.combine names *)
+  (*     (take (List.length names) (List.map snd val_env)) in *)
+  eval fun_env val_env exp
+  (* let val_env = (drop (List.length env') val_env) in *)
+  (* match names with *)
+  (* | [] -> eval fun_env (env' @ (drop (List.length env') val_env)) exp *)
+  (* | _ -> VLambda { names; fun_env ; val_env ; exp } *)
 
 (* What is the [ns] name list for? *)
 let rec quote (ns : name list) (t : value) : core_exp =
@@ -447,9 +463,13 @@ let rec quote (ns : name list) (t : value) : core_exp =
           args = List.map (quote ns) args}
     in
     With_delayed_renaming.create e
-  | VLambda (Close (
-      NVar phi :: NCont ret :: NCont exn :: NVar region :: params,
-      env, t)) ->
+  | VLambda
+      { names =
+          NVar clo ::
+                NCont ret ::
+                NCont exn ::
+                NVar region :: params;
+        fun_env; val_env; exp } ->
     let params' =
       List.map
         (fun x ->
@@ -466,25 +486,30 @@ let rec quote (ns : name list) (t : value) : core_exp =
               ~params:params'
               ~my_region:region
     in
-    let l = NCont ret :: NCont exn :: NVar region :: params in
-    let e =
-      Lambda
-        (Core_lambda.create
-          x
-          (quote ([NVar phi] @ l @ ns)
-             (appCl (Close ([NVar phi] @ l, env, t)))))
+    let l =
+      NVar clo ::
+            NCont ret :: NCont exn :: NVar region :: params in
+    let e = Lambda
+      (Core_lambda.create
+        x
+        (quote (l @ ns)
+            (appCl { names = l; fun_env; val_env; exp})))
     in
     With_delayed_renaming.create e
-  | VLambda (Close (NCont ret :: NCont exn :: NVar region :: params,
-        env, t)) ->
+  | VLambda
+      { names =
+          NCont ret ::
+          NCont exn ::
+          NVar region :: params;
+        fun_env; val_env; exp } ->
     let params' =
       List.map
         (fun x ->
-          match x with
-          | NVar v ->
-            Bound_parameter.create v
-              Flambda_kind.With_subkind.any_value
-          | _ -> Misc.fatal_error "Expected variable") params
+           match x with
+           | NVar v ->
+             Bound_parameter.create v
+               Flambda_kind.With_subkind.any_value
+           | _ -> Misc.fatal_error "Expected variable") params
       |> Bound_parameters.create
     in
     let x = Bound_for_lambda.create
@@ -493,16 +518,16 @@ let rec quote (ns : name list) (t : value) : core_exp =
         ~params:params'
         ~my_region:region
     in
-    let l = NCont ret :: NCont exn :: NVar region :: params in
-    let e =
-      Lambda
+    let l =
+      NCont ret :: NCont exn :: NVar region :: params in
+    let e = Lambda
         (Core_lambda.create
            x
            (quote (l @ ns)
-              (appCl (Close (l, env, t)))))
+              (appCl { names = l; fun_env; val_env; exp})))
     in
     With_delayed_renaming.create e
-  | VHandler (Close (l, env, t)) ->
+  | VHandler { names; fun_env; val_env; exp } ->
     let params =
       List.map
         (fun x ->
@@ -511,15 +536,17 @@ let rec quote (ns : name list) (t : value) : core_exp =
              Bound_parameter.create i
                (Flambda_kind.With_subkind.any_value)
            | _ -> Misc.fatal_error
-                    "Expected variable parameters for handler ") l
+                    "Expected variable parameters for handler ")
+        names
       |> Bound_parameters.create
     in
     let e =
       Handler
         (Core_continuation_handler.create
            params
-           (quote (l @ ns)
-              (appCl (Close (l, env, t)))))
+           (quote (names @ ns)
+              (appCl
+                 { names; fun_env; val_env; exp })))
     in
     With_delayed_renaming.create e
   | VSwitch { scrutinee ; arms } ->
@@ -529,8 +556,12 @@ let rec quote (ns : name list) (t : value) : core_exp =
       (Switch {scrutinee = scrutinee; arms = arms})
   | VInvalid { message } ->
     With_delayed_renaming.create (Invalid { message })
-  | VLambda _ ->
+  | VLambda { names; fun_env = _; val_env = _; exp = _} ->
+    List.iter (_print_name Format.std_formatter) names;
     Misc.fatal_error "Mismatched lambda arguments on quoting"
+  | VFun var ->
+      (Named (Literal (Simple (Simple.var var)))
+            |> With_delayed_renaming.create)
 
 and quote_named ns (e : named_value) : core_exp =
   match e with
@@ -544,9 +575,6 @@ and quote_named ns (e : named_value) : core_exp =
        | VCode_id id -> Code_id id))
     |> With_delayed_renaming.create
   | VPrim p -> quote_prim ns p
-  | VClosure_expr (var, slot, clo) ->
-    Named (Closure_expr (var, slot, closure_to_soc clo))
-    |> With_delayed_renaming.create
   | VStatic_consts const ->
     Named (quote_static_consts ns const)
     |> With_delayed_renaming.create
@@ -563,38 +591,61 @@ and quote_static_const_or_code ns const : static_const_or_code =
   | VDeleted_code -> Deleted_code
   | VStatic_const s -> Static_const (quote_static_const ns s)
 
-and quote_code _ns clo =
-  match clo with
-  | Close (list, env, e) ->
+and quote_code ns (clo : closure) =
+  (match clo with
+    | { names =
+        NVar clo :: NCont ret :: NCont exn :: NVar region :: params;
+        fun_env ; val_env ; exp } ->
+    let params' =
+      List.map
+        (fun x ->
+           match x with
+           | NVar v ->
+             Bound_parameter.create v
+               Flambda_kind.With_subkind.any_value
+           | _ -> Misc.fatal_error "Expected variable") params
+      |> Bound_parameters.create
+    in
+    let x = Bound_for_lambda.create
+        ~return_continuation:ret
+        ~exn_continuation:exn
+        ~params:params'
+        ~my_region:region
+    in
+    let l = NVar clo :: NCont ret :: NCont exn :: NVar region :: params in
+    Core_function_params_and_body.create
+      (Bound_var.create clo Name_mode.normal)
+      (Core_lambda.create
+          x
+          (quote (l @ ns)
+            (appCl { names = l; fun_env; val_env; exp})))
+    | _ -> Misc.fatal_error "Mismatched [quote_code]")[@ocaml.warning "-8"]
+
     (* Full reduction: reduce under a lambda *)
-    (* let e = quote (List.map fst env) (eval clo env e) in *)
-    (match list with
-     | NVar v :: NCont ret :: NCont exn :: NVar region :: params ->
-       let params' =
-         List.map
-           (fun x ->
-              match x with
-              | NVar v ->
-                Bound_parameter.create v
-                  Flambda_kind.With_subkind.any_value
-              | _ -> Misc.fatal_error "Expected variable") params
-         |> Bound_parameters.create
-       in
-       let x = Bound_for_lambda.create
-           ~return_continuation:ret
-           ~exn_continuation:exn
-           ~params:params'
-           ~my_region:region
-       in
-       Core_function_params_and_body.create
-         (Bound_var.create v Name_mode.normal)
-          (Core_lambda.create x
-             (* (quote (NLambda args :: ns) *)
-             (*     (appCl (Close ([NLambda args], env, e)) *)
-             (*       (List.map snd env)))) *)
-             e)
-     | _ -> Misc.fatal_error "Mismatched [quote_code]"
-    )[@ocaml.warning "-8"]
+    (* (\* let e = quote (List.map fst env) (eval clo env e) in *\) *)
+    (*    let params' = *)
+    (*      List.map *)
+    (*        (fun x -> *)
+    (*           match x with *)
+    (*           | NVar v -> *)
+    (*             Bound_parameter.create v *)
+    (*               Flambda_kind.With_subkind.any_value *)
+    (*           | _ -> Misc.fatal_error "Expected variable") params *)
+    (*      |> Bound_parameters.create *)
+    (*    in *)
+    (*    let x = Bound_for_lambda.create *)
+    (*        ~return_continuation:ret *)
+    (*        ~exn_continuation:exn *)
+    (*        ~params:params' *)
+    (*        ~my_region:region *)
+    (*    in *)
+    (*    Core_function_params_and_body.create *)
+    (*      (Bound_var.create v Name_mode.normal) *)
+    (*       (Core_lambda.create x *)
+    (*          (\* (quote (NLambda args :: ns) *\) *)
+    (*          (\*     (appCl (Close ([NLambda args], env, e)) *\) *)
+    (*          (\*       (List.map snd env)))) *\) *)
+    (*          exp) *)
 
 and quote_static_const ns s : static_const =
   match s with
