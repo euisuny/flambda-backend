@@ -119,10 +119,17 @@ let rec eval fenv (venv : (name * value) list) (e : core_exp) : value =
        region; apply_args} ->
     let apply_args' = List.map (eval fenv venv) apply_args in
     (match eval fenv venv callee with
-    | VLambda {names ; fun_env ; val_env ; exp } ->
-      List.iter (_print_name Format.std_formatter) names;
+    | VLambda {names =
+         NVar _ :: NCont ret :: NCont ex :: NVar reg :: params ;
+        fun_env ; val_env ; exp } ->
+      List.iter (_print_name Format.std_formatter) params;
       _print_env val_env;
-      eval (fun_env @ fenv) (val_env @ venv) exp
+      let l = [(NCont ret, eval fenv venv continuation);
+               (NCont ex, eval fenv venv exn_continuation);
+               (NVar reg, eval fenv venv region);
+               (NVar reg, eval fenv venv region)] in
+      let args = List.combine params apply_args' in
+      eval (fun_env @ fenv) (l @ args @ val_env @ venv) exp
     | t ->
       VApply
       {callee = t;
@@ -130,6 +137,7 @@ let rec eval fenv (venv : (name * value) list) (e : core_exp) : value =
        exn_continuation = eval fenv venv exn_continuation;
        region = eval fenv venv region;
        apply_args = apply_args'})[@ocaml.warning "-4"]
+
   | Apply_cont {k ; args} ->
     let args = List.map (eval fenv venv) args in
     (match eval fenv venv k with
