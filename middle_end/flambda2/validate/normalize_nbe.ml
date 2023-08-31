@@ -122,8 +122,6 @@ let rec eval fenv (venv : (name * value) list) (e : core_exp) : value =
     | VLambda {names =
          NVar _ :: NCont ret :: NCont ex :: NVar reg :: params ;
         fun_env ; val_env ; exp } ->
-      List.iter (_print_name Format.std_formatter) params;
-      _print_env val_env;
       let l = [(NCont ret, eval fenv venv continuation);
                (NCont ex, eval fenv venv exn_continuation);
                (NVar reg, eval fenv venv region);
@@ -423,34 +421,9 @@ and eval_prim (fenv : function_env) (venv : value_env)
     | Variadic (p, list) ->
       VNamed (VPrim (Variadic (p, List.map (eval fenv venv) list))))
 
-let rec partial_combine_aux (acc : ('a * 'b) list) (l : 'a list) (l' : 'b list)
-  : ('a * 'b) list * 'a list * 'b list =
-  match l, l' with
-  | _, [] -> (acc, l, [])
-  | [], _ -> (acc, [], l')
-  | a :: xs, b :: xs' -> ((a, b)::acc, xs, xs')
-
-let _partial_combine = partial_combine_aux []
-
-(* let take n (l : 'a list) = List.filteri (fun i _ -> i < n) l *)
-let _drop n (l : 'a list) = List.filteri (fun i _ -> i >= n) l
-
 let appCl ({names = _; fun_env; val_env; exp} : closure) : value =
-  (* let (env', names, _) = partial_combine names (List.map snd val_env) in *)
-  (* Format.fprintf Format.std_formatter "@.==== appCl ==== @."; *)
-  (* List.iter (_print_name Format.std_formatter) names; *)
-  (* _print_env val_env; *)
-  (* Format.fprintf Format.std_formatter "@.================ @."; *)
-  (* let env' = *)
-  (*   List.combine names *)
-  (*     (take (List.length names) (List.map snd val_env)) in *)
   eval fun_env val_env exp
-  (* let val_env = (drop (List.length env') val_env) in *)
-  (* match names with *)
-  (* | [] -> eval fun_env (env' @ (drop (List.length env') val_env)) exp *)
-  (* | _ -> VLambda { names; fun_env ; val_env ; exp } *)
 
-(* What is the [ns] name list for? *)
 let rec quote (ns : name list) (t : value) : core_exp =
   match t with
   | VNamed e -> quote_named ns e
@@ -628,32 +601,6 @@ and quote_code ns (clo : closure) =
           (quote (l @ ns)
             (appCl { names = l; fun_env; val_env; exp})))
     | _ -> Misc.fatal_error "Mismatched [quote_code]")[@ocaml.warning "-8"]
-
-    (* Full reduction: reduce under a lambda *)
-    (* (\* let e = quote (List.map fst env) (eval clo env e) in *\) *)
-    (*    let params' = *)
-    (*      List.map *)
-    (*        (fun x -> *)
-    (*           match x with *)
-    (*           | NVar v -> *)
-    (*             Bound_parameter.create v *)
-    (*               Flambda_kind.With_subkind.any_value *)
-    (*           | _ -> Misc.fatal_error "Expected variable") params *)
-    (*      |> Bound_parameters.create *)
-    (*    in *)
-    (*    let x = Bound_for_lambda.create *)
-    (*        ~return_continuation:ret *)
-    (*        ~exn_continuation:exn *)
-    (*        ~params:params' *)
-    (*        ~my_region:region *)
-    (*    in *)
-    (*    Core_function_params_and_body.create *)
-    (*      (Bound_var.create v Name_mode.normal) *)
-    (*       (Core_lambda.create x *)
-    (*          (\* (quote (NLambda args :: ns) *\) *)
-    (*          (\*     (appCl (Close ([NLambda args], env, e)) *\) *)
-    (*          (\*       (List.map snd env)))) *\) *)
-    (*          exp) *)
 
 and quote_static_const ns s : static_const =
   match s with
