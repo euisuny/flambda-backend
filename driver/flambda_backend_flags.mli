@@ -19,6 +19,7 @@ val dump_cfg : bool ref
 val cfg_invariants : bool ref
 val cfg_equivalence_check : bool ref
 val validate : bool ref
+val validate_debug : Misc.filepath option ref
 
 val reorder_blocks_random : int option ref
 val basic_block_sections : bool ref

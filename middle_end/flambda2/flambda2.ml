@@ -97,24 +97,44 @@ let print_flexpect name main_dump_ppf ~raw_flambda:old_unit new_unit =
     ~header:("Before and after " ^ name)
     ~f:pp_flambda_as_flexpect (old_unit, new_unit)
 
+let dump_validator_files filename src_init src_normalized res_init res_normalized =
+  Misc.protect_writing_to_file ~filename ~f:(fun out ->
+    let ppf = Format.formatter_of_out_channel out in
+    Format.fprintf ppf
+      "\n\n\n------------------ Translated Original ------------------\n\n";
+    Flambda2_core.print ppf src_init;
+    Format.fprintf ppf
+      "\n\n\n------------------ Normalized Original ------------------\n\n";
+    Flambda2_core.print ppf src_normalized;
+    Format.fprintf ppf
+      "\n\n\n------------------ Translated Result ------------------\n\n";
+    Flambda2_core.print ppf res_init;
+    Format.fprintf ppf
+      "\n\n\n------------------ Normalized Result ------------------\n\n";
+    Flambda2_core.print ppf res_normalized)
+
 let validate filename (src : Flambda_unit.t) (res : Flambda_unit.t) =
   let src_core =
     Profile.record ~accumulate:true "translate_src" Translate.flambda_unit_to_core
       src
   in
-  let src_core =
+  let src_core' =
     Profile.record ~accumulate:true "normalize_src" Normalize.normalize src_core
   in
   let res_core =
     Profile.record ~accumulate:true "translate_res" Translate.flambda_unit_to_core
       res
   in
-  let res_core =
+  let res_core' =
     Profile.record ~accumulate:true "normalize_res" Normalize.normalize res_core
   in
   let validated =
-    Profile.record ~accumulate:true "equiv" (Equiv.core_eq src_core) res_core
+    Profile.record ~accumulate:true "equiv" (Equiv.core_eq src_core') res_core'
   in
+  begin match !Flambda_backend_flags.validate_debug with
+  | None -> ()
+  | Some file -> dump_validator_files file src_core src_core' res_core res_core'
+  end;
   if validated
   then Format.eprintf "fλ2: %s PASS@." filename
   else Format.eprintf "fλ2: %s FAIL@." filename

@@ -36,6 +36,9 @@ let mk_dcfg_equivalence_check f =
 let mk_validate f =
   "-validate", Arg.Unit f, " Run the semantic equivalence checking validator for Flambda2"
 
+let mk_validate_debug f =
+  "-validate-debug", Arg.String f, "<file> Dump IRs from validation to specified file"
+
 let mk_reorder_blocks_random f =
   "-reorder-blocks-random",
   Arg.Int f,
@@ -492,6 +495,7 @@ module type Flambda_backend_options = sig
   val dcfg_invariants : unit -> unit
   val dcfg_equivalence_check : unit -> unit
   val validate : unit -> unit
+  val validate_debug : string -> unit
 
   val reorder_blocks_random : int -> unit
   val basic_block_sections : unit -> unit
@@ -580,6 +584,7 @@ struct
     mk_dcfg_invariants F.dcfg_invariants;
     mk_dcfg_equivalence_check F.dcfg_equivalence_check;
     mk_validate F.validate;
+    mk_validate_debug F.validate_debug;
 
     mk_reorder_blocks_random F.reorder_blocks_random;
     mk_basic_block_sections F.basic_block_sections;
@@ -698,6 +703,7 @@ module Flambda_backend_options_impl = struct
   let dcfg_invariants = set' Flambda_backend_flags.cfg_invariants
   let dcfg_equivalence_check = set' Flambda_backend_flags.cfg_equivalence_check
   let validate = set' Flambda_backend_flags.validate
+  let validate_debug file = Flambda_backend_flags.validate_debug := Some file
 
   let reorder_blocks_random seed =
     Flambda_backend_flags.reorder_blocks_random := Some seed
