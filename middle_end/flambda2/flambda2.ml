@@ -98,11 +98,24 @@ let print_flexpect name main_dump_ppf ~raw_flambda:old_unit new_unit =
     ~f:pp_flambda_as_flexpect (old_unit, new_unit)
 
 let validate filename (src : Flambda_unit.t) (res : Flambda_unit.t) =
-  let src_core = Translate.flambda_unit_to_core src in
-  let src_core = src_core |> Normalize.normalize in
-  let res_core = Translate.flambda_unit_to_core res in
-  let res_core = res_core |> Normalize.normalize in
-  if (Equiv.core_eq src_core res_core)
+  let src_core =
+    Profile.record ~accumulate:true "translate_src" Translate.flambda_unit_to_core
+      src
+  in
+  let src_core =
+    Profile.record ~accumulate:true "normalize_src" Normalize.normalize src_core
+  in
+  let res_core =
+    Profile.record ~accumulate:true "translate_res" Translate.flambda_unit_to_core
+      res
+  in
+  let res_core =
+    Profile.record ~accumulate:true "normalize_res" Normalize.normalize res_core
+  in
+  let validated =
+    Profile.record ~accumulate:true "equiv" (Equiv.core_eq src_core) res_core
+  in
+  if validated
   then Format.eprintf "fλ2: %s PASS@." filename
   else Format.eprintf "fλ2: %s FAIL@." filename
 
@@ -164,12 +177,15 @@ let lambda_to_cmm ~ppf_dump:ppf ~prefixname ~filename ~keep_symbol_tables
         in
         (* Run the validator *)
         (if !Flambda_backend_flags.validate
-         then
-           (try (Normalize.comp_unit := compilation_unit;
-            validate filename raw_flambda flambda) with
+         then begin
+           Normalize.comp_unit := compilation_unit;
+           (try
+              Profile.record_call ~accumulate:true "validate" (fun () ->
+                validate filename raw_flambda flambda)
+            with
             | _ -> Format.eprintf "fλ2: %s FAIL [ERROR]@." filename
-         )
-         else ());
+           )
+         end);
         (if Flambda_features.inlining_report ()
         then
           let output_prefix = Printf.sprintf "%s.%d" prefixname round in
