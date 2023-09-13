@@ -67,11 +67,11 @@ let ids_for_export
 
 let[@ocamlformat "disable"] print ppf
      { return_continuation; exn_continuation; params; my_region } =
-  Format.fprintf ppf "@[<v 0> (params %a), (ret %a), (exn %a), (reg %a)@]"
-    Bound_parameters.print params
+  Format.fprintf ppf "@[<v 0> (ret %a), (exn %a), (reg %a), (params %a)@]"
     Continuation.print return_continuation
     Continuation.print exn_continuation
     Variable.print my_region
+    Bound_parameters.print params
 
 let rename
       { return_continuation;
