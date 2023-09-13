@@ -4,6 +4,10 @@ open! Translate
 
 module P = Flambda_primitive
 
+let fuel = ref 0
+
+let fuel_limit = 30
+
 (* Semantic values of Flambda2 terms
 
    Each term gets translated into an open singleton term with names and closures
@@ -78,7 +82,8 @@ and value_env = (name * value) list
 
 and function_env = (fun_name * (SlotMap.key * value) list) list
 
-(* A closure is a list of names, environment, and a core expression *)
+(* A closure is a list of names, function and value environment, and a core
+   expression *)
 and closure =
   { names : name list;
     fun_env : function_env;
@@ -118,32 +123,47 @@ let rec eval fenv (venv : (name * value) list) (e : core_exp) : value =
       {callee; continuation; exn_continuation;
        region; apply_args} ->
     let apply_args' = List.map (eval fenv venv) apply_args in
-    (match eval fenv venv callee with
-    | VLambda {names =
-         NVar _ :: NCont ret :: NCont ex :: NVar reg :: params ;
-        fun_env ; val_env ; exp } ->
-      let l = [(NCont ret, eval fenv venv continuation);
-               (NCont ex, eval fenv venv exn_continuation);
-               (NVar reg, eval fenv venv region);
-               (NVar reg, eval fenv venv region)] in
-      let args = List.combine params apply_args' in
-      eval (fun_env @ fenv) (l @ args @ val_env @ venv) exp
-    | t ->
+    let t = eval fenv venv callee in
+    (if !fuel < fuel_limit then
+       (fuel := !fuel + 1;
+        match eval fenv venv callee with
+        | VLambda {names =
+            NVar _ :: NCont ret :: NCont ex :: NVar reg :: params ;
+            fun_env ; val_env ; exp } ->
+          let l = [(NCont ret, eval fenv venv continuation);
+                  (NCont ex, eval fenv venv exn_continuation);
+                  (NVar reg, eval fenv venv region);
+                  (NVar reg, eval fenv venv region)] in
+          let args = List.combine params apply_args' in
+          eval (fun_env @ fenv) (l @ args @ val_env @ venv) exp
+        | t ->
+          VApply
+          {callee = t;
+          continuation = eval fenv venv continuation;
+          exn_continuation = eval fenv venv exn_continuation;
+          region = eval fenv venv region;
+          apply_args = apply_args'})[@ocaml.warning "-4"]
+    else
       VApply
-      {callee = t;
-       continuation = eval fenv venv continuation;
-       exn_continuation = eval fenv venv exn_continuation;
-       region = eval fenv venv region;
-       apply_args = apply_args'})[@ocaml.warning "-4"]
+        {callee = t;
+         continuation = eval fenv venv continuation;
+         exn_continuation = eval fenv venv exn_continuation;
+         region = eval fenv venv region;
+         apply_args = apply_args'})
 
   | Apply_cont {k ; args} ->
     let args = List.map (eval fenv venv) args in
-     (match eval fenv venv k with
+    let t = eval fenv venv k in
+    (if !fuel < fuel_limit then
+     (fuel := !fuel + 1;
+      match eval fenv venv k with
      | VHandler {names; fun_env; val_env; exp} ->
        let args = List.combine names args in
        eval (fun_env @ fenv) (args @ val_env) exp
      | t ->
        VApplyCont {k = t; args})[@ocaml.warning "-4"]
+     else
+       VApplyCont {k = t; args})
   | Lambda t ->
     let x, e =
       Core_lambda.pattern_match t ~f:(fun b e -> b, e)
@@ -381,7 +401,7 @@ and _print_fenv (fenv : function_env) =
     fenv;
   Format.fprintf Format.std_formatter "-------------------@.@."
 
-and eval_literal _fenv (env : (name * value) list) (e : literal) =
+and eval_literal fenv (env : (name * value) list) (e : literal) =
   match e with
   | Simple s ->
     let x =
@@ -410,32 +430,41 @@ and eval_literal _fenv (env : (name * value) list) (e : literal) =
      | Some x -> x
      | None -> VNamed (VLiteral (VCode_id id)))
   | Slot (var, Function_slot slot) ->
-    _print_fenv _fenv;
-    _print_env env;
-    VNamed (VLiteral (VSlot (var, Function_slot slot)))
-    (* TODO: Uncomment and add fuel so it doesn't diverge *)
-    (* Format.fprintf Format.std_formatter "%a" Function_slot.print slot; *)
-    (* _print_fenv fenv; *)
+    (* Debug print.. *)
+    (* _print_fenv _fenv; *)
     (* _print_env env; *)
-    (* (match (List.assoc_opt (NFun var) fenv) with *)
-    (* | Some x -> *)
-    (*   (let x = List.assoc_opt slot x in *)
-    (*   (match x with *)
-    (*   | Some (VNamed (VLiteral (VCode_id i))) -> *)
-    (*       (match (List.assoc_opt (NCode i) env) with *)
-    (*         | Some x' -> x' *)
-    (*         | None -> (VNamed (VLiteral (VCode_id i)))) *)
-    (*   | Some x -> x *)
-    (*   | None -> Misc.fatal_error "Not found: function_slot")) *)
-    (* | None -> *)
-    (*   let x  = List.assoc_opt (NSlot (Function_slot slot)) env in *)
-    (*   (match x with *)
-    (*    | Some (VNamed (VLiteral (VCode_id i))) -> *)
-    (*      (match (List.assoc_opt (NCode i) env) with *)
-    (*       | Some x' -> x' *)
-    (*       | None -> (VNamed (VLiteral (VCode_id i)))) *)
-    (*    | Some x -> x *)
-    (*    | None -> Misc.fatal_error "Not found: value_slot")) *)
+    (* Format.fprintf Format.std_formatter "%a" Function_slot.print slot; *)
+
+    (* VNamed (VLiteral (VSlot (var, Function_slot slot))) *)
+
+    (* TODO: Add fuel so it doesn't diverge *)
+    (* TODO: Change value environment to only store value slots *)
+    (* TODO: Clean up [List.assoc_opt] use cases *)
+    (match (List.assoc_opt (NFun var) fenv) with
+    | Some x ->
+      (let x = List.assoc_opt slot x in
+      (match x with
+      | Some (VNamed (VLiteral (VCode_id i))) ->
+         (match (List.assoc_opt (NCode i) env) with
+           | Some x' -> x'
+           | None -> (VNamed (VLiteral (VCode_id i))))
+      | Some x -> x
+      | None ->
+        Misc.fatal_error "Not found: function_slot"))
+    | None ->
+      let x  = List.assoc_opt (NSlot (Function_slot slot)) env in
+      (match x with
+       | Some (VNamed (VLiteral (VCode_id i))) ->
+         (match (List.assoc_opt (NCode i) env) with
+          | Some x' -> x'
+          | None -> (VNamed (VLiteral (VCode_id i))))
+         (* (match (List.assoc_opt (NCode i) env) with *)
+         (*  | Some x' -> x' *)
+         (*  | None -> (VNamed (VLiteral (VCode_id i)))) *)
+       | Some x -> x
+       | None ->
+         (VNamed (VLiteral (VSlot (var, (Function_slot slot)))))))
+
   | Slot (_, Value_slot slot) ->
     let x  = List.assoc_opt (NSlot (Value_slot slot)) env in
     (match x with
