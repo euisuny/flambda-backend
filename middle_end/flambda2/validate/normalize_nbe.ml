@@ -5,8 +5,10 @@ open! Translate
 module P = Flambda_primitive
 
 let fuel = ref 0
+let fuel_limit = 0
 
-let fuel_limit = 30
+let cont_fuel = ref 0
+let cont_fuel_limit = 1
 
 (* Semantic values of Flambda2 terms
 
@@ -16,9 +18,7 @@ type value =
   | VFun of Variable.t
   | VNamed of named_value
   | VApply of apply_value
-  | VApplyCont of apply_cont_value
   | VLambda of closure
-  | VHandler of closure
   | VSwitch of switch_value
   | VInvalid of { message : string }
 
@@ -65,14 +65,7 @@ and static_const_group_value = static_const_or_code_value list
 
 and apply_value =
   { callee: value;
-    continuation: value;
-    exn_continuation: value;
-    region: value;
     apply_args: value list; }
-
-and apply_cont_value =
-  { k : value;
-    args : value list }
 
 and switch_value =
   { scrutinee : value;
@@ -137,33 +130,36 @@ let rec eval fenv (venv : (name * value) list) (e : core_exp) : value =
           let args = List.combine params apply_args' in
           eval (fun_env @ fenv) (l @ args @ val_env @ venv) exp
         | t ->
+          let continuation = eval fenv venv continuation in
+          let exn_continuation = eval fenv venv exn_continuation in
+          let region = eval fenv venv region in
           VApply
           {callee = t;
-          continuation = eval fenv venv continuation;
-          exn_continuation = eval fenv venv exn_continuation;
-          region = eval fenv venv region;
-          apply_args = apply_args'})[@ocaml.warning "-4"]
+            apply_args =
+              continuation :: exn_continuation :: region :: apply_args'}
+       )[@ocaml.warning "-4"]
     else
+      let continuation = eval fenv venv continuation in
+      let exn_continuation = eval fenv venv exn_continuation in
+      let region = eval fenv venv region in
       VApply
         {callee = t;
-         continuation = eval fenv venv continuation;
-         exn_continuation = eval fenv venv exn_continuation;
-         region = eval fenv venv region;
-         apply_args = apply_args'})
+         apply_args =
+           continuation :: exn_continuation :: region :: apply_args'})
 
   | Apply_cont {k ; args} ->
     let args = List.map (eval fenv venv) args in
     let t = eval fenv venv k in
-    (if !fuel < fuel_limit then
-     (fuel := !fuel + 1;
+    (if !cont_fuel < cont_fuel_limit then
+     (cont_fuel := !cont_fuel + 1;
       match eval fenv venv k with
-     | VHandler {names; fun_env; val_env; exp} ->
+     | VLambda {names; fun_env; val_env; exp} ->
        let args = List.combine names args in
        eval (fun_env @ fenv) (args @ val_env) exp
      | t ->
-       VApplyCont {k = t; args})[@ocaml.warning "-4"]
+       VApply {callee = t; apply_args = args})[@ocaml.warning "-4"]
      else
-       VApplyCont {k = t; args})
+       VApply {callee = t; apply_args = args})
   | Lambda t ->
     let x, e =
       Core_lambda.pattern_match t ~f:(fun b e -> b, e)
@@ -185,7 +181,7 @@ let rec eval fenv (venv : (name * value) list) (e : core_exp) : value =
     in
     let x = Bound_parameters.to_list x |>
             List.map (fun x -> (NVar (Bound_parameter.var x))) in
-    VHandler
+    VLambda
       { names = x; fun_env = fenv; val_env = venv; exp = e }
   | Switch {scrutinee; arms} ->
     VSwitch {
@@ -520,21 +516,11 @@ let appCl ({names = _; fun_env; val_env; exp} : closure) : value =
 let rec quote (ns : name list) (t : value) : core_exp =
   match t with
   | VNamed e -> quote_named ns e
-  | VApply {callee ; continuation ; exn_continuation ; region ; apply_args} ->
-    let e =
-      Apply
-        { callee = quote ns callee;
-          continuation = quote ns continuation;
-          exn_continuation = quote ns exn_continuation;
-          region = quote ns region;
-          apply_args = List.map (quote ns) apply_args }
-    in
-    With_delayed_renaming.create e
-  | VApplyCont { k ; args } ->
+  | VApply {callee ; apply_args} ->
     let e =
       Apply_cont
-        { k = quote ns k;
-          args = List.map (quote ns) args}
+        { k = quote ns callee;
+          args = List.map (quote ns) apply_args }
     in
     With_delayed_renaming.create e
   | VLambda
@@ -601,7 +587,7 @@ let rec quote (ns : name list) (t : value) : core_exp =
               (appCl { names = l; fun_env; val_env; exp})))
     in
     With_delayed_renaming.create e
-  | VHandler { names; fun_env; val_env; exp } ->
+  | VLambda { names; fun_env; val_env; exp } ->
     let params =
       List.map
         (fun x ->
@@ -630,9 +616,6 @@ let rec quote (ns : name list) (t : value) : core_exp =
       (Switch {scrutinee = scrutinee; arms = arms})
   | VInvalid { message } ->
     With_delayed_renaming.create (Invalid { message })
-  | VLambda { names; fun_env = _; val_env = _; exp = _} ->
-    List.iter (_print_name Format.std_formatter) names;
-    Misc.fatal_error "Mismatched lambda arguments on quoting"
   | VFun var ->
       (Named (Literal (Simple (Simple.var var)))
             |> With_delayed_renaming.create)
