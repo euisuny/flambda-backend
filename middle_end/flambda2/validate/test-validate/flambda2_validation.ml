@@ -210,12 +210,12 @@ let () =
   (* let current_time = Unix.gettimeofday () in *)
   (* normalize_term "apply2.fl"; *)
   (* let current_time2 = Unix.gettimeofday () in *)
-  normalize_nbe_term "apply_orig.fl";
+  (* normalize_nbe_term "apply_orig.fl"; *)
+  normalize_nbe_term "rec.fl";
+  (* normalize_nbe_term "rec.fl"; *)
   (* let current_time3 = Unix.gettimeofday () in *)
   (* Format.fprintf Format.std_formatter "Current time %f @. Nbe time %f @. time %f @." *)
   (*   current_time *)
   (*   (current_time2 -. current_time) *)
   (*   (current_time3 -. current_time2); *)
-  (* TODO *)
-  (* normalize_nbe_term "apply_orig.fl"; *)
   ()
