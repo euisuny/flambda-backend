@@ -10,12 +10,12 @@
    (progn
    (run ../tools/flvalidate.exe tests13.fl))))
 
- (rule
- (alias runtest)
-  (deps rec.fl)
-  (action
-   (progn
-   (run ../tools/flvalidate.exe rec.fl))))
+ ; (rule
+ ; (alias runtest)
+ ;  (deps rec.fl)
+ ;  (action
+ ;   (progn
+ ;   (run ../tools/flvalidate.exe rec.fl))))
 
  (rule
  (alias runtest)

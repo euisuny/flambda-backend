@@ -1,5 +1,5 @@
 let $camlRec__first_const19 = Block 0 () in
-let code rec loopify(default tailrec) size(6)
+let code rec loopify(never) size(6)
       g_1 (x) my_closure my_region my_depth -> k * k1 =
   let next_depth = rec_info (succ my_depth) in
   let Popaque = %Opaque x in
