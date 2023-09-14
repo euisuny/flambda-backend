@@ -5,7 +5,7 @@ open! Translate
 module P = Flambda_primitive
 
 let fuel = ref 0
-let fuel_limit = 5
+let fuel_limit = 10
 
 type name =
   | NCont of Continuation.t
@@ -73,8 +73,7 @@ and const_value =
   | Immutable_string of string
 
 and value_env = (name * value) list
-
-and function_env = ((fun_name * SlotMap.key) * closure) list
+and function_env = ((fun_name * Function_slot.t) * closure) list
 
 (* A closure is a list of names, function and value environment, and a core
    expression *)
@@ -109,7 +108,6 @@ let rec eval fenv (venv : (name * value) list) (e : core_exp) : value =
     let apply_args' = List.map (eval fenv venv) apply_args in
     (match eval fenv venv callee with
     | VLambda {names =
-        NVar _ ::
         NCont ret :: NCont ex :: NVar reg :: params ;
         fun_env ; val_env ; exp } ->
       let l = [(NCont ret, eval fenv venv continuation);
@@ -136,6 +134,7 @@ let rec eval fenv (venv : (name * value) list) (e : core_exp) : value =
        eval (fun_env @ fenv) (args @ val_env) exp
      | t ->
        VApply {callee = t; apply_args = args})[@ocaml.warning "-4"]
+    
   | Lambda t ->
     let x, e =
       Core_lambda.pattern_match t ~f:(fun b e -> b, e)
@@ -247,22 +246,39 @@ and closure_expr_to_closure
        | _ -> Misc.fatal_error "expected closure"
      ))
   in
+  let function_decls_list =
+    let x = SlotMap.to_seq function_decls |> List.of_seq in
+    List.fold_right
+      (fun (x, v) acc ->
+         match x with
+         | Function_slot s -> (s, v) :: acc
+         | _ -> acc) [] x in
+
   let function_decls_list : function_env =
-    SlotMap.to_seq function_decls |>
-    List.of_seq |>
+    function_decls_list |>
     List.map
       (fun (i, x) ->
         ((phi, i),
          match must_be_code_id x with
          | Some id ->
            (match (List.assoc_opt (NCode id) env) with
+            | Some (VLambda { names = NVar v :: NCont c :: names ;
+                              fun_env; val_env; exp }) ->
+              (* Value slot extends the environment captured for a function *)
+              { names = NCont c :: names;
+                fun_env = phi_value @ fenv @ fun_env;
+                val_env = (NVar v, VNamed (VLiteral
+                            (VSlot (phi, Function_slot i))))
+                          :: (NVar phi, VFun phi)
+                          :: value_slots @ val_env @ venv;
+                exp = exp }
             | Some (VLambda { names; fun_env; val_env; exp }) ->
               (* Value slot extends the environment captured for a function *)
                 { names = names;
                   fun_env = phi_value @ fenv @ fun_env;
                   val_env = (NVar phi, VFun phi) ::
                       value_slots @ val_env @ venv;
-                  exp = exp}
+                  exp = exp }
             | _->
               Misc.fatal_error "Expected closure")
           | None ->
@@ -438,12 +454,7 @@ and eval_literal fenv (env : (name * value) list) (e : literal) =
     let x  = List.assoc_opt (NSlot slot) env in
     (match x with
      | Some (VNamed (VLiteral (VCode_id i))) ->
-       (match (List.assoc_opt (NCode i) env) with
-        | Some (VLambda {names; fun_env; val_env; exp}) ->
-          let val_env =
-            List.remove_assoc (NSlot slot) val_env
-          in
-          (VLambda {names; fun_env; val_env; exp});
+       (match List.assoc_opt (NCode i) env with
         | Some x -> x
         | None -> (VNamed (VLiteral (VCode_id i))))
      | Some x -> x
