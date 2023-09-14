@@ -183,8 +183,8 @@ let normalize_nbe_term file : unit =
   Format.fprintf Format.std_formatter
     "------------------------------------------------------------------------------@.";
 
-  let src_core = src_core |> Normalize_nbe.normalize in
-  let tgt_core = tgt_core |> Normalize_nbe.normalize in
+  let src_core = src_core |> Normalize_nbe.normalize 0 in
+  let tgt_core = tgt_core |> Normalize_nbe.normalize 8 in
 
   let alpha_eq = Equiv.core_eq src_core tgt_core in
 

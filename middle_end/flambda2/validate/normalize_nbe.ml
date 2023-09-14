@@ -92,7 +92,7 @@ let rec eval fenv (venv : (name * value) list) (e : core_exp) : value =
         ~f:(fun ~x ~e1 ~e2 -> x, e1, e2)
     in
     let (fenv', env') = let_bound_to_name fenv venv x e1 in
-    eval (fenv' @ fenv) (env' @ venv) e2
+    eval fenv' (env' @ venv) e2
 
   | Let_cont {handler; body} ->
     let e2 = With_delayed_renaming.create (Handler handler) in
@@ -110,6 +110,7 @@ let rec eval fenv (venv : (name * value) list) (e : core_exp) : value =
     | VLambda {names =
         NCont ret :: NCont ex :: NVar reg :: params ;
         fun_env ; val_env ; exp } ->
+
       let l = [(NCont ret, eval fenv venv continuation);
               (NCont ex, eval fenv venv exn_continuation);
               (NVar reg, eval fenv venv region);
@@ -134,7 +135,7 @@ let rec eval fenv (venv : (name * value) list) (e : core_exp) : value =
        eval (fun_env @ fenv) (args @ val_env) exp
      | t ->
        VApply {callee = t; apply_args = args})[@ocaml.warning "-4"]
-    
+
   | Lambda t ->
     let x, e =
       Core_lambda.pattern_match t ~f:(fun b e -> b, e)
@@ -204,7 +205,8 @@ and let_bound_to_name (fenv : function_env) (venv : value_env)
     (match must_be_static_consts e with
      | Some group ->
        let binding = List.combine c group in
-       let group ((c, e) : Bound_codelike.Pattern.t * static_const_or_code) :
+       let (code, remain) = List.partition (fun (_, x) -> is_code x) binding in
+       let group fenv venv ((c, e) : Bound_codelike.Pattern.t * static_const_or_code) :
          function_env * value_env =
          (match c with
           | Bound_codelike.Pattern.Code c ->
@@ -218,9 +220,16 @@ and let_bound_to_name (fenv : function_env) (venv : value_env)
           | Bound_codelike.Pattern.Block_like s  ->
             let e = Expr.create_named (Static_consts [e]) in
             (fenv, [(NSymbol s, eval fenv venv e)])) in
-       let x : (function_env * value_env) list = List.map group binding in
-       List.fold_right
-         (fun (fenv, venv) (facc, vacc) -> (fenv @ facc, venv @ vacc)) x ([], [])
+       let code_x : (function_env * value_env) list = List.map (group fenv venv) code in
+       let (fenv', venv') =
+         List.fold_right
+          (fun (fenv, venv) (facc, vacc) -> (fenv @ facc, venv @ vacc)) code_x ([], []) in
+       let remain_x : (function_env * value_env) list = List.map (group (fenv' @ fenv) (venv' @ venv)) remain in
+       let (fenv'', venv'') =
+         List.fold_right
+           (fun (fenv, venv) (facc, vacc) -> (fenv @ facc, venv @ vacc)) remain_x ([], []) in
+       (fenv'' @ fenv', venv'' @ venv')
+
      | None -> Misc.fatal_error "Expected static consts body")
 
 and closure_expr_to_closure
@@ -243,7 +252,12 @@ and closure_expr_to_closure
     List.map (fun (i, x) -> ((phi, i),
        match eval fenv venv x with
        | VLambda clo -> clo
-       | _ -> Misc.fatal_error "expected closure"
+       | _ ->
+         _print_env env;
+         Format.fprintf Format.std_formatter
+           "%a" Flambda2_core.print x;
+         Misc.fatal_error
+                "[cetc] expected closure"
      ))
   in
   let function_decls_list =
@@ -391,6 +405,14 @@ and _print_env (env : (name * value) list) =
   List.iter (fun (n, _) -> _print_name Format.std_formatter n) env;
   Format.fprintf Format.std_formatter "-------------------@.@."
 
+and _print_fenv (env : function_env) =
+  Format.fprintf Format.std_formatter "------- fun_env -------@.";
+  List.iter (fun ((v, slot), _) ->
+      Format.fprintf Format.std_formatter "(%a, %a)@."
+        Variable.print v
+        Function_slot.print slot) env;
+  Format.fprintf Format.std_formatter "-------------------@.@."
+
 and _print_value (x : value) =
   match x with
   | VFun v -> Format.fprintf Format.std_formatter "%a" Variable.print v
@@ -408,6 +430,16 @@ and _print_value (x : value) =
     Format.fprintf Format.std_formatter "rec"
   | VInvalid { message } ->
     Format.fprintf Format.std_formatter "%s" message
+
+and _fenv_to_soc name (fenv: function_env) : set_of_closures =
+  let seq =
+    List.map
+      (fun ((_, slot) , clo) ->
+         (slot, quote name (VLambda clo))) fenv
+    |> List.to_seq
+  in
+  {function_decls = SlotMap.of_seq seq;
+   value_slots = Value_slot.Map.empty }
 
 and eval_literal fenv (env : (name * value) list) (e : literal) =
   match e with
@@ -437,28 +469,31 @@ and eval_literal fenv (env : (name * value) list) (e : literal) =
     (match List.assoc_opt (NCode id) env with
      | Some x -> x
      | None -> VNamed (VLiteral (VCode_id id)))
-  | Slot (var, Function_slot slot) ->
-    if !fuel < fuel_limit then
+  | Slot (var, Function_slot slot) -> (* TODO : Add fuel *)
+    (if (!fuel < fuel_limit) then
     (fuel := !fuel + 1;
-     (match (List.assoc_opt (var, slot) fenv) with
-       | Some {names; fun_env; val_env; exp} ->
-          ((* TODO more fine-grained fuel checking *)
-          let fun_env = List.remove_assoc (var, slot) fun_env in
-          (VLambda {names; fun_env; val_env; exp}))
-        | None ->
-          (VNamed (VLiteral (VSlot (var, (Function_slot slot)))))))
+    (match (List.assoc_opt (var, slot) fenv) with
+      | Some {names; fun_env; val_env; exp} ->
+        ((* TODO more fine-grained fuel checking *)
+          (* let (_, fun_env) = List.partition (fun (k, _) -> k == (var, slot)) fun_env in *)
+          (* let (_, val_env) = List.partition (fun (k, _) -> k == NVar var) val_env in *)
+          VLambda {names; fun_env = fenv @ fun_env ;
+                   val_env = env @ val_env ; exp})
+      | None ->
+        VNamed (VLiteral (VSlot (var, (Function_slot slot))))))
     else
-      (VNamed (VLiteral (VSlot (var, (Function_slot slot)))))
+      (VNamed (VLiteral (VSlot (var, (Function_slot slot))))))
 
   | Slot (_, Value_slot slot) ->
     let x  = List.assoc_opt (NSlot slot) env in
+    (_print_env env;
     (match x with
      | Some (VNamed (VLiteral (VCode_id i))) ->
        (match List.assoc_opt (NCode i) env with
         | Some x -> x
         | None -> (VNamed (VLiteral (VCode_id i))))
      | Some x -> x
-     | None -> Misc.fatal_error "Not found: value_slot")
+     | None -> Misc.fatal_error "Not found: value_slot"))
 
 and eval_prim (fenv : function_env) (venv : value_env)
     (e : primitive) =
@@ -483,11 +518,8 @@ and eval_prim (fenv : function_env) (venv : value_env)
         | [(_, x)] -> VLambda x
         | _ ->
           VNamed
-                (VPrim
-                    (Unary
-                      (Project_function_slot
-                          { move_from ; move_to} ,
-                        eval fenv venv arg)))))
+            (VPrim (Unary (Project_function_slot { move_from ; move_to },
+                eval fenv venv arg)))))
     | Unary (p, e) ->
       VNamed (VPrim (Unary (p, eval fenv venv e)))
     | Binary (p, e1, e2) ->
@@ -498,10 +530,10 @@ and eval_prim (fenv : function_env) (venv : value_env)
     | Variadic (p, list) ->
       VNamed (VPrim (Variadic (p, List.map (eval fenv venv) list))))
 
-let appCl ({names = _; fun_env; val_env; exp} : closure) : value =
+and appCl ({names = _; fun_env; val_env; exp} : closure) : value =
   eval fun_env val_env exp
 
-let rec quote (ns : name list) (t : value) : core_exp =
+and quote (ns : name list) (t : value) : core_exp =
   match t with
   | VNamed e -> quote_named ns e
   | VApply {callee ; apply_args} ->
@@ -597,6 +629,7 @@ let rec quote (ns : name list) (t : value) : core_exp =
                  { names; fun_env; val_env; exp })))
     in
     With_delayed_renaming.create e
+
   | VSwitch { scrutinee ; arms } ->
     let scrutinee = quote ns scrutinee in
     let arms = Targetint_31_63.Map.map (quote ns) arms in
@@ -610,7 +643,7 @@ let rec quote (ns : name list) (t : value) : core_exp =
   | VConst c ->
       Named (Static_consts [Static_const (quote_const ns c)])
         |> With_delayed_renaming.create
-  | VRec _ -> failwith "Unimplemented"
+  | _ -> failwith "Unimplemented"
 
 and quote_named ns (e : named_value) : core_exp =
   match e with
@@ -659,4 +692,6 @@ and quote_prim ns (e : primitive_value) : core_exp =
 let nf (env : (name * value) list) (t : core_exp) =
   quote (List.map fst env) (eval [] env t)
 
-let normalize = nf []
+let normalize f =
+  fuel := f;
+  nf []
