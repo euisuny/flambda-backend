@@ -142,31 +142,35 @@ and subst_singleton_set_of_closures ~(bound: Variable.t)
   | Invalid _ -> e
 
 and subst_singleton_set_of_closures_named ~bound ~clo (e : named) : core_exp =
-  let f bound (v : literal) =
+  let subst_simple bound v =
+    (if Simple.same v (Simple.var bound)
+     then
+      (let {function_decls; value_slots=_} = clo in
+        match SlotMap.bindings function_decls with
+        | [(slot, _)] ->
+          Expr.create_named (Closure_expr (bound, slot, clo))
+        | ([]|_::_)->
+          Expr.create_named (Set_of_closures clo))
+    else
+      Expr.create_named (Literal (Simple v)))
+  in
+  let subst_slot phi slot =
+    (let decls = SlotMap.bindings clo.function_decls in
+    let bound_closure = List.find_opt (fun (x, _) -> x = slot) decls in
+    (match bound_closure with
+    | None -> Expr.create_named e
+    | Some (k, _) -> Expr.create_named (Closure_expr (phi, k, clo))
+    ))
+  in
+  let subst_literal bound (v : literal) =
     (match v with
-    | Simple v ->
-      (if Simple.same v (Simple.var bound)
-       then
-         (let {function_decls; value_slots=_} = clo in
-          match SlotMap.bindings function_decls with
-          | [(slot, _)] ->
-              Expr.create_named (Closure_expr (bound, slot, clo))
-          | ([]|_::_)->
-            Expr.create_named (Set_of_closures clo))
-      else
-        Expr.create_named (Literal (Simple v)))
-    | Slot (phi, Function_slot slot) ->
-      (let decls = SlotMap.bindings clo.function_decls in
-       let bound_closure = List.find_opt (fun (x, _) -> x = slot) decls in
-       (match bound_closure with
-        | None -> Expr.create_named e
-        | Some (k, _) -> Expr.create_named (Closure_expr (phi, k, clo))
-       ))
+    | Simple v -> subst_simple bound v
+    | Slot (phi, Function_slot slot) -> subst_slot phi slot
     | (Cont _ | Res_cont _ | Slot (_, Value_slot _) | Code_id _) ->
       Expr.create_named (Literal v))
   in
   match e with
-  | Literal v -> f bound v
+  | Literal v -> subst_literal bound v
   | Prim e -> prim_fix (subst_singleton_set_of_closures ~bound ~clo) e
   | Closure_expr (phi, slot, set) ->
     let set =
@@ -235,33 +239,37 @@ and subst_bound_set_of_closures
     (bound : Bound_var.t)
     ~(let_body : static_const_or_code)
     (e : named) =
+  let subst_simple_static_soc v const =
+    (match must_be_static_set_of_closures const with
+     | Some set ->
+       if Simple.same v (Simple.var (Bound_var.var bound)) then
+         Expr.create_named
+           (Static_consts [Static_const (Static_set_of_closures set)])
+       else Expr.create_named e
+     | None -> Expr.create_named e)
+  in
+  let subst_fun_slot_static_soc phi slot const =
+    (match must_be_static_set_of_closures const with
+    | Some set ->
+      let bound = SlotMap.bindings set.function_decls in
+      (* try to find if any of the symbols being bound is the same as the
+          variable v *)
+      let bound_closure =
+        List.find_opt (fun (x, _) -> x = slot) bound
+      in
+      (match bound_closure with
+        | None -> Expr.create_named e
+        | Some (k, _) -> Expr.create_named (Closure_expr (phi, k, set)))
+    | None -> Misc.fatal_error "Cannot be reached")
+  in
   let subst_simple v =
     (match let_body with
-     | Static_const const ->
-       (match must_be_static_set_of_closures const with
-        | Some set ->
-          if Simple.same v (Simple.var (Bound_var.var bound)) then
-            Expr.create_named
-              (Static_consts [Static_const (Static_set_of_closures set)])
-          else Expr.create_named e
-        | None -> Expr.create_named e)
+     | Static_const const -> subst_simple_static_soc v const
      | (Deleted_code | Code _) -> Misc.fatal_error "Cannot be reached")
   in
   let subst_function_slot phi slot =
     (match let_body with
-      | Static_const const ->
-        (match must_be_static_set_of_closures const with
-        | Some set ->
-          let bound = SlotMap.bindings set.function_decls in
-          (* try to find if any of the symbols being bound is the same as the
-              variable v *)
-          let bound_closure =
-            List.find_opt (fun (x, _) -> x = slot) bound
-          in
-          (match bound_closure with
-            | None -> Expr.create_named e
-            | Some (k, _) -> Expr.create_named (Closure_expr (phi, k, set)))
-        | None -> Misc.fatal_error "Cannot be reached")
+      | Static_const const -> subst_fun_slot_static_soc phi slot const
       | (Deleted_code | Code _) -> Misc.fatal_error "Cannot be reached")
   in
   match e with
@@ -446,9 +454,9 @@ let step_fun_decl key ({return_continuation;
   in
   let step_apply callee continuation' exn_continuation' apply_args =
     (match must_be_slot callee,
-            must_be_cont continuation',
-            must_be_cont exn_continuation'
-      with
+           must_be_cont continuation',
+           must_be_cont exn_continuation'
+     with
       | Some (_, Function_slot slot), Some cont, Some exn_cont ->
         if
           Function_slot.name slot = Function_slot.name key &&
@@ -461,9 +469,8 @@ let step_fun_decl key ({return_continuation;
               (Expr.create_apply_cont {k = callee; args = apply_args}))
         else default
       | (Some (_, (Value_slot _ | Function_slot _)) | None),
-        (Some _ | None), (Some _ | None) ->
-        default
-    )
+        (Some _ | None), (Some _ | None) -> default
+      )
   in
   match must_be_apply e with
   | Some
