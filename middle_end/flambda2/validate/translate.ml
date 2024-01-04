@@ -341,7 +341,7 @@ and let_cont_to_core (e : Let_cont_expr.t) (sub : env) :
 and subst_singleton_set_of_closures ~(bound: Variable.t)
       ~(clo : set_of_closures) (e : core_exp) : core_exp =
   match descr e with
-  | Named e -> subst_singleton_set_of_closures_named ~bound ~clo e
+  | Named n -> subst_singleton_set_of_closures_named ~bound ~clo n e
   | Let e ->
     let_fix (subst_singleton_set_of_closures ~bound ~clo) e
   | Let_cont e ->
@@ -358,7 +358,7 @@ and subst_singleton_set_of_closures ~(bound: Variable.t)
     switch_fix (subst_singleton_set_of_closures ~bound ~clo) e
   | Invalid _ -> e
 
-and subst_singleton_set_of_closures_named ~bound ~clo (e : named) : core_exp =
+and subst_singleton_set_of_closures_named ~bound ~clo (n : named) (e : core_exp) : core_exp =
   let f bound (v : literal) =
     (match v with
     | Simple v ->
@@ -375,15 +375,15 @@ and subst_singleton_set_of_closures_named ~bound ~clo (e : named) : core_exp =
       (let decls = SlotMap.bindings clo.function_decls in
        let bound_closure = List.find_opt (fun (x, _) -> x = slot) decls in
        (match bound_closure with
-        | None -> Expr.create_named e
+        | None -> e
         | Some (k, _) -> Expr.create_named (Closure_expr (phi, k, clo))
        ))
     | (Cont _ | Res_cont _ | Slot (_, Value_slot _) | Code_id _) ->
       Expr.create_named (Literal v))
   in
-  match e with
+  match n with
   | Literal v -> f bound v
-  | Prim e -> prim_fix (subst_singleton_set_of_closures ~bound ~clo) e
+  | Prim _ -> prim_fix (subst_singleton_set_of_closures ~bound ~clo) e
   | Closure_expr (phi, slot, set) ->
     let set =
       set_of_closures_fix (subst_singleton_set_of_closures ~bound ~clo) set
@@ -396,7 +396,7 @@ and subst_singleton_set_of_closures_named ~bound ~clo (e : named) : core_exp =
     Expr.create_named (Set_of_closures set)
   | Static_consts group ->
     static_const_group_fix (subst_singleton_set_of_closures ~bound ~clo) group
-  | Rec_info _ -> Expr.create_named e
+  | Rec_info _ -> e
 
 and cont_handler_to_core
       (e : Continuation_handler.t) (s : env)

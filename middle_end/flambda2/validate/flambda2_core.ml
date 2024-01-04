@@ -1496,18 +1496,41 @@ let static_const_group_fix (fix : core_exp -> core_exp)
   Named (Static_consts (List.map (static_const_or_code_fix fix) e))
   |> With_delayed_renaming.create
 
-let prim_fix (fix : core_exp -> core_exp) (e : primitive) =
-  (match e with
-  | Nullary _ -> Named (Prim e)
-  | Unary (p, e) ->
-    Named (Prim (Unary (p, fix e)))
+let prim_fix (fix : core_exp -> core_exp) (e : core_exp) =
+  let p =
+    (match must_be_prim e with
+     | Some p -> p
+     | None -> Misc.fatal_error "Expected primitive expr")
+  in
+  match p with
+  | Nullary _ -> e
+  | Unary (p, e1) ->
+    let e1' = fix e1 in
+    if e1 == e1' then e
+    else
+      Named (Prim (Unary (p, e1')))
+      |> With_delayed_renaming.create
   | Binary (p, e1, e2) ->
-    Named (Prim (Binary (p, fix e1, fix e2)))
+    let e1' = fix e1 in
+    let e2' = fix e2 in
+    if e1 == e1' && e2 == e2' then e
+    else
+      Named (Prim (Binary (p, e1', e2')))
+      |> With_delayed_renaming.create
   | Ternary (p, e1, e2, e3) ->
-    Named (Prim (Ternary (p, fix e1, fix e2, fix e3)))
+    let e1' = fix e1 in
+    let e2' = fix e2 in
+    let e3' = fix e3 in
+    if e1 == e1' && e2 == e2' && e3 == e3' then e
+    else
+      Named (Prim (Ternary (p, e1', e2', e3')))
+     |> With_delayed_renaming.create
   | Variadic (p, list) ->
-    Named (Prim (Variadic (p, List.map fix list))))
-  |> With_delayed_renaming.create
+    let list' = Misc.Stdlib.List.map_sharing fix list in
+    if list == list' then e
+    else
+      Named (Prim (Variadic (p, list')))
+      |> With_delayed_renaming.create
 
 let named_fix (fix : core_exp -> core_exp)
       (f : 'a -> core_exp -> core_exp) arg (e : core_exp) =
@@ -1520,7 +1543,7 @@ let named_fix (fix : core_exp -> core_exp)
   | Literal _ ->
     let f' = f arg e in
     if e == f' then e else f'
-  | Prim e -> prim_fix fix e
+  | Prim _ -> prim_fix fix e
   | Closure_expr (phi, slot, clo) ->
     let ({function_decls; value_slots} as e') = set_of_closures_fix fix clo in
     if clo == e' then e

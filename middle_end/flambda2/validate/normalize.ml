@@ -86,7 +86,7 @@ let rec subst_pattern ~(bound : Bound_for_let.t) ~(let_body : core_exp)
 and subst_singleton_set_of_closures ~(bound: Variable.t)
       ~(clo : set_of_closures) (e : core_exp) : core_exp =
   match descr e with
-  | Named e -> subst_singleton_set_of_closures_named ~bound ~clo e
+  | Named n -> subst_singleton_set_of_closures_named ~bound ~clo n e
   | Let e ->
     let_fix (subst_singleton_set_of_closures ~bound ~clo) e
   | Let_cont e ->
@@ -103,7 +103,7 @@ and subst_singleton_set_of_closures ~(bound: Variable.t)
     switch_fix (subst_singleton_set_of_closures ~bound ~clo) e
   | Invalid _ -> e
 
-and subst_singleton_set_of_closures_named ~bound ~clo (e : named) : core_exp =
+and subst_singleton_set_of_closures_named ~bound ~clo (n : named) (e : core_exp) : core_exp =
   let f bound (v : literal) =
     (match v with
     | Simple v ->
@@ -120,15 +120,16 @@ and subst_singleton_set_of_closures_named ~bound ~clo (e : named) : core_exp =
       (let decls = SlotMap.bindings clo.function_decls in
        let bound_closure = List.find_opt (fun (x, _) -> x = slot) decls in
        (match bound_closure with
-        | None -> Expr.create_named e
+        | None -> e
         | Some (k, _) -> Expr.create_named (Closure_expr (phi, k, clo))
        ))
     | (Cont _ | Res_cont _ | Slot (_, Value_slot _) | Code_id _) ->
       Expr.create_named (Literal v))
   in
-  match e with
+  match n with
   | Literal v -> f bound v
-  | Prim e -> prim_fix (subst_singleton_set_of_closures ~bound ~clo) e
+  | Prim _ ->
+    prim_fix (subst_singleton_set_of_closures ~bound ~clo) e
   | Closure_expr (phi, slot, set) ->
     let set =
       set_of_closures_fix (subst_singleton_set_of_closures ~bound ~clo) set
@@ -141,7 +142,7 @@ and subst_singleton_set_of_closures_named ~bound ~clo (e : named) : core_exp =
     Expr.create_named (Set_of_closures set)
   | Static_consts group ->
     static_const_group_fix (subst_singleton_set_of_closures ~bound ~clo) group
-  | Rec_info _ -> Expr.create_named e
+  | Rec_info _ -> e
 
 and subst_static_list ~(bound : Bound_codelike.t) ~let_body e : core_exp =
   let rec subst_static_list_ bound body e =
@@ -181,9 +182,9 @@ and subst_pattern_static
      | Block_like bound ->
        subst_block_like ~bound ~let_body named
      | Set_of_closures set ->
-       subst_bound_set_of_closures set ~let_body named
+       subst_bound_set_of_closures set ~let_body named e
      | Code id ->
-       subst_code_id id ~let_body named)
+       subst_code_id id ~let_body named e)
   | Invalid _ -> e
 
 (* [Set of closures]
@@ -193,8 +194,8 @@ and subst_pattern_static
     [let f = closure f_0 @f] where [@f] is the function slot and [f_0] refers
     to the code *)
 and subst_bound_set_of_closures (bound : Bound_var.t) ~(let_body : static_const_or_code)
-      (e : named) =
-  match e with
+      (n : named) (e : core_exp) =
+  match n with
   | Literal (Simple v) ->
     (match let_body with
      | Static_const const ->
@@ -203,10 +204,10 @@ and subst_bound_set_of_closures (bound : Bound_var.t) ~(let_body : static_const_
           if Simple.same v (Simple.var (Bound_var.var bound)) then
             Expr.create_named
               (Static_consts [Static_const (Static_set_of_closures set)])
-          else Expr.create_named e
-        | None -> Expr.create_named e)
+          else e
+        | None -> e)
      | (Deleted_code | Code _) -> Misc.fatal_error "Cannot be reached")
-  | Prim e ->
+  | Prim _ ->
     prim_fix (subst_pattern_static
                 ~bound:(Bound_codelike.Pattern.set_of_closures bound)
                 ~let_body) e
@@ -227,13 +228,12 @@ and subst_bound_set_of_closures (bound : Bound_var.t) ~(let_body : static_const_
             List.find_opt (fun (x, _) -> x = slot) bound
           in
           (match bound_closure with
-          | None -> Expr.create_named e
+          | None -> e
           | Some (k, _) -> Expr.create_named (Closure_expr (phi, k, set)))
         | None -> Misc.fatal_error "Cannot be reached")
       | (Deleted_code | Code _) -> Misc.fatal_error "Cannot be reached")
   | Literal (Res_cont _ | Code_id _ | Cont _ | Slot (_, Value_slot _))
-  | Closure_expr _ | Set_of_closures _ | Rec_info _ ->
-    Expr.create_named e
+  | Closure_expr _ | Set_of_closures _ | Rec_info _ -> e
 
 and subst_code_id_set_of_closures (bound : Code_id.t) ~let_body
       {function_decls; value_slots}
@@ -247,16 +247,16 @@ and subst_code_id_set_of_closures (bound : Code_id.t) ~let_body
   in
   {function_decls; value_slots}
 
-and subst_code_id (bound : Code_id.t) ~(let_body : static_const_or_code) (e : named) : core_exp =
-  match e with
-  | Literal e ->
-    (match e with
+and subst_code_id (bound : Code_id.t) ~(let_body : static_const_or_code) (n : named) (e : core_exp) : core_exp =
+  match n with
+  | Literal l ->
+    (match l with
      | Code_id code_id ->
        if (Code_id.compare code_id bound = 0)
        then Expr.create_named (Static_consts [let_body])
-       else (Expr.create_named (Literal e))
-     | (Simple _ | Cont _ | Res_cont _ | Slot _) -> Expr.create_named (Literal e))
-  | Prim e ->
+       else e
+     | (Simple _ | Cont _ | Res_cont _ | Slot _) -> e)
+  | Prim _ ->
     prim_fix
       (subst_pattern_static
          ~bound:(Bound_codelike.Pattern.code bound) ~let_body) e
@@ -270,7 +270,7 @@ and subst_code_id (bound : Code_id.t) ~(let_body : static_const_or_code) (e : na
     static_const_group_fix
       (subst_pattern_static ~bound:(Bound_codelike.Pattern.code bound) ~let_body)
        consts
-  | Rec_info _ -> Expr.create_named e
+  | Rec_info _ -> e
 
 and subst_block_like
       ~(bound : Symbol.t) ~(let_body : static_const_or_code) (e : named) : core_exp =

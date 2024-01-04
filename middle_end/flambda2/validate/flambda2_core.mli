@@ -322,7 +322,9 @@ val named_fix :
 val set_of_closures_fix :
   (core_exp -> core_exp) ->
   set_of_closures -> set_of_closures
-val prim_fix : (core_exp -> core_exp) -> primitive -> core_exp
+val prim_fix :
+  (core_exp -> core_exp) ->
+  core_exp -> core_exp
 val static_const_group_fix :
   (core_exp -> core_exp) ->
   static_const_group -> core_exp
