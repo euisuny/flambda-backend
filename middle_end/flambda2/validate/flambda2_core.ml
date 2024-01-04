@@ -1510,30 +1510,38 @@ let prim_fix (fix : core_exp -> core_exp) (e : primitive) =
   |> With_delayed_renaming.create
 
 let named_fix (fix : core_exp -> core_exp)
-      (f : 'a -> literal -> core_exp) arg (e : named) =
-  match e with
-  | Literal l -> f arg l
+      (f : 'a -> core_exp -> core_exp) arg (e : core_exp) =
+  let n =
+    (match must_be_named e with
+    | Some n -> n
+    | None -> Misc.fatal_error "Expected name expr")
+  in
+  match n with
+  | Literal _ ->
+    let f' = f arg e in
+    if e == f' then e else f'
   | Prim e -> prim_fix fix e
   | Closure_expr (phi, slot, clo) ->
-    let {function_decls; value_slots} = set_of_closures_fix fix clo in
-    Named (Closure_expr (phi, slot, {function_decls; value_slots}))
-    |> With_delayed_renaming.create
+    let ({function_decls; value_slots} as e') = set_of_closures_fix fix clo in
+    if clo == e' then e
+    else
+      Named (Closure_expr (phi, slot, {function_decls; value_slots}))
+      |> With_delayed_renaming.create
   | Set_of_closures clo ->
-    let {function_decls; value_slots} = set_of_closures_fix fix clo in
-    Named (Set_of_closures {function_decls; value_slots})
-    |> With_delayed_renaming.create
+    let ({function_decls; value_slots} as e') = set_of_closures_fix fix clo in
+    if clo == e' then e
+    else
+      Named (Set_of_closures {function_decls; value_slots})
+      |> With_delayed_renaming.create
   | Static_consts group ->
     static_const_group_fix fix group
-  | Rec_info _ ->
-    Named e
-    |> With_delayed_renaming.create
+  | Rec_info _ -> e
 
 (* LATER: Make this first order? *)
 let rec core_fmap
-  (f : 'a -> literal -> core_exp) (arg : 'a) (e : core_exp) : core_exp =
+  (f : 'a -> core_exp -> core_exp) (arg : 'a) (e : core_exp) : core_exp =
   match descr e with
-  | Named e ->
-    named_fix (core_fmap f arg) f arg e
+  | Named _ -> named_fix (core_fmap f arg) f arg e
   | Let e -> let_fix (core_fmap f arg) e
   | Let_cont e -> let_cont_fix (core_fmap f arg) e
   | Apply e -> apply_fix (core_fmap f arg) e
