@@ -28,12 +28,12 @@ let tagged_immediate_to_core (e : Targetint_31_63.t) : core_exp =
 
 let apply_subst (s : substitutions) (e : core_exp) : core_exp =
   core_fmap (fun () v ->
-    match v with
-    | Simple v ->
-      (match Sub.find_opt v s with
+    match must_be_simple v with
+    | Some vs ->
+      (match Sub.find_opt vs s with
        | Some exp -> exp
-       | None -> Expr.create_named (Literal (Simple v)))
-    | (Cont _ | Res_cont _ | Slot _ | Code_id _) -> Expr.create_named (Literal v))
+       | None -> v)
+    | None -> v)
     () e
 
 let subst_var_slot
@@ -253,13 +253,13 @@ and function_params_and_body_to_core s
 and subst_cont_id (cont : Continuation.t) (e1 : core_exp) (e2 : core_exp) : core_exp =
   core_fmap
     (fun _ x ->
-       match x with
-       | (Cont k | Res_cont (Return k)) ->
+       match must_be_literal x with
+       | Some (Cont k | Res_cont (Return k)) ->
          if Continuation.equal cont k
          then e1
-         else Expr.create_named (Literal x)
-       | (Simple _ | Res_cont Never_returns | Slot _ | Code_id _) ->
-         Expr.create_named (Literal x)) () e2
+         else x
+       | Some (Simple _ | Res_cont Never_returns | Slot _ | Code_id _) | None ->
+         x) () e2
 
 and handler_map_to_closures (phi : Variable.t) (v : Bound_parameter.t list)
       (m : continuation_handler_map) : set_of_closures =

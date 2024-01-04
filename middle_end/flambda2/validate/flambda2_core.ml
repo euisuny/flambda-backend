@@ -1465,9 +1465,10 @@ let prim_fix (fix : core_exp -> core_exp) (e : primitive) =
   |> With_delayed_renaming.create
 
 let named_fix (fix : core_exp -> core_exp)
-      (f : 'a -> literal -> core_exp) arg (e : named) =
+      (f : 'a -> core_exp -> core_exp) arg (e : named) =
   match e with
-  | Literal l -> f arg l
+  | Literal _ ->
+    f arg (Named e |> With_delayed_renaming.create)
   | Prim e -> prim_fix fix e
   | Closure_expr (phi, slot, clo) ->
     let {function_decls; value_slots} = set_of_closures_fix fix clo in
@@ -1485,7 +1486,7 @@ let named_fix (fix : core_exp -> core_exp)
 
 (* LATER: Make this first order? *)
 let rec core_fmap
-  (f : 'a -> literal -> core_exp) (arg : 'a) (e : core_exp) : core_exp =
+  (f : 'a -> core_exp -> core_exp) (arg : 'a) (e : core_exp) : core_exp =
   match descr e with
   | Named e ->
     named_fix (core_fmap f arg) f arg e

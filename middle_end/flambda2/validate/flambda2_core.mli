@@ -304,7 +304,7 @@ val apply_renaming : core_exp -> Renaming.t -> core_exp
 
 val lambda_to_handler : lambda_expr -> continuation_handler
 
-val core_fmap : ('a -> literal -> core_exp) -> 'a -> core_exp -> core_exp
+val core_fmap : ('a -> core_exp -> core_exp) -> 'a -> core_exp -> core_exp
 
 (* Fixpoint functions for core expressions *)
 val let_fix : (core_exp -> core_exp) -> let_expr -> core_exp
@@ -317,7 +317,7 @@ val switch_fix : (core_exp -> core_exp) -> switch_expr -> core_exp
 
 val named_fix :
   (core_exp -> core_exp) ->
-  ('a -> literal -> core_exp) ->
+  ('a -> core_exp -> core_exp) ->
   'a -> named -> core_exp
 val set_of_closures_fix :
   (core_exp -> core_exp) ->

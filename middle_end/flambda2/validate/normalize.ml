@@ -101,14 +101,13 @@ let rec subst_pattern
     ~(let_body : core_exp)
     (e : core_exp) : core_exp =
   let match_var (bound, let_body) s =
-    (match s with
-    | Simple s ->
+    (match must_be_simple s with
+    | Some x ->
       let bound = Simple.var (Bound_var.var bound) in
-      if (Simple.equal s bound)
+      if (Simple.equal x bound)
       then let_body
-      else Expr.create_named (Literal (Simple s))
-    | (Cont _ | Res_cont _ | Slot _ | Code_id _) ->
-      Expr.create_named (Literal s))
+      else s
+    | None -> s)
   in
   let subst_singleton bound =
     (match must_be_set_of_closures let_body with
@@ -335,13 +334,12 @@ and subst_block_like
       ~(bound : Symbol.t) ~(let_body : static_const_or_code) (e : named) : core_exp =
   core_fmap
     (fun _ v ->
-       match v with
-       | Simple v ->
-         if Simple.equal v (Simple.symbol bound)
+       match must_be_simple v with
+       | Some s ->
+         if Simple.equal s (Simple.symbol bound)
          then Expr.create_named (Static_consts [let_body])
-         else Expr.create_named (Literal (Simple v))
-       | (Cont _ | Res_cont _ | Slot _ | Code_id _) ->
-         Expr.create_named (Literal v))
+         else v
+       | None -> v)
     () (Expr.create_named e)
 
 (* ∀ p i, p ∈ params -> params[i] = p -> e [p \ args[i]] *)
@@ -363,14 +361,13 @@ let subst_params
     List.map (fun (x, y) -> (Bound_parameter.simple x, y)) param_args in
   core_fmap
     (fun () s ->
-      match s with
-      | Simple s ->
-          (match List.assoc_opt s param_args with
-          | Some arg_v -> arg_v
-          | None -> Expr.create_named (Literal (Simple s)))
-      | (Cont _ | Res_cont _ | Slot _ | Code_id _) ->
-        Expr.create_named (Literal s))
-    () e
+      match must_be_simple s with
+      | Some v ->
+        (match List.assoc_opt v param_args with
+        | Some arg_v -> arg_v
+        | None -> s)
+      | None -> s)
+  () e
 
 (* [LetCont-β] *)
 let rec subst_cont
@@ -655,7 +652,12 @@ and step_apply_lambda
       (bound : Bound_for_lambda.t)
       exp =
      let params = bound.params in
-     let exp = core_fmap (fun _ -> match_cont bound) () exp in
+     let exp = core_fmap
+         (fun _ x ->
+            match must_be_literal x with
+            | Some v -> match_cont bound v
+            | None -> Misc.fatal_error "Expected literal")
+         () exp in
      subst_params params exp apply_args
   in
   Core_lambda.pattern_match lambda_expr ~f:apply_lambda
@@ -829,14 +831,13 @@ and concretize_my_closure phi (slot : Function_slot.t)
       the closure [phi] variable. *)
     let check_slot =
       (fun _ s ->
-         match s with
-         | Simple simple ->
+         match must_be_simple s with
+         | Some simple ->
            if (Simple.same (Simple.var (Bound_var.var my_closure)) simple)
            then
              Expr.create_named (Literal (Slot (phi, Function_slot slot)))
-           else (Expr.create_named (Literal s))
-         | (Cont _ | Res_cont _ | Slot _ | Code_id _) ->
-           Expr.create_named (Literal s))
+           else s
+         | None -> s)
     in
     let body = core_fmap check_slot () body in
     Core_lambda.create bound (subst_my_closure_body phi clo body)
@@ -872,8 +873,7 @@ and step_set_of_closures
 let rec inline_handlers (e : core_exp) =
   match Expr.descr e with
   | Named e ->
-    let create_literal () x = Expr.create_named (Literal x) in
-    named_fix inline_handlers create_literal () e
+    named_fix inline_handlers (fun _ x -> x) () e
   | Let e ->
     let_fix inline_handlers e
   | Let_cont e -> inline_let_cont e
