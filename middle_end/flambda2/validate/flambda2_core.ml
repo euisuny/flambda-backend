@@ -203,15 +203,35 @@ and apply_renaming = With_delayed_renaming.apply_renaming
 
 and apply_renaming_expr_descr t renaming =
   match t with
-  | Named t -> Named (apply_renaming_named t renaming)
-  | Let t -> Let (apply_renaming_let t renaming)
-  | Let_cont t -> Let_cont (apply_renaming_let_cont t renaming)
-  | Apply t -> Apply (apply_renaming_apply t renaming)
-  | Apply_cont t -> Apply_cont (apply_renaming_apply_cont t renaming)
-  | Lambda t -> Lambda (apply_renaming_lambda t renaming)
-  | Handler t -> Handler (apply_renaming_handler t renaming)
-  | Switch t -> Switch (apply_renaming_switch t renaming)
-  | Invalid t -> Invalid t
+  | Named named ->
+    let named' = apply_renaming_named named renaming in
+    if named == named' then t else Named named'
+  | Let let_expr ->
+    let let_expr' = apply_renaming_let let_expr renaming in
+    if let_expr == let_expr' then t else Let let_expr'
+  | Let_cont let_cont_expr ->
+    let let_cont_expr' = apply_renaming_let_cont let_cont_expr renaming in
+    if let_cont_expr == let_cont_expr' then t else Let_cont let_cont_expr'
+  | Apply apply_expr ->
+    let apply_expr' = apply_renaming_apply apply_expr renaming in
+    if apply_expr == apply_expr' then t else Apply apply_expr'
+  | Apply_cont apply_cont_expr ->
+    let apply_cont_expr' = apply_renaming_apply_cont apply_cont_expr renaming in
+    if apply_cont_expr == apply_cont_expr' then t
+    else Apply_cont apply_cont_expr'
+  | Lambda lambda_expr ->
+    let lambda_expr' = apply_renaming_lambda lambda_expr renaming in
+    if lambda_expr == lambda_expr' then t else Lambda lambda_expr'
+  | Handler continuation_handler ->
+    let continuation_handler' =
+      apply_renaming_handler continuation_handler renaming
+    in
+    if continuation_handler == continuation_handler' then t
+    else Handler continuation_handler'
+  | Switch switch_expr ->
+    let switch_expr' = apply_renaming_switch switch_expr renaming in
+    if switch_expr == switch_expr' then t else Switch switch_expr'
+  | Invalid _ -> t
 
 and apply_renaming_lambda t renaming : lambda_expr =
   Name_abstraction.apply_renaming (module Bound_for_lambda) t renaming
@@ -222,58 +242,61 @@ and apply_renaming_handler t renaming =
     ~apply_renaming_to_term:apply_renaming
 
 (* renaming for [Let] *)
-and apply_renaming_let { let_abst; expr_body } renaming : let_expr =
+and apply_renaming_let ({ let_abst; expr_body } as t) renaming : let_expr =
   let let_abst' =
     Name_abstraction.apply_renaming
       (module Bound_for_let)
       let_abst renaming
       ~apply_renaming_to_term:apply_renaming
   in
-  let defining_expr' = apply_renaming expr_body renaming in
-  { let_abst = let_abst'; expr_body = defining_expr' }
+  let expr_body' = apply_renaming expr_body renaming in
+  if let_abst == let_abst' && expr_body == expr_body'
+  then t
+  else { let_abst = let_abst'; expr_body = expr_body' }
 
 and apply_renaming_literal t renaming : literal =
   match t with
   | Simple simple ->
-    Simple (Simple.apply_renaming simple renaming)
-  | Cont cont | Res_cont (Return cont) ->
-    Cont (Renaming.apply_continuation renaming cont)
+    let simple' = Simple.apply_renaming simple renaming in
+    if simple == simple' then t else Simple simple'
+  | Cont cont ->
+    let cont' = Renaming.apply_continuation renaming cont in
+    if cont == cont' then t else Cont cont'
+  | Res_cont (Return cont) ->
+    let cont' = Renaming.apply_continuation renaming cont in
+    if cont == cont' then t else Cont cont'
   | Res_cont Never_returns -> t
   | Slot (var, slot) ->
-    Slot (Renaming.apply_variable renaming var, slot)
+    let var' = Renaming.apply_variable renaming var in
+    if var == var' then t else Slot (var', slot)
   | Code_id id ->
-    Code_id (Renaming.apply_code_id renaming id)
+    let id' = Renaming.apply_code_id renaming id in
+    if id == id' then t else Code_id id'
 
 and apply_renaming_named t renaming : named =
   match t with
   | Literal literal ->
-    Literal (apply_renaming_literal literal renaming)
+    let literal' = apply_renaming_literal literal renaming in
+    if literal == literal' then t else Literal literal'
   | Prim prim ->
-    Prim (apply_renaming_prim prim renaming)
+    let prim' = apply_renaming_prim prim renaming in
+    if prim == prim' then t else Prim prim'
   | Closure_expr (var, slot, set) ->
-    Closure_expr
-      (Renaming.apply_variable renaming var,
-       slot, apply_renaming_set_of_closures set renaming)
+    let var' = Renaming.apply_variable renaming var in
+    let set' = apply_renaming_set_of_closures set renaming in
+    if var == var' && set == set' then t else Closure_expr (var', slot, set')
   | Set_of_closures set ->
-    Set_of_closures (apply_renaming_set_of_closures set renaming)
+    let set' = apply_renaming_set_of_closures set renaming in
+    if set == set' then t else Set_of_closures set'
   | Static_consts consts ->
-    Static_consts (apply_renaming_static_const_group consts renaming)
+    let consts' = apply_renaming_static_const_group consts renaming in
+    if consts == consts' then t else Static_consts consts'
   | Rec_info info ->
     Rec_info (Rec_info_expr.apply_renaming info renaming)
 
-(* let rec map_sharing f l0 =
- *   match l0 with
- *   | a :: l ->
- *     let a' = f a in
- *     let l' = map_sharing f l in
- *     if a' == a && l' == l then l0 else a' :: l'
- *   | [] -> [] *)
-
-(* FIXME: Try to use [map_sharing]*)
 and apply_renaming_function_declarations
       (funs : function_declarations) renaming =
-  SlotMap.map (fun x -> apply_renaming x renaming)
-    funs
+  SlotMap.map (fun x -> apply_renaming x renaming) funs
 
 and apply_renaming_set_of_closures
       ({ function_decls; value_slots } as t : set_of_closures)
@@ -309,36 +332,42 @@ and apply_renaming_prim t renaming : primitive =
             | Enter_inlined_apply _) ->
     t
   | Unary (prim, arg) ->
-    let prim = P.apply_renaming_unary_primitive prim renaming in
-    let arg = apply_renaming arg renaming in
-    Unary (prim, arg)
+    let prim' = P.apply_renaming_unary_primitive prim renaming in
+    let arg' = apply_renaming arg renaming in
+    if prim == prim' && arg == arg' then t else Unary (prim', arg')
   | Binary (prim, arg1, arg2) ->
-    let prim = P.apply_renaming_binary_primitive prim renaming in
-    let arg1 = apply_renaming arg1 renaming in
-    let arg2 = apply_renaming arg2 renaming in
-    Binary (prim, arg1, arg2)
+    let prim' = P.apply_renaming_binary_primitive prim renaming in
+    let arg1' = apply_renaming arg1 renaming in
+    let arg2' = apply_renaming arg2 renaming in
+    if prim == prim' && arg1 == arg1' && arg2 == arg2'
+    then t
+    else Binary (prim', arg1', arg2')
   | Ternary (prim, arg1, arg2, arg3) ->
-    let prim = P.apply_renaming_ternary_primitive prim renaming in
-    let arg1 = apply_renaming arg1 renaming in
-    let arg2 = apply_renaming arg2 renaming in
-    let arg3 = apply_renaming arg3 renaming in
-    Ternary (prim, arg1, arg2, arg3)
+    let prim' = P.apply_renaming_ternary_primitive prim renaming in
+    let arg1' = apply_renaming arg1 renaming in
+    let arg2' = apply_renaming arg2 renaming in
+    let arg3' = apply_renaming arg3 renaming in
+    if prim == prim' && arg1 == arg1' && arg2 == arg2' && arg3 == arg3'
+    then t
+    else Ternary (prim', arg1', arg2', arg3')
   | Variadic (prim, args) ->
-    let prim = P.apply_renaming_variadic_primitive prim renaming in
-    let args = List.map (fun x -> apply_renaming x renaming) args in
-    Variadic (prim, args)
+    let prim' = P.apply_renaming_variadic_primitive prim renaming in
+    let args' = List.map (fun x -> apply_renaming x renaming) args in
+    if prim == prim' && args == args' then t else Variadic (prim', args')
 
 and apply_renaming_static_const_group t renaming : static_const_group =
-  List.map (fun static_const ->
+  Misc.Stdlib.List.map_sharing (fun static_const ->
     apply_renaming_static_const_or_code static_const renaming) t
 
 and apply_renaming_static_const_or_code t renaming : static_const_or_code =
   match t with
   | Code code ->
-    Code (apply_renaming_function_params_and_body code renaming)
+    let code' = apply_renaming_function_params_and_body code renaming in
+    if code == code' then t else Code code'
   | Deleted_code -> Deleted_code
   | Static_const const ->
-    Static_const (apply_renaming_static_const const renaming)
+    let const' = apply_renaming_static_const const renaming in
+    if const == const' then t else Static_const const'
 
 and apply_renaming_static_const t renaming =
   if Renaming.is_empty renaming
@@ -401,24 +430,28 @@ and apply_renaming_static_const t renaming =
       if fields' == fields then t else Immutable_value_array fields'
     | Empty_array -> Empty_array
 
-and apply_renaming_function_params_and_body {expr; anon} renaming =
-  { expr =
-      Name_abstraction.apply_renaming
-        (module Bound_var) expr renaming ~apply_renaming_to_term:apply_renaming_lambda;
-    anon = anon }
+and apply_renaming_function_params_and_body ({expr; anon} as t) renaming =
+  let expr' =
+    Name_abstraction.apply_renaming
+      (module Bound_var) expr renaming
+      ~apply_renaming_to_term:apply_renaming_lambda
+  in
+  if expr == expr' then t else { expr = expr'; anon = anon }
 
 
 (* renaming for [Let_cont] *)
-and apply_renaming_let_cont {handler; body} renaming : let_cont_expr =
-  let handler =
+and apply_renaming_let_cont ({handler; body} as t) renaming : let_cont_expr =
+  let handler' =
     apply_renaming_cont_handler handler renaming
   in
-  let body =
+  let body' =
     Name_abstraction.apply_renaming
       (module Bound_continuation)
       body renaming ~apply_renaming_to_term:apply_renaming
   in
-  { handler ; body }
+  if handler == handler' && body == body'
+  then t
+  else { handler = handler'; body = body' }
 
 and apply_renaming_cont_handler t renaming : continuation_handler =
   Name_abstraction.apply_renaming
@@ -434,31 +467,43 @@ and apply_renaming_cont_map t renaming : continuation_handler_map =
 
 (* renaming for [Apply] *)
 and apply_renaming_apply
-      { callee; continuation; exn_continuation; region; apply_args}
-      renaming:
-  apply_expr =
-  let continuation = apply_renaming continuation renaming in
-  let exn_continuation = apply_renaming exn_continuation renaming in
-  let callee = apply_renaming callee renaming in
-  let region = apply_renaming region renaming in
-  let apply_args =
-    List.map (fun x -> apply_renaming x renaming) apply_args in
-  { callee = callee; continuation = continuation;
-    exn_continuation = exn_continuation;
-    region = region;
-    apply_args = apply_args }
+      ({ callee; continuation; exn_continuation; region; apply_args} as t)
+      renaming : apply_expr =
+  let continuation' = apply_renaming continuation renaming in
+  let exn_continuation' = apply_renaming exn_continuation renaming in
+  let callee' = apply_renaming callee renaming in
+  let region' = apply_renaming region renaming in
+  let apply_args' =
+    Misc.Stdlib.List.map_sharing (fun x -> apply_renaming x renaming) apply_args
+  in
+  if    continuation == continuation' && exn_continuation == exn_continuation'
+     && callee == callee' && region == region' && apply_args == apply_args'
+  then t
+  else
+    { callee = callee';
+      continuation = continuation';
+      exn_continuation = exn_continuation';
+      region = region';
+      apply_args = apply_args';
+    }
 
 (* renaming for [Apply_cont] *)
-and apply_renaming_apply_cont {k; args} renaming : apply_cont_expr =
-  let k = apply_renaming k renaming in
-  let args = List.map (fun x -> apply_renaming x renaming) args in
-  { k = k; args = args }
+and apply_renaming_apply_cont ({k; args} as t) renaming : apply_cont_expr =
+  let k' = apply_renaming k renaming in
+  let args' =
+    Misc.Stdlib.List.map_sharing (fun x -> apply_renaming x renaming) args
+  in
+  if k == k' && args == args' then t else { k = k'; args = args' }
 
 (* renaming for [Switch] *)
-and apply_renaming_switch {scrutinee; arms} renaming : switch_expr =
-  let scrutinee = apply_renaming scrutinee renaming in
-  let arms = Targetint_31_63.Map.map (fun x -> apply_renaming x renaming) arms in
-  { scrutinee = scrutinee; arms = arms }
+and apply_renaming_switch ({scrutinee; arms} as t) renaming : switch_expr =
+  let scrutinee' = apply_renaming scrutinee renaming in
+  let arms' =
+    Targetint_31_63.Map.map_sharing (fun x -> apply_renaming x renaming) arms
+  in
+  if scrutinee == scrutinee' && arms == arms'
+  then t
+  else { scrutinee = scrutinee'; arms = arms' }
 
 let must_be_named (e : core_exp) : named option =
   match descr e with
