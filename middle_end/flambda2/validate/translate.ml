@@ -342,20 +342,13 @@ and subst_singleton_set_of_closures ~(bound: Variable.t)
       ~(clo : set_of_closures) (e : core_exp) : core_exp =
   match descr e with
   | Named n -> subst_singleton_set_of_closures_named ~bound ~clo n e
-  | Let e ->
-    let_fix (subst_singleton_set_of_closures ~bound ~clo) e
-  | Let_cont e ->
-    let_cont_fix (subst_singleton_set_of_closures ~bound ~clo) e
-  | Apply e ->
-    apply_fix (subst_singleton_set_of_closures ~bound ~clo) e
-  | Apply_cont e ->
-    apply_cont_fix (subst_singleton_set_of_closures ~bound ~clo) e
-  | Lambda e ->
-    lambda_fix (subst_singleton_set_of_closures ~bound ~clo) e
-  | Handler e ->
-    handler_fix (subst_singleton_set_of_closures ~bound ~clo) e
-  | Switch e ->
-    switch_fix (subst_singleton_set_of_closures ~bound ~clo) e
+  | Let _ -> let_fix (subst_singleton_set_of_closures ~bound ~clo) e
+  | Let_cont _ -> let_cont_fix (subst_singleton_set_of_closures ~bound ~clo) e
+  | Apply _ -> apply_fix (subst_singleton_set_of_closures ~bound ~clo) e
+  | Apply_cont _ -> apply_cont_fix (subst_singleton_set_of_closures ~bound ~clo) e
+  | Lambda _ -> lambda_fix (subst_singleton_set_of_closures ~bound ~clo) e
+  | Handler _ -> handler_fix (subst_singleton_set_of_closures ~bound ~clo) e
+  | Switch _ -> switch_fix (subst_singleton_set_of_closures ~bound ~clo) e
   | Invalid _ -> e
 
 and subst_singleton_set_of_closures_named ~bound ~clo (n : named) (e : core_exp) : core_exp =
@@ -394,8 +387,8 @@ and subst_singleton_set_of_closures_named ~bound ~clo (n : named) (e : core_exp)
       set_of_closures_fix (subst_singleton_set_of_closures ~bound ~clo) set
     in
     Expr.create_named (Set_of_closures set)
-  | Static_consts group ->
-    static_const_group_fix (subst_singleton_set_of_closures ~bound ~clo) group
+  | Static_consts _ ->
+    static_const_group_fix (subst_singleton_set_of_closures ~bound ~clo) e
   | Rec_info _ -> e
 
 and cont_handler_to_core

@@ -306,28 +306,22 @@ val lambda_to_handler : lambda_expr -> continuation_handler
 
 val core_fmap : ('a -> core_exp -> core_exp) -> 'a -> core_exp -> core_exp
 
-(* Fixpoint functions for core expressions *)
-val let_fix : (core_exp -> core_exp) -> let_expr -> core_exp
-val let_cont_fix : (core_exp -> core_exp) -> let_cont_expr -> core_exp
-val apply_fix : (core_exp -> core_exp) -> apply_expr -> core_exp
-val apply_cont_fix : (core_exp -> core_exp) -> apply_cont_expr -> core_exp
-val lambda_fix : (core_exp -> core_exp) -> lambda_expr -> core_exp
-val handler_fix : (core_exp -> core_exp) -> continuation_handler -> core_exp
-val switch_fix : (core_exp -> core_exp) -> switch_expr -> core_exp
+(* Fixpoint functions for core expressions.
+   The signature expects a `core_exp` for performance *)
+val let_fix : (core_exp -> core_exp) -> core_exp -> core_exp
+val let_cont_fix : (core_exp -> core_exp) -> core_exp -> core_exp
+val apply_fix : (core_exp -> core_exp) -> core_exp -> core_exp
+val apply_cont_fix : (core_exp -> core_exp) -> core_exp -> core_exp
+val lambda_fix : (core_exp -> core_exp) -> core_exp -> core_exp
+val handler_fix : (core_exp -> core_exp) -> core_exp -> core_exp
+val switch_fix : (core_exp -> core_exp) -> core_exp -> core_exp
 
-val named_fix :
-  (core_exp -> core_exp) ->
-  ('a -> core_exp -> core_exp) ->
+val named_fix : (core_exp -> core_exp) -> ('a -> core_exp -> core_exp) ->
   'a -> core_exp -> core_exp
 val set_of_closures_fix :
-  (core_exp -> core_exp) ->
-  set_of_closures -> set_of_closures
-val prim_fix :
-  (core_exp -> core_exp) ->
-  core_exp -> core_exp
-val static_const_group_fix :
-  (core_exp -> core_exp) ->
-  static_const_group -> core_exp
+  (core_exp -> core_exp) -> set_of_closures -> set_of_closures
+val prim_fix : (core_exp -> core_exp) -> core_exp -> core_exp
+val static_const_group_fix : (core_exp -> core_exp) -> core_exp -> core_exp
 
 val literal_contained : literal -> literal -> bool
 
