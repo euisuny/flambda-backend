@@ -1463,7 +1463,7 @@ let handler_fix (f : core_exp -> core_exp) e =
   let _handler_fix param exp =
     let exp' = f exp in
     if exp == exp' then e
-    else Core_continuation_handler.create param (f exp)
+    else Core_continuation_handler.create param exp'
          |> Expr.create_handler
   in
   Core_continuation_handler.pattern_match handler _handler_fix
