@@ -9,32 +9,42 @@ let comp_unit : Compilation_unit.t ref =
          Compilation_unit.Name.dummy)
 
 (* Subsitutions from old function-pointer-based bindings for function slots to
-   Phi-node closures *)
+   Phi-node closures.
+
+   Note that it is an error, during translation, to create a [named] that might be a
+   [Simple] by calling [Expr.create_named]. Instead use [simple_to_core] with the current
+   substitution.
+
+   CR ccasinghino: refactor to enforce this with abstraction
+*)
+
 module Sub = Map.Make (Simple)
 type substitutions = core_exp Sub.t
+
+(* CR ccasinghino: make Sub abstract, include this in interface - useful for debugging.
+ *
+ * let print_subst nm s =
+ *   let assoc = Sub.bindings s in
+ *   let binding ppf (simple, exp) =
+ *     Format.fprintf ppf "@[  (%a, %a);@]"
+ *       Simple.print simple Flambda2_core.print exp
+ *   in
+ *   Format.printf "%s:\n[\n%a\n]\n" nm (fun ppf -> List.iter (binding ppf)) assoc *)
 
 type env = substitutions
 
 let create_env = Sub.empty
 
-(** Translation from flambda2 terms to simplified core language **)
-let simple_to_core (v : Simple.t) : core_exp =
-  Expr.create_named
-    (Literal (Simple (Simple.without_coercion v)))
+let simple_to_core (s : env) (v : Simple.t) : core_exp =
+  let v = Simple.without_coercion v in
+  match Sub.find_opt v s with
+  | Some n -> n
+  | None -> Expr.create_named (Literal (Simple v))
 
+(** Translation from flambda2 terms to simplified core language **)
 let tagged_immediate_to_core (e : Targetint_31_63.t) : core_exp =
   Expr.create_named
      (Literal (Simple (Simple.const (Int_ids.Const.tagged_immediate e))))
-
-let apply_subst (s : substitutions) (e : core_exp) : core_exp =
-  core_fmap (fun () v ->
-    match v with
-    | Simple v ->
-      (match Sub.find_opt v s with
-       | Some exp -> exp
-       | None -> Expr.create_named (Literal (Simple v)))
-    | (Cont _ | Res_cont _ | Slot _ | Code_id _) -> Expr.create_named (Literal v))
-    () e
 
 let subst_var_slot
       (vars : Bound_var.t list)
@@ -92,7 +102,6 @@ and let_to_core (e : Let_expr.t) (s : env) :
       let x, e1, s = named_to_core var (Let_expr.defining_expr e) s in
       (* let x, e1, s = bound_pattern_to_core var e1 s in *)
       let e2, s = flambda_expr_to_core body s in
-      let e2 = apply_subst s e2 in
       match e1 with
       | Some e1 ->
         Core_let.create ~x ~e1 ~e2, s
@@ -102,68 +111,86 @@ and named_to_core (t : Bound_pattern.t) (e : Flambda.named) (s : env) :
   Bound_for_let.t * core_exp option * env =
   (match t, e with
   | Singleton v, Simple e ->
-    let e = Literal (Simple e) in
-    (Singleton v, Some (Expr.create_named e), s)
+    let n = simple_to_core s e in
+    (Singleton v, Some n, s)
   | Singleton v, Prim (t, _) ->
-    let e = Prim (prim_to_core t) in
+    let e = Prim (prim_to_core s t) in
     (Singleton v, Some (Expr.create_named e), s)
   | Set_of_closures vars, Set_of_closures e ->
-    let e = Set_of_closures (set_of_closures_to_core e) |> Expr.create_named in
+    let e = Set_of_closures (set_of_closures_to_core s e) |> Expr.create_named in
     let var, s = subst_var_slot vars e s in
     (var, Some e, s)
   | Static static, Static_consts e ->
     let static = Bound_static.to_list static in
     let body = Static_const_group.to_list e in
     let var, group, s =
-      static_consts_to_core (List.combine static body) ([], []) s
+      static_consts_to_core (List.combine static body) s
     in
     let e = Expr.create_named (Static_consts group) in
-    let e = apply_subst s e in
     (Static (Bound_codelike.create var), Some e, s)
   | Singleton v, Rec_info t ->
     let e = Expr.create_named (Rec_info t) in
     (Singleton v, Some e, s)
   | _, _ -> Misc.fatal_error "Mismatched let binding with expression")[@ocaml.warning "-4"]
 
-and static_consts_to_core
-      (l : (Bound_static.Pattern.t * Static_const_or_code.t) list) (pat_acc, acc) s:
-  (Bound_codelike.Pattern.t list) * Flambda2_core.static_const_group * env =
-  match l with
-  | [] -> pat_acc, acc, s
-  | (var, x) :: l ->
-    let pat_acc, acc, s =
-      (match var, x with
-       | Code v, Code e ->
-         let e, s =
-           Code0.params_and_body e |> function_params_and_body_to_core s var
-         in
-         (Bound_codelike.Pattern.code v) :: pat_acc,
-         (Code e) :: acc, s
-       | Block_like v, Static_const t ->
-         let e = static_const_to_core t in
-         (Bound_codelike.Pattern.block_like v) :: pat_acc,
-         (Static_const e) :: acc, s
-       | Set_of_closures bound, Static_const (Set_of_closures soc) ->
+and static_consts_to_core l s =
+  let s, l = create_phi_vars s l in
+  let rec static_consts_to_core_acc
+            s (l : (Bound_static.Pattern.t * Static_const_or_code.t * _) list)
+            pat_acc acc =
+    match l with
+    | [] -> pat_acc, acc, s
+    | (var, x, phiopt) :: l ->
+      let pat_acc, acc, s =
+        (match var, x, phiopt with
+         | Code v, Code e, _ ->
+           let e, s =
+             Code0.params_and_body e |> function_params_and_body_to_core s var
+           in
+           (Bound_codelike.Pattern.code v) :: pat_acc,
+           (Code e) :: acc, s
+         | Block_like v, Static_const t, _ ->
+           let e = static_const_to_core s t in
+           (Bound_codelike.Pattern.block_like v) :: pat_acc,
+           (Static_const e) :: acc, s
+         | Set_of_closures _, Static_const (Set_of_closures soc), Some phi ->
+           let soc = set_of_closures_to_core s soc in
+           (Bound_codelike.Pattern.set_of_closures phi)::pat_acc,
+           (Static_const (Static_set_of_closures soc))::acc, s
+         | Code v, Deleted_code, _ ->
+           (Bound_codelike.Pattern.code v) :: pat_acc,
+           Deleted_code :: acc, s
+         | Set_of_closures _, Static_const _, None ->
+           Misc.fatal_error "static_consts_to_core: phi var generation error"
+         | _, _, _ ->
+           Misc.fatal_error "Mismatched static consts binding")[@ocaml.warning "-4"]
+      in
+      static_consts_to_core_acc s l pat_acc acc
+  in
+  static_consts_to_core_acc s l [] []
+
+and create_phi_vars s l =
+  (* When we encounter a Set_of_closures binding, we create the phi nodes and extend the
+     substitution as a preprocessing step before translating the bound terms.  This is
+     necessary because the bindings are mutually recursive and we need the substitution to
+     contain the appropriate names for the forward references. *)
+  List.fold_left_map
+    (fun s (var, x : Bound_static.Pattern.t * Static_const_or_code.t) ->
+       match[@ocaml.warning "-4"] var, x with
+       | Set_of_closures bound, Static_const _ ->
          let phivar = (Variable.create "ϕ") in
          let phi = Bound_var.create phivar Name_mode.normal in
-         (* substitue in new variable *)
-         let soc = set_of_closures_to_core soc in
          let s = subst_static_slot bound phi s in
-         (Bound_codelike.Pattern.set_of_closures phi)::pat_acc,
-         (Static_const (Static_set_of_closures soc))::acc, s
-       | Code v, Deleted_code ->
-         (Bound_codelike.Pattern.code v) :: pat_acc,
-         Deleted_code :: acc, s
-       | _, _ -> Misc.fatal_error "Mismatched static consts binding")[@ocaml.warning "-4"]
-    in
-    static_consts_to_core l (pat_acc, acc) s
+         s, (var, x, Some phi)
+       | _, _ -> s, (var, x, None))
+    s l
 
-and set_of_closures_to_core (e : Set_of_closures.t) : set_of_closures =
+and set_of_closures_to_core s (e : Set_of_closures.t) : set_of_closures =
   let function_decls =
     Set_of_closures.function_decls e |> function_declarations_to_core
   in
   let value_slots =
-    Set_of_closures.value_slots e |> value_slots_to_core in
+    Set_of_closures.value_slots e |> value_slots_to_core s in
   { function_decls; value_slots }
 
 and function_declarations_to_core (e : Function_declarations.t) : function_declarations =
@@ -172,30 +199,29 @@ and function_declarations_to_core (e : Function_declarations.t) : function_decla
     Function_slot.Lmap.bindings |> List.to_seq |> SlotMap.of_seq
 
 and value_slots_to_core
-      (e : (Simple.t) Value_slot.Map.t) : core_exp Value_slot.Map.t =
-    Value_slot.Map.map (fun x -> Expr.create_named (Literal (Simple (Simple.without_coercion x)))) e
+      s (e : (Simple.t) Value_slot.Map.t) : core_exp Value_slot.Map.t =
+    Value_slot.Map.map (fun x -> simple_to_core s x) e
 
-and prim_to_core (e : P.t) : primitive =
+and prim_to_core s (e : P.t) : primitive =
   match e with
   | Nullary v -> Nullary v
   | Unary (prim, arg) ->
-    Unary (prim, Expr.create_named (Literal (Simple arg)))
+    Unary (prim, simple_to_core s arg)
   | Binary (prim, arg1, arg2) ->
-    Binary (prim, Expr.create_named (Literal (Simple arg1)), Expr.create_named (Literal (Simple arg2)))
+    Binary (prim, simple_to_core s arg1, simple_to_core s arg2)
   | Ternary (prim, arg1, arg2, arg3) ->
-    Ternary (prim, Expr.create_named (Literal (Simple arg1)),
-             Expr.create_named (Literal (Simple arg2)),
-             Expr.create_named (Literal (Simple arg3)))
+    Ternary (prim, simple_to_core s arg1, simple_to_core s arg2,
+             simple_to_core s arg3)
   | Variadic (prim, args) ->
     Variadic (prim,
-              List.map (fun x -> Expr.create_named (Literal (Simple x))) args)
+              List.map (fun x -> simple_to_core s x) args)
 
-and static_const_to_core (e : Static_const.t) : Flambda2_core.static_const =
+and static_const_to_core s (e : Static_const.t) : Flambda2_core.static_const =
   match e with
   | Set_of_closures soc ->
-    Static_set_of_closures (set_of_closures_to_core soc)
+    Static_set_of_closures (set_of_closures_to_core s soc)
   | Block (tag, mut, list) ->
-    let list = List.map field_of_static_block_to_core list in
+    let list = List.map (field_of_static_block_to_core s) list in
     Block (tag, mut, list)
   | Boxed_float v -> Boxed_float v
   | Boxed_int32 v -> Boxed_int32 v
@@ -208,13 +234,11 @@ and static_const_to_core (e : Static_const.t) : Flambda2_core.static_const =
   | Mutable_string {initial_value} -> Mutable_string {initial_value}
   | Immutable_string s -> Immutable_string s
 
-and field_of_static_block_to_core (e : Field_of_static_block.t) : core_exp =
+and field_of_static_block_to_core s (e : Field_of_static_block.t) : core_exp =
   match e with
-  | Symbol e ->
-    Expr.create_named (Literal (Simple (Simple.symbol e)))
+  | Symbol e -> simple_to_core s (Simple.symbol e)
   | Tagged_immediate e -> tagged_immediate_to_core e
-  | Dynamically_computed (var, _) ->
-    Expr.create_named (Literal (Simple (Simple.var var)))
+  | Dynamically_computed (var, _) -> simple_to_core s (Simple.var var)
 
 and function_params_and_body_to_core s
       (var : Bound_static.Pattern.t)
@@ -296,14 +320,14 @@ and handler_map_to_closures (phi : Variable.t) (v : Bound_parameter.t list)
 
 (* Accumulate env in both the body and the handler, and substitute in
   the bindings for the whole expression. *)
-and let_cont_to_core (e : Let_cont_expr.t) (sub : env) :
+and let_cont_to_core (e : Let_cont_expr.t) (s : env) :
   core_exp * env =
   match e with
   | Non_recursive
       {handler = h; num_free_occurrences = _; is_applied_with_traps = _} ->
     Non_recursive_let_cont_handler.pattern_match h
       ~f:(fun contvar ~body ->
-        let body, s = flambda_expr_to_core body sub in
+        let body, s = flambda_expr_to_core body s in
         let handler, s =
           cont_handler_to_core
             (Non_recursive_let_cont_handler.handler h) s
@@ -320,9 +344,9 @@ and let_cont_to_core (e : Let_cont_expr.t) (sub : env) :
     Recursive_let_cont_handlers.pattern_match_bound r
       ~f:
         (fun bound ~invariant_params ~body handler ->
-           let body, _ = flambda_expr_to_core body sub in
+           let body, s = flambda_expr_to_core body s in
            let phi = Variable.create "ϕ" in
-           let handlers = cont_handlers_to_core handler sub in
+           let handlers = cont_handlers_to_core handler s in
            let clo =
              handler_map_to_closures phi
                (Bound_parameters.to_list invariant_params) handlers
@@ -338,11 +362,13 @@ and let_cont_to_core (e : Let_cont_expr.t) (sub : env) :
                     (Expr.create_named (Literal (Slot (phi, Function_slot slot)))) acc)
                body in_order_with_cont
            in
-           let e = subst_singleton_set_of_closures ~bound:phi ~clo e2 in
-           (e, sub))
+           (* CR ccasinghino I think this is quadratic, but rare so we aren't
+              seeing the performance impact in practice. *)
+           let e = subst_singleton_set_of_closures ~bound:phi ~clo s e2 in
+           (e, s))
 
 and subst_singleton_set_of_closures ~(bound: Variable.t)
-      ~(clo : set_of_closures) (e : core_exp) : core_exp =
+      ~(clo : set_of_closures) s (e : core_exp) : core_exp =
   match descr e with
   | Named e -> subst_singleton_set_of_closures_named ~bound ~clo e
   | Let e ->
@@ -373,7 +399,7 @@ and subst_singleton_set_of_closures_named ~bound ~clo (e : named) : core_exp =
           | ([] | _::_)->
             Expr.create_named (Set_of_closures clo))
       else
-        Expr.create_named (Literal (Simple v)))
+        simple_to_core s v)
     | Slot (phi, Function_slot slot) ->
       (let decls = SlotMap.bindings clo.function_decls in
        let bound_closure = List.find_opt (fun (x, _) -> x = slot) decls in
@@ -389,12 +415,12 @@ and subst_singleton_set_of_closures_named ~bound ~clo (e : named) : core_exp =
   | Prim e -> prim_fix (subst_singleton_set_of_closures ~bound ~clo) e
   | Closure_expr (phi, slot, set) ->
     let set =
-      set_of_closures_fix (subst_singleton_set_of_closures ~bound ~clo) set
+      set_of_closures_fix (subst_singleton_set_of_closures ~bound ~clo s) set
     in
     Expr.create_named (Closure_expr (phi, slot, set))
   | Set_of_closures set ->
     let set =
-      set_of_closures_fix (subst_singleton_set_of_closures ~bound ~clo) set
+      set_of_closures_fix (subst_singleton_set_of_closures ~bound ~clo s) set
     in
     Expr.create_named (Set_of_closures set)
   | Static_consts group ->
@@ -422,12 +448,12 @@ and apply_to_core (e : Apply.t) (s : env)
   : core_exp * env =
   let e =
     Expr.create_apply {
-      callee = Apply_expr.callee e |> simple_to_core;
+      callee = Apply_expr.callee e |> (simple_to_core s);
       continuation = Expr.create_named (Literal (Res_cont (Apply_expr.continuation e)));
       exn_continuation = Expr.create_named (Literal (Cont (Apply_expr.exn_continuation e |>
                                                Exn_continuation.exn_handler)));
-      region = Expr.create_named (Literal (Simple (Simple.var (Apply_expr.region e))));
-      apply_args = Apply_expr.args e |> List.map simple_to_core }
+      region = simple_to_core s (Simple.var (Apply_expr.region e));
+      apply_args = Apply_expr.args e |> List.map (simple_to_core s) }
   in
   e, s
 
@@ -436,7 +462,7 @@ and apply_cont_to_core (e : Apply_cont.t) (s : env)
   let e =
     Expr.create_apply_cont {
       k = Expr.create_named (Literal (Cont (Apply_cont_expr.continuation e)));
-      args = Apply_cont_expr.args e |> List.map simple_to_core;}
+      args = Apply_cont_expr.args e |> List.map (simple_to_core s);}
   in
   e, s
 
@@ -444,7 +470,7 @@ and switch_to_core (e : Switch.t) (s : env)
   : core_exp * env =
   let e =
     Expr.create_switch {
-      scrutinee = Switch_expr.scrutinee e |> simple_to_core;
+      scrutinee = Switch_expr.scrutinee e |> simple_to_core s;
       arms = Switch_expr.arms e |>
              Targetint_31_63.Map.map
                (fun x -> let e, _ = apply_cont_to_core x s in e)
@@ -457,3 +483,5 @@ let flambda_unit_to_core e =
     flambda_expr_to_core (Flambda_unit.body e) Sub.empty
   in
   e
+
+let prim_to_core e = prim_to_core create_env e

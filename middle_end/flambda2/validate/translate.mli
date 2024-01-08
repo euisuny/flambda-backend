@@ -20,8 +20,6 @@ type env = substitutions
 
 val create_env : env
 
-val simple_to_core : Simple.t -> core_exp
-
 val prim_to_core : Flambda_primitive.t -> primitive
 
 (* The environment keeps track of the closures.
