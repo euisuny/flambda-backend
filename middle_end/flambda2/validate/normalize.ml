@@ -746,7 +746,9 @@ and step_named_for_let (var: Bound_for_let.t) (body: named)
       (let consts =
           List.map2 (
             fun var x ->
-              match (var : Flambda2_core_bound_identifiers.Bound_codelike.Pattern.t), x w              | Bound_codelike.Pattern.Set_of_closures var, Static_const (Static_set_of_closures soc) ->
+             match (var : Flambda2_core_bound_identifiers.Bound_codelike.Pattern.t), x with
+             | Bound_codelike.Pattern.Set_of_closures var,
+               Static_const (Static_set_of_closures soc) ->
                 let phi = Bound_var.var var in
                 let soc = step_set_of_closures phi soc in
                 Static_const (Static_set_of_closures soc)
