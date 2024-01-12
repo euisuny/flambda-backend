@@ -417,8 +417,11 @@ and equiv_cont _env (e1 : Continuation.t) (e2 : Continuation.t) : eq =
   | (Normal_or_exn | Return | Define_root_symbol | Toplevel_return), _ -> false
 
 and equiv_lambda env (e1 : lambda_expr) (e2 : lambda_expr) : eq =
-  Core_lambda.pattern_match_pair e1 e2
-    ~f:(fun
+  let l1 = Core_lambda.pattern_match e1 ~f:(fun b _ -> Bound_parameters.arity b.params) in
+  let l2 = Core_lambda.pattern_match e2 ~f:(fun b _ -> Bound_parameters.arity b.params) in
+  if l1 <> l2 then false
+  else
+  Core_lambda.pattern_match_pair e1 e2 ~f:(fun
          ~return_continuation:_ ~exn_continuation:_ _params e1 e2 ->
          equiv env e1 e2)
 
