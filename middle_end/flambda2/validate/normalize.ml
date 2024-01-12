@@ -403,14 +403,12 @@ and step_handler (e : continuation_handler) =
 and step_switch scrutinee arms : core_exp =
   let default =
     (* if the arms are all the same, collapse them to a single arm *)
-      Expr.create_switch {scrutinee; arms}
-    (* let bindings = Targetint_31_63.Map.bindings arms in
-     * let (_, hd) = List.hd bindings in
-     * Equiv.debug := false;
-     * if (List.for_all (fun (_, x) -> Equiv.core_eq hd x) bindings)
-     * then (Equiv.debug := false; hd)
-     * else (Equiv.debug := false;
-     *       Expr.create_switch {scrutinee; arms})) *)
+      (* Expr.create_switch {scrutinee; arms} *)
+    let bindings = Targetint_31_63.Map.bindings arms in
+    let (_, hd) = List.hd bindings in
+    if (List.for_all (fun (_, x) -> Equiv.core_eq hd x) bindings)
+    then hd
+    else Expr.create_switch {scrutinee; arms}
   in
   (* if the scrutinee is exactly one of the arms, simplify *)
   match must_be_simple_or_immediate scrutinee with
