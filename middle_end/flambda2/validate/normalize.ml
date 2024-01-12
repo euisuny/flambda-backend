@@ -744,24 +744,13 @@ and step_named_for_let (var: Bound_for_let.t) (body: named)
         List.split
       in
       (let consts =
-          List.map (
-            fun x ->
-              match x with
-              | Static_const (Static_set_of_closures {function_decls; value_slots}) ->
-                let function_decls =
-                  SlotMap.map
-                    (fun x ->
-                      match must_be_literal x with
-                      | Some (Code_id id) ->
-                        let {expr=fn_expr;anon=_} = Hashtbl.find env id in
-                        (* LATER : See if not creating this lambda improves performance *)
-                        Core_function_params_and_body.pattern_match fn_expr
-                          ~f:(fun _ e -> Expr.create_lambda e)
-                      | _ -> x)
-                    function_decls
-                in
-                Static_const (Static_set_of_closures {function_decls; value_slots})
-              | _ -> x) consts
+          List.map2 (
+            fun var x ->
+              match (var : Flambda2_core_bound_identifiers.Bound_codelike.Pattern.t), x w              | Bound_codelike.Pattern.Set_of_closures var, Static_const (Static_set_of_closures soc) ->
+                let phi = Bound_var.var var in
+                let soc = step_set_of_closures phi soc in
+                Static_const (Static_set_of_closures soc)
+              | _, _ -> x) var consts
         in
         (Static (Bound_codelike.create var),
         Expr.create_named (Static_consts consts)))

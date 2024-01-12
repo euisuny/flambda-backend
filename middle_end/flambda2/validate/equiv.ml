@@ -258,6 +258,12 @@ and equiv_function_slots env slot1 slot2 =
 
 and equiv_set_of_closures env
   (set1 : set_of_closures) (set2 : set_of_closures) : eq =
+  (* CR ccasinghino: How can it possibly be sound to ignore the value slots?!
+     Theory: their values are substituted in already. We believe there are no
+     project value slots in the resulting code.  This is testable!  Add an
+     assert.
+
+     We now think this is probably false.  See init in list.ml. *)
   (* Unify value and function slots *)
   (* Comparing value slots *)
   (* let value_slots_by_value set =

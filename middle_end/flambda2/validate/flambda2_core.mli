@@ -297,6 +297,7 @@ val print : Format.formatter -> core_exp -> unit
 val print_static_pattern : Format.formatter -> Bound_codelike.Pattern.t -> unit
 val print_prim : Format.formatter -> primitive -> unit
 val print_bound_pattern : Format.formatter -> Bound_for_let.t -> unit
+val print_static_const : Format.formatter -> static_const -> unit
 
 val descr : core_exp -> exp_descr
 
@@ -327,6 +328,7 @@ val static_const_group_fix :
   (core_exp -> core_exp) ->
   static_const_group -> core_exp
 
+val print_set_of_closures : Format.formatter -> set_of_closures -> unit
 val literal_contained : literal -> literal -> bool
 
 (* Effects *)
