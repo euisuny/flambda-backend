@@ -127,6 +127,8 @@ and named_to_core (t : Bound_pattern.t) (e : Flambda.named) (s : env) :
       static_consts_to_core (List.combine static body) s
     in
     let e = Expr.create_named (Static_consts group) in
+    (* Format.printf "[Static pattern] %a\n\n%!" Bound_pattern.print t; *)
+    (* Format.printf "[Static expr] %a\n\n%!" Flambda2_core.print e; *)
     (Static (Bound_codelike.create var), Some e, s)
   | Singleton v, Rec_info t ->
     let e = Expr.create_named (Rec_info t) in

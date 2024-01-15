@@ -66,11 +66,12 @@ let rec subst_pattern ~(bound : Bound_for_let.t) ~(let_body : core_exp)
           (e : core_exp) : core_exp =
   match bound with
   | Singleton bound ->
-    (match must_be_set_of_closures let_body with
+    let e = (match must_be_set_of_closures let_body with
      | Some clo ->
        subst_singleton_set_of_closures ~bound:(Bound_var.var bound) ~clo e
      | None ->
-        core_fmap
+        let e =
+          core_fmap
           (fun (bound, let_body) s ->
              match s with
              | Simple s ->
@@ -80,7 +81,10 @@ let rec subst_pattern ~(bound : Bound_for_let.t) ~(let_body : core_exp)
                 else Expr.create_named (Literal (Simple s))
              | (Cont _ | Res_cont _ | Slot _ | Code_id _) ->
                Expr.create_named (Literal s))
-          (bound, let_body) e)
+          (bound, let_body) e in
+          e
+    ) in
+    e
   | Static bound ->
     subst_static_list ~bound ~let_body e
 
@@ -195,6 +199,12 @@ and subst_pattern_static
     to the code *)
 and subst_bound_set_of_closures (bound : Bound_var.t) ~(let_body : static_const_or_code)
       (e : named) =
+  (match let_body with
+   | Static_const const ->
+     (match must_be_static_set_of_closures const with
+      | Some set -> subst_singleton_set_of_closures_named ~bound:(Bound_var.var bound) ~clo:set e
+      | None -> Expr.create_named e)
+   | (Deleted_code | Code _) ->
   match e with
   | Literal (Simple v) ->
     (match let_body with
@@ -228,13 +238,14 @@ and subst_bound_set_of_closures (bound : Bound_var.t) ~(let_body : static_const_
             List.find_opt (fun (x, _) -> x = slot) bound
           in
           (match bound_closure with
-          | None -> Expr.create_named e
+          | None -> subst_singleton_set_of_closures_named ~bound:phi ~clo:set e
+                      (* Expr.create_named e *)
           | Some (k, _) -> Expr.create_named (Closure_expr (phi, k, set)))
         | None -> Misc.fatal_error "Cannot be reached")
       | (Deleted_code | Code _) -> Misc.fatal_error "Cannot be reached")
   | Literal (Res_cont _ | Code_id _ | Cont _ | Slot (_, Value_slot _))
   | Closure_expr _ | Set_of_closures _ | Rec_info _ ->
-    Expr.create_named e
+    Expr.create_named e)
 
 and subst_code_id_set_of_closures (bound : Code_id.t) ~let_body
       {function_decls; value_slots}
@@ -443,7 +454,7 @@ and step_let let_abst body : core_exp =
        let x = v in e1 ⟶ e2 [x\v] *)
     (* if can_inline e1 *)
     (* then *)
-      (subst_pattern ~bound:x ~let_body:e1 e2 |> step))
+    (subst_pattern ~bound:x ~let_body:e1 e2 |> step))
 (*     else *)
 (*       ( *)
 (* (\* let c, e2 = step c e2 in *\) *)
@@ -726,9 +737,11 @@ and step_named_for_let (var: Bound_for_let.t) (body: named)
     in
     (var, Expr.create_named (Set_of_closures set))
   | Static_consts consts -> (* [Static_consts] are statically-allocated values *)
-    let _ = (match var with
+    let _ =
+      (match var with
       | Static binding ->
         let l = List.combine binding consts in
+        (* Add all code bindings to the environment **)
         let _ =
           List.map (fun (var, x) ->
             match var, x with
@@ -746,35 +759,20 @@ and step_named_for_let (var: Bound_for_let.t) (body: named)
       (let consts =
           List.map2 (
             fun var x ->
-              match (var : Flambda2_core_bound_identifiers.Bound_codelike.Pattern.t), x w              | Bound_codelike.Pattern.Set_of_closures var, Static_const (Static_set_of_closures soc) ->
+              match (var : Bound_codelike.Pattern.t), x with
+              | Bound_codelike.Pattern.Set_of_closures var,
+                Static_const (Static_set_of_closures soc) ->
                 let phi = Bound_var.var var in
                 let soc = step_set_of_closures phi soc in
                 Static_const (Static_set_of_closures soc)
-              | _, _ -> x) var consts
+              | Bound_codelike.Pattern.Set_of_closures _, _ ->
+                Misc.fatal_error "Binder mismatch for static exprs"
+              | _, _ -> x
+          ) var consts
         in
         (Static (Bound_codelike.create var),
         Expr.create_named (Static_consts consts)))
-    | _ ->
-      (let consts =
-         List.map (
-           fun x ->
-             match x with
-             | Static_const (Static_set_of_closures {function_decls; value_slots}) ->
-               let function_decls =
-                 SlotMap.map
-                   (fun x ->
-                      match must_be_literal x with
-                      | Some (Code_id id) ->
-                        let {expr=fn_expr;anon=_} = Hashtbl.find env id in
-                        Core_function_params_and_body.pattern_match fn_expr
-                          ~f:(fun _ e -> Expr.create_lambda e)
-                      | _ -> x)
-                   function_decls
-               in
-               Static_const (Static_set_of_closures {function_decls; value_slots})
-             | _ -> x) consts
-       in
-       (var, Expr.create_named (Static_consts consts))))[@ocaml.warning "-4"]
+    | _ -> Misc.fatal_error "Unexpected binders for static exprs")[@ocaml.warning "-4"]
   | Prim v -> (var, Eval_prim.eval v)
 
 and concretize_my_closure phi (slot : Function_slot.t)

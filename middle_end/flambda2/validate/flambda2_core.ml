@@ -837,12 +837,12 @@ and print_set_of_closures ppf
     Format.fprintf ppf "(%a)"
       print_function_declaration function_decls
   else
-    Format.fprintf ppf "(%a@.\n value slots: \n %a)"
+    Format.fprintf ppf "(%a@.)"
       print_function_declaration function_decls
-      (Value_slot.Map.print print_value_slot) value_slots
+      (* (Value_slot.Map.print print_value_slot) value_slots *)
 
-and print_value_slot ppf value =
-  Format.fprintf ppf "@[(%a)@]" print value
+(* and print_value_slot ppf value = *)
+(*   Format.fprintf ppf "@[(%a)@]" print value *)
 
 and print_function_declaration ppf in_order =
   Format.fprintf ppf "@[<hov 1>{%a}@]"
