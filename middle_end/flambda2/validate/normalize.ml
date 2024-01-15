@@ -772,7 +772,12 @@ and step_named_for_let (var: Bound_for_let.t) (body: named)
         in
         (Static (Bound_codelike.create var),
         Expr.create_named (Static_consts consts)))
-    | _ -> Misc.fatal_error "Unexpected binders for static exprs")[@ocaml.warning "-4"]
+    | _ -> (var, Expr.create_named (Static_consts consts))
+      (* let _ = *) (*   Format.printf "Bound var %a\n\n%! Body is %a \n\n\n%!" *)
+      (*     Bound_for_let.print var Flambda2_core.print (Expr.create_named body) *)
+      (* in *)
+      (* Misc.fatal_error "Unexpected binders for static exprs" *)
+)[@ocaml.warning "-4"]
   | Prim v -> (var, Eval_prim.eval v)
 
 and concretize_my_closure phi (slot : Function_slot.t)
