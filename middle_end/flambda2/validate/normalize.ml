@@ -379,7 +379,8 @@ let rec step (e: core_exp) : core_exp =
   | Let_cont e ->
     step_let_cont e
   | Apply {callee; continuation; exn_continuation; region; apply_args} ->
-    step_apply callee continuation exn_continuation region apply_args
+    let e = step_apply callee continuation exn_continuation region apply_args in
+    simplify_speculative_application e
   | Apply_cont {k ; args} ->
     (* The recursive call for [apply_cont] is done for the arguments *)
     step_apply_cont k args
@@ -393,6 +394,29 @@ let rec step (e: core_exp) : core_exp =
     step_switch scrutinee arms
   | Named e -> step_named e
   | Invalid _ -> e
+
+and simplify_speculative_application (e : core_exp) : core_exp =
+  (match Expr.descr e with
+   | Apply {callee; continuation; exn_continuation; region; apply_args} ->
+     (match must_be_handler continuation with
+     | Some cont -> 
+        let continuation_arg =
+          Core_continuation_handler.pattern_match cont
+         (fun x _ -> x)
+      in
+      let continuation' =
+        step_apply_cont continuation [e]
+          |> Core_continuation_handler.create continuation_arg
+          |> Expr.create_handler
+      in
+        {callee=callee;
+        continuation= continuation';
+        exn_continuation=exn_continuation;
+        region=region;
+        apply_args=apply_args} |>
+        Expr.create_apply
+     | None -> e)
+   | _ -> e)[@ocaml.warning "-4"] (* FIXME *)
 
 and step_lambda (e : lambda_expr) =
   Core_lambda.pattern_match e
