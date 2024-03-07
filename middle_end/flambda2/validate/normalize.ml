@@ -379,8 +379,7 @@ let rec step (e: core_exp) : core_exp =
   | Let_cont e ->
     step_let_cont e
   | Apply {callee; continuation; exn_continuation; region; apply_args} ->
-    let e = step_apply callee continuation exn_continuation region apply_args in
-    simplify_speculative_application e
+    step_apply callee continuation exn_continuation region apply_args
   | Apply_cont {k ; args} ->
     (* The recursive call for [apply_cont] is done for the arguments *)
     step_apply_cont k args
@@ -399,7 +398,7 @@ and simplify_speculative_application (e : core_exp) : core_exp =
   (match Expr.descr e with
    | Apply {callee; continuation; exn_continuation; region; apply_args} ->
      (match must_be_handler continuation with
-     | Some cont -> 
+     | Some cont ->
         let continuation_arg =
           Core_continuation_handler.pattern_match cont
          (fun x _ -> x)
@@ -600,7 +599,7 @@ and step_apply_function_decls phi slot function_decls
 
 and step_apply_lambda lambda_expr continuation exn_continuation region apply_args :
   core_exp =
-  Core_lambda.pattern_match lambda_expr
+  let e = Core_lambda.pattern_match lambda_expr
     ~f:(fun bound exp ->
         let params = bound.params in
         let exp =
@@ -622,6 +621,8 @@ and step_apply_lambda lambda_expr continuation exn_continuation region apply_arg
             ) () exp
         in
         subst_params params exp apply_args)
+  in
+  simplify_speculative_application e
 
 and step_apply callee continuation exn_continuation region apply_args : core_exp =
   (let callee = step callee in
