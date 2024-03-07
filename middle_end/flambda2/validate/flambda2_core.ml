@@ -759,7 +759,7 @@ and print_let ppf ({let_abst; expr_body} : let_expr) =
     let_abst ~apply_renaming_to_term:apply_renaming
     ~f:(fun bound body ->
       fprintf ppf
-        "@[<v 0>@[<hov 1>let (%a) =@ %a@]@;%a@]"
+        "@[<v 0>@[<hov 1>let (%a) =@ %a in@]@;%a@]"
         print_bound_pattern bound
         print expr_body
         print body)
