@@ -154,14 +154,12 @@ let rec equiv (env:Env.t) e1 e2 : eq =
   | Let e1, Let e2 -> equiv_let env e1 e2
   | Let_cont e1, Let_cont e2 -> equiv_let_cont env e1 e2
   | Apply e1, Apply e2 -> equiv_apply env e1 e2
-  | Apply_cont e1, Apply_cont e2 -> equiv_apply_cont env e1 e2
   | Lambda e1, Lambda e2 -> equiv_lambda env e1 e2
-  | Handler e1, Handler e2 -> equiv_handler env e1 e2
   | Switch e1, Switch e2 -> equiv_switch env e1 e2
   | Invalid _, Invalid _ -> true
   | (Named (Literal _ | Prim _ | Closure_expr _ | Set_of_closures _
-           | Static_consts _ | Rec_info _) | Let _ | Let_cont _ | Apply _ |
-     Apply_cont _ | Switch _ | Invalid _ | Lambda _ | Handler _), _ ->
+           | Static_consts _ | Rec_info _) | Let _ | Let_cont _ | Apply _
+           | Switch _ | Invalid _ | Lambda _ ), _ ->
     unequal e1 e2
 
 (* [let_expr] *)
@@ -388,31 +386,20 @@ and equiv_primitives env prim1 prim2 : eq =
 (* [let_cont_expr] *)
 and equiv_let_cont env
       {handler = handler1; body = body1} {handler = handler2; body = body2}: eq =
-  equiv_cont_handler env handler1 handler2 &&
+  equiv_lambda env handler1 handler2 &&
   Core_letcont_body.pattern_match_pair body1 body2
     (fun _bound b1 b2 -> equiv env b1 b2)
-
-and equiv_cont_handler env handler1 handler2 =
-  Core_continuation_handler.pattern_match_pair handler1 handler2
-    (fun _bound h1 h2 -> equiv env h1 h2)
 
 (* [apply] *)
 and equiv_apply env (e1 : apply_expr) (e2 : apply_expr) : eq =
   let equiv_conts =
-    equiv env (e1.continuation) (e2.continuation) &&
+    equiv env (e1.ret_continuation) (e2.ret_continuation) &&
     equiv env (e1.exn_continuation) (e2.exn_continuation) in
   let callee = equiv env (e1.callee) (e2.callee) in
   let args =
     zip_fold (e1.apply_args) (e2.apply_args)
       ~f:(fun x (e1, e2) -> x && equiv env e1 e2) ~acc:true in
   equiv_conts && callee && args
-
-(* [apply_cont] *)
-and equiv_apply_cont env
-      ({k = k1; args = args1} : apply_cont_expr)
-      ({k = k2; args = args2} : apply_cont_expr) : eq =
-  equiv env k1 k2 &&
-  zip_fold args1 args2 ~f:(fun x (e1, e2) -> x && equiv env e1 e2) ~acc:true
 
 and equiv_cont _env (e1 : Continuation.t) (e2 : Continuation.t) : eq =
   match Continuation.sort e1, Continuation.sort e2 with
@@ -430,10 +417,6 @@ and equiv_lambda env (e1 : lambda_expr) (e2 : lambda_expr) : eq =
   Core_lambda.pattern_match_pair e1 e2 ~f:(fun
          ~return_continuation:_ ~exn_continuation:_ _params e1 e2 ->
          equiv env e1 e2)
-
-and equiv_handler env (e1 : continuation_handler) (e2 : continuation_handler) : eq =
-  Core_continuation_handler.pattern_match_pair e1 e2
-    (fun _ e1 e2 -> equiv env e1 e2)
 
 (* [switch] *)
 and equiv_switch env

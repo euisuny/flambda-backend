@@ -1,6 +1,8 @@
 type t =
   { return_continuation: Bound_continuation.t;
     exn_continuation: Bound_continuation.t;
+    (* Region variable which indicates the closure being passed onto the
+       function. *)
     my_region: Variable.t;
     params: Bound_parameters.t }
 

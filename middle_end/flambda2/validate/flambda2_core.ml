@@ -1,10 +1,17 @@
 module P = Flambda_primitive
 let fprintf = Format.fprintf
 
+(* ========================================================================== *)
 (** Simplified core of [flambda2] terms **)
-(* (1) Simple.t -> core_exp for [Apply*] expressions
+
+(* Notes
+   (1) Simple.t -> core_exp for [Apply*] expressions
    (2) Ignore [Num_occurrences] (which is used for making inlining decisions)
    (3) Ignored traps for now *)
+
+(* ========================================================================== *)
+
+(** *Delayed renaming scheme **)
 
 module SlotMap = Map.Make (Function_slot)
 
@@ -43,19 +50,32 @@ end = struct
       descr
 end
 
+(* ========================================================================== *)
+(** [Flambda2] core expressions. *)
+
 type core_exp = exp_descr With_delayed_renaming.t
 
 and exp_descr =
   | Named of named
+  (* LATER : Merge [Let] and [Let_cont] *)
   | Let of let_expr
   | Let_cont of let_cont_expr
   | Apply of apply_expr
-  | Apply_cont of apply_cont_expr
-  | Lambda of lambda_expr (* A lambda for code expressions *)
-  | Handler of continuation_handler
+  (* A lambda for code expressions and continuations. *)
+  | Lambda of lambda_expr
+  (* Switch expression. *)
   | Switch of switch_expr
   | Invalid of { message : string }
 
+(* Lambda expressions: captures all variants of lambdas in Flambda2, including
+   - code bindings
+   - lambda expressions
+   - "continuation handler" expressions
+
+   Lambda expressions are of the form : [ λ k_r k_e region args => e ]
+   where [k_r] and [k_e] are the return and exceptional continuations, the [region]
+   variable indicates the closure environments, and [args] are the formal arguments
+   to the function. *)
 and lambda_expr = (Bound_for_lambda.t, core_exp) Name_abstraction.t
 
 (** Let expressions [let x = e1 in e2]
@@ -66,6 +86,7 @@ and let_expr =
   { let_abst : (Bound_for_let.t, core_exp) Name_abstraction.t;
     expr_body : core_exp; }
 
+(* LATER: Merge all types of literals to a [var] *)
 and literal =
   | Simple of Simple.t
   | Cont of Continuation.t
@@ -73,23 +94,30 @@ and literal =
   | Slot of (Variable.t * slot)
   | Code_id of Code_id.t
 
+(* TODO: Rename [named] *)
 and named =
+  (* TODO: Rename [literal] >=> [variable] *)
   | Literal of literal
   | Prim of primitive
   | Closure_expr of (Variable.t * Function_slot.t * set_of_closures)
+  (* Closures *)
   | Set_of_closures of set_of_closures
+  (* Static constants, which include literal expressions and blocks *)
   | Static_consts of static_const_group
+  (* Note: Information about depth of recursion, not used in normalization of
+      Flambda2Core *)
   | Rec_info of Rec_info_expr.t
 
 and slot =
   | Function_slot of Function_slot.t
   | Value_slot of Value_slot.t
 
+(* Closures, which store function declarations and an environment for values. *)
 and set_of_closures =
   { function_decls : function_declarations;
     value_slots : core_exp Value_slot.Map.t}
 
-(* functions that are in-order *)
+(* Function declarations (N.B. the map is ordered.) *)
 and function_declarations = core_exp SlotMap.t
 
 and primitive =
@@ -104,7 +132,7 @@ and function_params_and_body =
     anon: bool }
 
 and static_const_or_code =
-  | Code of function_params_and_body (* FIXME: Remove *)
+  | Code of function_params_and_body (* FIXME: Remove -- merge with [Lambda] *)
   | Deleted_code (* FIXME: Remove *)
   | Static_const of static_const
 
@@ -132,29 +160,21 @@ and let_cont_expr =
      [fun x -> e2] = handler
      bound variable [k] = Bound_continuation.t
      [e1] = body (has bound variable [k] in scope) *)
-  { handler : continuation_handler;
+  { handler : lambda_expr;
     body : (Bound_continuation.t, core_exp) Name_abstraction.t;}
-
-and continuation_handler_map =
-  continuation_handler Continuation.Map.t
-
-and continuation_handler =
-  (Bound_parameters.t, core_exp) Name_abstraction.t
 
 and apply_expr =
   { callee: core_exp;
-    continuation: core_exp;
+    ret_continuation: core_exp;
     exn_continuation: core_exp;
     region: core_exp;
     apply_args: core_exp list; }
 
-and apply_cont_expr =
-  { k : core_exp;
-    args : core_exp list }
-
 and switch_expr =
   { scrutinee : core_exp;
     arms : core_exp Targetint_31_63.Map.t }
+
+(* ========================================================================== *)
 
 type simple_type =
   | Var of Variable.t
@@ -194,6 +214,8 @@ let is_code (e : static_const_or_code) =
   | Code _ -> true
   | (Static_const _ | Deleted_code) -> false
 
+(* ========================================================================== *)
+
 (** Nominal renaming for [core_exp] **)
 let rec descr expr =
   With_delayed_renaming.descr expr
@@ -215,19 +237,9 @@ and apply_renaming_expr_descr t renaming =
   | Apply apply_expr ->
     let apply_expr' = apply_renaming_apply apply_expr renaming in
     if apply_expr == apply_expr' then t else Apply apply_expr'
-  | Apply_cont apply_cont_expr ->
-    let apply_cont_expr' = apply_renaming_apply_cont apply_cont_expr renaming in
-    if apply_cont_expr == apply_cont_expr' then t
-    else Apply_cont apply_cont_expr'
   | Lambda lambda_expr ->
     let lambda_expr' = apply_renaming_lambda lambda_expr renaming in
     if lambda_expr == lambda_expr' then t else Lambda lambda_expr'
-  | Handler continuation_handler ->
-    let continuation_handler' =
-      apply_renaming_handler continuation_handler renaming
-    in
-    if continuation_handler == continuation_handler' then t
-    else Handler continuation_handler'
   | Switch switch_expr ->
     let switch_expr' = apply_renaming_switch switch_expr renaming in
     if switch_expr == switch_expr' then t else Switch switch_expr'
@@ -235,10 +247,6 @@ and apply_renaming_expr_descr t renaming =
 
 and apply_renaming_lambda t renaming : lambda_expr =
   Name_abstraction.apply_renaming (module Bound_for_lambda) t renaming
-    ~apply_renaming_to_term:apply_renaming
-
-and apply_renaming_handler t renaming =
-  Name_abstraction.apply_renaming (module Bound_parameters) t renaming
     ~apply_renaming_to_term:apply_renaming
 
 (* renaming for [Let] *)
@@ -442,7 +450,7 @@ and apply_renaming_function_params_and_body ({expr; anon} as t) renaming =
 (* renaming for [Let_cont] *)
 and apply_renaming_let_cont ({handler; body} as t) renaming : let_cont_expr =
   let handler' =
-    apply_renaming_cont_handler handler renaming
+    apply_renaming_lambda handler renaming
   in
   let body' =
     Name_abstraction.apply_renaming
@@ -453,47 +461,34 @@ and apply_renaming_let_cont ({handler; body} as t) renaming : let_cont_expr =
   then t
   else { handler = handler'; body = body' }
 
-and apply_renaming_cont_handler t renaming : continuation_handler =
-  Name_abstraction.apply_renaming
-    (module Bound_parameters)
-    t renaming ~apply_renaming_to_term:apply_renaming
-
-and apply_renaming_cont_map t renaming : continuation_handler_map =
-  Continuation.Map.fold
-    (fun k handler result ->
-       let k = Renaming.apply_continuation renaming k in
-       let handler = apply_renaming_cont_handler handler renaming in
-       Continuation.Map.add k handler result) t Continuation.Map.empty
+(* and apply_renaming_cont_map t renaming : continuation_handler_map = *)
+(*   Continuation.Map.fold *)
+(*     (fun k handler result -> *)
+(*        let k = Renaming.apply_continuation renaming k in *)
+(*        let handler = apply_renaming_lambda handler renaming in *)
+(*        Continuation.Map.add k handler result) t Continuation.Map.empty *)
 
 (* renaming for [Apply] *)
 and apply_renaming_apply
-      ({ callee; continuation; exn_continuation; region; apply_args} as t)
+      ({ callee; ret_continuation; exn_continuation; region; apply_args} as t)
       renaming : apply_expr =
-  let continuation' = apply_renaming continuation renaming in
+  let ret_continuation' = apply_renaming ret_continuation renaming in
   let exn_continuation' = apply_renaming exn_continuation renaming in
   let callee' = apply_renaming callee renaming in
   let region' = apply_renaming region renaming in
   let apply_args' =
     Misc.Stdlib.List.map_sharing (fun x -> apply_renaming x renaming) apply_args
   in
-  if    continuation == continuation' && exn_continuation == exn_continuation'
+  if ret_continuation == ret_continuation' && exn_continuation == exn_continuation'
      && callee == callee' && region == region' && apply_args == apply_args'
   then t
   else
     { callee = callee';
-      continuation = continuation';
+      ret_continuation = ret_continuation';
       exn_continuation = exn_continuation';
       region = region';
       apply_args = apply_args';
     }
-
-(* renaming for [Apply_cont] *)
-and apply_renaming_apply_cont ({k; args} as t) renaming : apply_cont_expr =
-  let k' = apply_renaming k renaming in
-  let args' =
-    Misc.Stdlib.List.map_sharing (fun x -> apply_renaming x renaming) args
-  in
-  if k == k' && args == args' then t else { k = k'; args = args' }
 
 (* renaming for [Switch] *)
 and apply_renaming_switch ({scrutinee; arms} as t) renaming : switch_expr =
@@ -505,11 +500,12 @@ and apply_renaming_switch ({scrutinee; arms} as t) renaming : switch_expr =
   then t
   else { scrutinee = scrutinee'; arms = arms' }
 
+(* ========================================================================== *)
+
 let must_be_named (e : core_exp) : named option =
   match descr e with
   | Named n -> Some n
-  | (Let _ | Let_cont _ | Apply _ | Apply_cont _ | Lambda _ | Switch _
-    | Handler _ | Invalid _) -> None
+  | (Let _ | Let_cont _ | Apply _ | Lambda _ | Switch _ | Invalid _) -> None
 
 let must_be_literal (e : core_exp) : literal option =
   match must_be_named e with
@@ -539,26 +535,17 @@ let must_be_simple (e : core_exp) : Simple.t option =
   | (Named (Literal (Cont _ | Res_cont _ | Slot _ | Code_id _)) |
     Named (Prim _ | Closure_expr _ | Set_of_closures _ |
             Static_consts _ | Rec_info _)
-    | Let _ | Let_cont _ | Apply _ | Apply_cont _ | Lambda _ | Switch _
-    | Handler _ | Invalid _) -> None
+    | Let _ | Let_cont _ | Apply _ | Lambda _ | Switch _ | Invalid _) -> None
 
 let must_be_lambda (e : core_exp) : lambda_expr option =
   match descr e with
   | Lambda e -> Some e
-  | (Named _ | Let _ | Let_cont _ | Apply _ | Apply_cont _ | Switch _
-    | Handler _ | Invalid _) -> None
-
-let must_be_handler (e : core_exp) : continuation_handler option =
-  match descr e with
-  | Handler e -> Some e
-  | (Named _ | Let _ | Let_cont _ | Apply _ | Apply_cont _ | Switch _
-    | Lambda _ | Invalid _) -> None
+  | (Named _ | Let _ | Let_cont _ | Apply _ | Switch _ | Invalid _) -> None
 
 let must_be_apply (e : core_exp) : apply_expr option =
   match descr e with
   | Apply e -> Some e
-  | (Named _ | Let _ | Let_cont _ | Lambda _ | Apply_cont _ | Switch _
-    | Handler _ | Invalid _) -> None
+  | (Named _ | Let _ | Let_cont _ | Lambda _ | Switch _ | Invalid _) -> None
 
 let must_be_static_consts (e : core_exp) : static_const_group option  =
   match must_be_named e with
@@ -716,6 +703,8 @@ let must_be_static_set_of_closures (e : static_const) =
     | Immutable_value_array _ | Empty_array
     | Mutable_string _ | Immutable_string _) -> None
 
+(* ========================================================================== *)
+
 (** Sexp-ish simple pretty-printer for [core_exp]s.
   Ignores name_stamp, compilation_unit, and debug_info for simplicity. **)
 let rec print ppf e =
@@ -732,12 +721,6 @@ let rec print ppf e =
    | Lambda t ->
      fprintf ppf "@[<hov 1>λ@ %a@]"
      print_lambda t
-   | Apply_cont t ->
-     fprintf ppf "@[<hov 1>apply_cont %a@]"
-       print_apply_cont t
-   | Handler t ->
-     fprintf ppf "@[<hov 1>%a@]"
-       print_handler t
    | Switch t ->
      fprintf ppf "@[<hov 1>switch %a@]"
      print_switch t
@@ -969,53 +952,23 @@ and print_let_cont ppf ({handler; body} : let_cont_expr) =
     (module Bound_continuation) body
     ~apply_renaming_to_term:apply_renaming
     ~f:(fun cont body ->
-      Name_abstraction.pattern_match_for_printing
-        (module Bound_parameters) handler
-        ~apply_renaming_to_term:apply_renaming
-        ~f:(fun k expr_body ->
-          fprintf ppf
-            "@[(%a)@; (@[<hov 1>where %a (%a) = @;%a)@]@]"
-            print body
-            print_cont cont
-            print_params k
-            print expr_body))
-
-and print_params ppf (k : Bound_parameters.t) =
-  Format.fprintf ppf "@[<hov 0>%a@]"
-    (Format.pp_print_list ~pp_sep:Format.pp_print_space print_param)
-    (k |> Bound_parameters.to_list)
-
-and print_param ppf (k : Bound_parameter.t) =
-  fprintf ppf "%s" (Bound_parameter.var k |> Variable.name)
+        fprintf ppf "@[(%a)@;" print body;
+        fprintf ppf "(@[<hov 1>where %a"
+          print_cont cont;
+        print_lambda ppf handler) (* LATER: Cleanup *)
 
 and print_cont ppf (k : Bound_continuation.t) =
   fprintf ppf "%a" Continuation.print k
 
-and print_handler ppf (t : continuation_handler) =
-  Name_abstraction.pattern_match_for_printing
-    (module Bound_parameters) t
-    ~apply_renaming_to_term:apply_renaming
-    ~f:(fun k expr_body ->
-      fprintf ppf "@[<hov 1>(λ@ %a,@ %a)@]"
-        print_params k
-        print expr_body)
-
 and print_apply ppf
-      ({callee; continuation; exn_continuation; region; apply_args} : apply_expr) =
+      ({callee; ret_continuation; exn_continuation; region; apply_args} : apply_expr) =
   fprintf ppf "(callee:@[<hov 2>%a@])@ (ret:%a)@ (exn:%a)@ (reg: %a)"
     print callee
-    print continuation
+    print ret_continuation
     print exn_continuation
     print region;
   fprintf ppf " (args:";
   Format.pp_print_list ~pp_sep:Format.pp_print_space print ppf apply_args;
-  fprintf ppf ")"
-
-and print_apply_cont ppf ({k ; args} : apply_cont_expr) =
-  fprintf ppf "(%a)@ "
-    print k;
-    fprintf ppf " (args:";
-    Format.pp_print_list ~pp_sep:Format.pp_print_space print ppf args;
   fprintf ppf ")"
 
 and print_switch ppf ({scrutinee; arms} : switch_expr) =
@@ -1028,6 +981,8 @@ and print_arm ppf key arm =
     Targetint_31_63.print key
     print arm
 
+(* ========================================================================== *)
+
 (** [ids_for_export] is the set of bound variables for a given expression **)
 let rec ids_for_export (t : core_exp) =
   match descr t with
@@ -1035,9 +990,7 @@ let rec ids_for_export (t : core_exp) =
   | Let t -> ids_for_export_let t
   | Let_cont t -> ids_for_export_let_cont t
   | Apply t -> ids_for_export_apply t
-  | Apply_cont t -> ids_for_export_apply_cont t
   | Lambda t -> ids_for_export_lambda t
-  | Handler t -> ids_for_export_handler t
   | Switch t -> ids_for_export_switch t
   | Invalid _ -> Ids_for_export.empty
 
@@ -1178,35 +1131,22 @@ and ids_for_export_function_params_and_body {expr; anon=_} =
 
 (* ids for [Let_cont] *)
 and ids_for_export_let_cont ({handler; body} : let_cont_expr) =
-  let handler_ids = ids_for_export_cont_handler handler in
+  let handler_ids = ids_for_export_lambda handler in
   let body_ids =
     Name_abstraction.ids_for_export
       (module Bound_continuation)
       body ~ids_for_export_of_term:ids_for_export in
   Ids_for_export.union handler_ids body_ids
 
-and ids_for_export_cont_handler (t : continuation_handler) =
-  Name_abstraction.ids_for_export
-    (module Bound_parameters) t ~ids_for_export_of_term:ids_for_export
-
-and ids_for_export_cont_map (t : continuation_handler_map) =
-  Continuation.Map.fold
-    (fun k handler ids ->
-       Ids_for_export.union ids
-         (Ids_for_export.add_continuation
-            (ids_for_export_cont_handler handler)
-            k))
-    t Ids_for_export.empty
-
 (* ids for [Apply] *)
 and ids_for_export_apply
-      { callee; continuation; exn_continuation; region; apply_args } =
+      { callee; ret_continuation; exn_continuation; region; apply_args } =
   let callee_ids = ids_for_export callee in
   let callee_and_args_ids =
     List.fold_left
       (fun ids arg -> Ids_for_export.union ids (ids_for_export arg))
        callee_ids apply_args in
-  let result_continuation_ids = ids_for_export continuation in
+  let result_continuation_ids = ids_for_export ret_continuation in
   let exn_continuation_ids = ids_for_export exn_continuation in
   let region_ids = ids_for_export region in
   (Ids_for_export.union
@@ -1215,18 +1155,7 @@ and ids_for_export_apply
         callee_and_args_ids
         (Ids_for_export.union result_continuation_ids exn_continuation_ids)))
 
-(* ids for [Apply_cont] *)
-and ids_for_export_apply_cont { k; args } =
-  let continuation_ids = ids_for_export k in
-  List.fold_left
-    (fun ids arg -> Ids_for_export.union ids (ids_for_export arg))
-    continuation_ids
-    args
-
-and ids_for_export_handler t =
-  Name_abstraction.ids_for_export
-    (module Bound_parameters) t ~ids_for_export_of_term:ids_for_export
-
+(* ids for [Lambda] *)
 and ids_for_export_lambda t =
    Name_abstraction.ids_for_export
      (module Bound_for_lambda) t ~ids_for_export_of_term:ids_for_export
@@ -1238,7 +1167,9 @@ and ids_for_export_switch { scrutinee; arms } =
         Ids_for_export.union ids (ids_for_export action))
     arms scrutinee_ids
 
-(* Module definitions for [Name_abstraction]*)
+(* ========================================================================== *)
+(* Module definitions for [Name_abstraction] *)
+
 module Expr = struct
   type t = core_exp
   type descr = exp_descr
@@ -1250,17 +1181,9 @@ module Expr = struct
   let create_let let_expr = create (Let let_expr)
   let create_let_cont let_cont = create (Let_cont let_cont)
   let create_apply apply = create (Apply apply)
-  let create_apply_cont apply_cont = create (Apply_cont apply_cont)
   let create_lambda lambda = create (Lambda lambda)
-  let create_handler handler = create (Handler handler)
   let create_switch switch = create (Switch switch)
   let create_invalid msg = create (Invalid {message = msg})
-end
-
-module ContMap = struct
-  type t = continuation_handler_map
-  let apply_renaming = apply_renaming_cont_map
-  let ids_for_export = ids_for_export_cont_map
 end
 
 module Core_let = struct
@@ -1308,18 +1231,6 @@ module Core_let = struct
     )
 end
 
-module Core_continuation_handler = struct
-  module A = Name_abstraction.Make (Bound_parameters) (Expr)
-  type t = continuation_handler
-  let create = A.create
-  let pattern_match (e : t) (f : Bound_parameters.t -> core_exp -> 'a) : 'a =
-    A.pattern_match e ~f:(fun cont body -> f cont body)
-  let pattern_match_pair (t1 : t) (t2 : t)
-        (f : Bound_parameters.t -> core_exp -> core_exp -> 'a) : 'a =
-    A.pattern_match_pair t1 t2 ~f:(fun params body1 body2 ->
-        f params body1 body2)
-end
-
 module Core_letcont_body = struct
   module A = Name_abstraction.Make (Bound_continuation) (Expr)
   type t = (Bound_continuation.t, core_exp) Name_abstraction.t
@@ -1332,13 +1243,6 @@ module Core_letcont_body = struct
       f cont body1 body2)
 end
 
-module Core_continuation_map = struct
-  module A = Name_abstraction.Make (Bound_parameters) (ContMap)
-  type t = (Bound_parameters.t, continuation_handler_map) Name_abstraction.t
-  let create = A.create
-  let pattern_match = A.pattern_match
-end
-
 module Core_letcont = struct
   type t = let_cont_expr
 
@@ -1346,7 +1250,6 @@ module Core_letcont = struct
 
   let create handler ~body =
     Expr.create_let_cont {handler; body}
-
 end
 
 module Core_lambda = struct
@@ -1391,12 +1294,9 @@ module Core_function_params_and_body = struct
               ~my_closure))
 end
 
-let lambda_to_handler (e : lambda_expr) : continuation_handler =
-  Core_lambda.pattern_match e
-    ~f:(fun {return_continuation=_;exn_continuation=_;params;my_region=_} e ->
-      Core_continuation_handler.create params e)
+(* ========================================================================== *)
+(** Fixpoint combinators for core expressions **)
 
-(* Fixpoint combinator for core expressions *)
 let let_fix (f : core_exp -> core_exp) {let_abst; expr_body} =
   Core_let.pattern_match {let_abst; expr_body}
     ~f:(fun ~x ~e1 ~e2 ->
@@ -1406,10 +1306,9 @@ let let_fix (f : core_exp -> core_exp) {let_abst; expr_body} =
         ~e2:(f e2)))
 
 let let_cont_fix (f : core_exp -> core_exp) ({handler; body} : let_cont_expr) =
-  let handler =
-    Core_continuation_handler.pattern_match handler
-      (fun param exp ->
-          Core_continuation_handler.create param (f exp))
+  let handler : lambda_expr =
+    Core_lambda.pattern_match handler
+      ~f:(fun param exp -> Core_lambda.create param (f exp))
   in
   let body =
     Core_letcont_body.pattern_match body
@@ -1418,27 +1317,15 @@ let let_cont_fix (f : core_exp -> core_exp) ({handler; body} : let_cont_expr) =
   in
   Core_letcont.create handler ~body
 
-let handler_fix (f : core_exp -> core_exp)
-      (handler : continuation_handler) =
-  (Core_continuation_handler.pattern_match handler
-      (fun param exp -> Core_continuation_handler.create param (f exp)))
-  |> Expr.create_handler
-
 let apply_fix (f : core_exp -> core_exp)
-      ({callee; continuation; exn_continuation; region; apply_args} : apply_expr) =
+      ({callee; ret_continuation; exn_continuation; region; apply_args} : apply_expr) =
   Apply
     {callee = f callee;
-     continuation = f continuation;
+     ret_continuation = f ret_continuation;
      exn_continuation = f exn_continuation;
      region = f region;
      apply_args = List.map f apply_args;}
   |> With_delayed_renaming.create
-
-let apply_cont_fix (f : core_exp -> core_exp)
-      ({k; args} : apply_cont_expr) =
-  Expr.create_apply_cont
-    {k = f k;
-     args = List.map f args}
 
 let lambda_fix (f : core_exp -> core_exp) (e : lambda_expr) =
   Core_lambda.pattern_match e
@@ -1537,11 +1424,12 @@ let rec core_fmap
   | Let e -> let_fix (core_fmap f arg) e
   | Let_cont e -> let_cont_fix (core_fmap f arg) e
   | Apply e -> apply_fix (core_fmap f arg) e
-  | Apply_cont e -> apply_cont_fix (core_fmap f arg) e
   | Lambda e -> lambda_fix (core_fmap f arg) e
-  | Handler e -> handler_fix (core_fmap f arg) e
   | Switch e -> switch_fix (core_fmap f arg) e
   | Invalid _ -> e
+
+(* ========================================================================== *)
+(** Auxilary functions for core expressions *)
 
 let literal_contained (literal1 : literal) (literal2 : literal) : bool =
   match literal1, literal2 with

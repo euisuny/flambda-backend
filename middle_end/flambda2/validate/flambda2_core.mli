@@ -17,9 +17,7 @@ and exp_descr =
   | Let of let_expr
   | Let_cont of let_cont_expr
   | Apply of apply_expr
-  | Apply_cont of apply_cont_expr
   | Lambda of lambda_expr (* A lambda for code expressions *)
-  | Handler of continuation_handler
   | Switch of switch_expr
   | Invalid of { message : string }
 
@@ -99,25 +97,15 @@ and let_cont_expr =
      [fun x -> e2] = handler
      bound variable [k] = Bound_continuation.t
      [e1] = body (has bound variable [k] in scope) *)
-  { handler : continuation_handler;
+  { handler : lambda_expr;
     body : (Bound_continuation.t, core_exp) Name_abstraction.t;}
-
-and continuation_handler_map =
-  continuation_handler Continuation.Map.t
-
-and continuation_handler =
-  (Bound_parameters.t, core_exp) Name_abstraction.t
 
 and apply_expr =
   { callee: core_exp;
-    continuation: core_exp;
+    ret_continuation: core_exp;
     exn_continuation: core_exp;
     region: core_exp;
     apply_args: core_exp list; }
-
-and apply_cont_expr =
-  { k : core_exp;
-    args : core_exp list }
 
 and switch_expr =
   { scrutinee : core_exp;
@@ -150,8 +138,6 @@ val must_be_cont : core_exp -> Continuation.t option
 val must_be_slot : core_exp -> (Variable.t * slot) option
 
 val must_be_lambda : core_exp -> lambda_expr option
-
-val must_be_handler : core_exp -> continuation_handler option
 
 val must_be_apply : core_exp -> apply_expr option
 
@@ -188,17 +174,9 @@ module Expr : sig
   val create_let : let_expr -> t
   val create_let_cont : let_cont_expr -> t
   val create_apply : apply_expr -> t
-  val create_apply_cont : apply_cont_expr -> t
   val create_lambda : lambda_expr -> t
-  val create_handler : continuation_handler -> t
   val create_switch : switch_expr -> t
   val create_invalid : string -> t
-end
-
-module ContMap : sig
-  type t = continuation_handler_map
-  val apply_renaming : t -> Renaming.t -> t
-  val ids_for_export : t -> Ids_for_export.t
 end
 
 module Core_let : sig
@@ -218,15 +196,6 @@ module Core_let : sig
     ('a, Pattern_match_pair_error.t) Result.t
 end
 
-module Core_continuation_handler : sig
-  type t = continuation_handler
-  val create : Bound_parameters.t -> core_exp -> t
-
-  val pattern_match : t -> (Bound_parameters.t -> core_exp -> 'a) -> 'a
-  val pattern_match_pair :
-    t -> t -> (Bound_parameters.t -> core_exp -> core_exp -> 'a) -> 'a
-end
-
 module Core_letcont_body : sig
   type t = (Bound_continuation.t, core_exp) Name_abstraction.t
 
@@ -242,18 +211,15 @@ module Core_letcont : sig
   val print : Format.formatter -> let_cont_expr -> unit
 
   val create :
-    continuation_handler ->
+    lambda_expr ->
     body:((Bound_continuation.t, core_exp) Name_abstraction.t) ->
     core_exp
 end
-
 
 module Core_lambda : sig
   type t = lambda_expr
 
   val create : Bound_for_lambda.t -> Expr.t -> t
-
-  (* val create_handler_lambda : Bound_parameters.t -> Expr.t -> t *)
 
   val pattern_match :
     t -> f:(Bound_for_lambda.t -> Expr.t -> 'a) -> 'a
@@ -286,13 +252,6 @@ module Core_function_params_and_body : sig
     -> 'a
 end
 
-module Core_continuation_map : sig
-  type t = (Bound_parameters.t, continuation_handler_map) Name_abstraction.t
-  val create : Bound_parameters.t -> continuation_handler_map -> t
-  val pattern_match :
-    t -> f:(Bound_parameters.t -> continuation_handler_map -> 'a) -> 'a
-end
-
 val print : Format.formatter -> core_exp -> unit
 val print_static_pattern : Format.formatter -> Bound_codelike.Pattern.t -> unit
 val print_prim : Format.formatter -> primitive -> unit
@@ -303,17 +262,13 @@ val descr : core_exp -> exp_descr
 
 val apply_renaming : core_exp -> Renaming.t -> core_exp
 
-val lambda_to_handler : lambda_expr -> continuation_handler
-
 val core_fmap : ('a -> literal -> core_exp) -> 'a -> core_exp -> core_exp
 
 (* Fixpoint functions for core expressions *)
 val let_fix : (core_exp -> core_exp) -> let_expr -> core_exp
 val let_cont_fix : (core_exp -> core_exp) -> let_cont_expr -> core_exp
 val apply_fix : (core_exp -> core_exp) -> apply_expr -> core_exp
-val apply_cont_fix : (core_exp -> core_exp) -> apply_cont_expr -> core_exp
 val lambda_fix : (core_exp -> core_exp) -> lambda_expr -> core_exp
-val handler_fix : (core_exp -> core_exp) -> continuation_handler -> core_exp
 val switch_fix : (core_exp -> core_exp) -> switch_expr -> core_exp
 
 val named_fix :
