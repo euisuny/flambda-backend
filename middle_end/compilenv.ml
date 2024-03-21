@@ -170,8 +170,12 @@ let read_unit_info filename =
       | Flambda1_raw info -> Flambda1 info
       | Flambda2_raw None -> Flambda2 None
       | Flambda2_raw (Some info) ->
-        Flambda2 None
-          (* (Some (Flambda2_cmx.Flambda_cmx_format.from_raw ~sections info)) *)
+        (* CR validator: Understand why this is needed *)
+        if !Flambda_backend_flags.validate then
+          Flambda2 None
+        else
+          Flambda2
+            (Some (Flambda2_cmx.Flambda_cmx_format.from_raw ~sections info))
     in
     let ui = {
       ui_unit = uir.uir_unit;

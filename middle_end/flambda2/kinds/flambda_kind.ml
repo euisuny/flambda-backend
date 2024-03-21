@@ -518,7 +518,9 @@ module With_subkind = struct
 
   let from_lambda (layout : Lambda.layout) =
     match layout with
-    | Pvalue _ -> any_value
+    | Pvalue _ when !Flambda_backend_flags.validate -> any_value
+    (* CR validator: Why is the above needed? *)
+    | Pvalue vk -> from_lambda_value_kind vk
     | Ptop -> Misc.fatal_error "Can't convert layout [Ptop] to flambda kind"
     | Pbottom ->
       Misc.fatal_error "Can't convert layout [Pbottom] to flambda kind"

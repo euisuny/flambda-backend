@@ -1387,14 +1387,18 @@ let close_one_function acc ~code_id ~external_env ~by_function_slot decl
     then Function_decl_inlining_decision_type.Stub
     else Function_decl_inlining_decision_type.Not_yet_decided
   in
-  let loopify : Loopify_attribute.t = Never_loopify
-    (* match Function_decl.loop decl with
-     * | Always_loop -> Always_loopify
-     * | Never_loop -> Never_loopify
-     * | Default_loop ->
-     *   if closure_info.is_purely_tailrec
-     *   then Default_loopify_and_tailrec
-     *   else Default_loopify_and_not_tailrec *)
+  let loopify : Loopify_attribute.t =
+    if !Flambda_backend_flags.validate then
+      (* CR validator: why is this needed? *)
+      Never_loopify
+    else
+      match Function_decl.loop decl with
+      | Always_loop -> Always_loopify
+      | Never_loop -> Never_loopify
+      | Default_loop ->
+        if closure_info.is_purely_tailrec
+        then Default_loopify_and_tailrec
+        else Default_loopify_and_not_tailrec
   in
   let code =
     Code.create code_id ~params_and_body
