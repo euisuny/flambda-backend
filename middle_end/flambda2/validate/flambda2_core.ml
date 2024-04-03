@@ -52,20 +52,33 @@ end
 
 (* ========================================================================== *)
 (** [Flambda2] core expressions. *)
+(* Idealized lambda-calculus for [Flambda2] expressions. *)
 
 type core_exp = exp_descr With_delayed_renaming.t
 
 and exp_descr =
-  | Named of named
-  (* LATER : Merge [Let] and [Let_cont] *)
-  | Let of let_expr
-  | Let_cont of let_cont_expr
-  | Apply of apply_expr
+  | Var of variable
+  (* Primitive operations *)
+  | Prim of primitive
+  (* Static constants, which include literal expressions and blocks *)
+  | Consts of constant list
+  (* Application *)
+  | App of apply_expr
   (* A lambda for code expressions and continuations. *)
-  | Lambda of lambda_expr
+  | Lam of lambda_expr
+  (* LATER: Is this necessary? *)
+  | Closure_expr of (Variable.t * Function_slot.t * closures)
+  (* Closures *)
+  | Closures of closures
   (* Switch expression. *)
   | Switch of switch_expr
-  | Invalid of { message : string }
+  (* "Invalid" *)
+  | Error of { message : string }
+
+(* Variables. *)
+and variable =
+  | Simple of Simple.t
+  | Slot of (Variable.t * slot)
 
 (* Lambda expressions: captures all variants of lambdas in Flambda2, including
    - code bindings
@@ -76,50 +89,31 @@ and exp_descr =
    where [k_r] and [k_e] are the return and exceptional continuations, the [region]
    variable indicates the closure environments, and [args] are the formal arguments
    to the function. *)
-and lambda_expr = (Bound_for_lambda.t, core_exp) Name_abstraction.t
+and lambda_expr = (Bound_parameters.t, core_exp) Name_abstraction.t
 
-(** Let expressions [let x = e1 in e2]
-
-   [fun x -> e2] = let_abst
-   [e1] = body **)
-and let_expr =
-  { let_abst : (Bound_for_let.t, core_exp) Name_abstraction.t;
-    expr_body : core_exp; }
-
-(* LATER: Merge all types of literals to a [var] *)
-and literal =
-  | Simple of Simple.t
-  | Cont of Continuation.t
-  | Res_cont of Apply_expr.Result_continuation.t
-  | Slot of (Variable.t * slot)
-  | Code_id of Code_id.t
-
-(* TODO: Rename [named] *)
-and named =
-  (* TODO: Rename [literal] >=> [variable] *)
-  | Literal of literal
-  | Prim of primitive
-  | Closure_expr of (Variable.t * Function_slot.t * set_of_closures)
-  (* Closures *)
-  | Set_of_closures of set_of_closures
-  (* Static constants, which include literal expressions and blocks *)
-  | Static_consts of static_const_group
-  (* Note: Information about depth of recursion, not used in normalization of
-      Flambda2Core *)
-  | Rec_info of Rec_info_expr.t
-
+(* Slots for functions and values in the environment *)
 and slot =
   | Function_slot of Function_slot.t
   | Value_slot of Value_slot.t
 
 (* Closures, which store function declarations and an environment for values. *)
-and set_of_closures =
-  { function_decls : function_declarations;
+and closures =
+  { (* Function declarations (N.B. the map is ordered.) *)
+    function_decls : core_exp SlotMap.t;
+    (* Environment *)
     value_slots : core_exp Value_slot.Map.t}
 
-(* Function declarations (N.B. the map is ordered.) *)
-and function_declarations = core_exp SlotMap.t
+(* Application. *)
+and apply_expr =
+  { callee: core_exp;
+    apply_args: core_exp list; }
 
+(* Switch. *)
+and switch_expr =
+  { scrutinee : core_exp;
+    arms : core_exp Targetint_31_63.Map.t }
+
+(* Primitive operands. *)
 and primitive =
   | Nullary of P.nullary_primitive
   | Unary of P.unary_primitive * core_exp
@@ -127,17 +121,8 @@ and primitive =
   | Ternary of P.ternary_primitive * core_exp * core_exp * core_exp
   | Variadic of P.variadic_primitive * core_exp list
 
-and function_params_and_body =
-  { expr: (Bound_var.t, lambda_expr) Name_abstraction.t;
-    anon: bool }
-
-and static_const_or_code =
-  | Code of function_params_and_body (* FIXME: Remove -- merge with [Lambda] *)
-  | Deleted_code (* FIXME: Remove *)
-  | Static_const of static_const
-
-and static_const =
-  | Static_set_of_closures of set_of_closures (* FIXME: Remove *)
+(* Constants. *)
+and constant =
   | Block of Tag.Scannable.t * Mutability.t * core_exp list
   | Boxed_float of Numeric_types.Float_by_bit_pattern.t Or_variable.t
   | Boxed_int32 of Int32.t Or_variable.t
@@ -151,28 +136,6 @@ and static_const =
   | Empty_array
   | Mutable_string of { initial_value : string }
   | Immutable_string of string
-
-and static_const_group = static_const_or_code list
-
-and let_cont_expr =
-  (* Non-recursive case [e1 where k x = e2]
-
-     [fun x -> e2] = handler
-     bound variable [k] = Bound_continuation.t
-     [e1] = body (has bound variable [k] in scope) *)
-  { handler : lambda_expr;
-    body : (Bound_continuation.t, core_exp) Name_abstraction.t;}
-
-and apply_expr =
-  { callee: core_exp;
-    ret_continuation: core_exp;
-    exn_continuation: core_exp;
-    region: core_exp;
-    apply_args: core_exp list; }
-
-and switch_expr =
-  { scrutinee : core_exp;
-    arms : core_exp Targetint_31_63.Map.t }
 
 (* ========================================================================== *)
 
@@ -199,21 +162,6 @@ let simple_with_type (s : Simple.t) : simple_type =
       | Naked_int64 i -> Naked_int64 i
       | Naked_nativeint i -> Naked_nativeint i)
 
-let is_static_set_of_closures (e : static_const_or_code) =
-  match e with
-  | Static_const (Static_set_of_closures _) -> true
-  | (Static_const
-       (Block _ | Boxed_float _ | Boxed_int32 _ | Boxed_int64 _
-       | Boxed_nativeint _ | Immutable_float_block _
-       | Immutable_float_array _ | Immutable_value_array _
-       | Empty_array | Mutable_string _ | Immutable_string _)
-    | Code _ | Deleted_code) -> false
-
-let is_code (e : static_const_or_code) =
-  match e with
-  | Code _ -> true
-  | (Static_const _ | Deleted_code) -> false
-
 (* ========================================================================== *)
 
 (** Nominal renaming for [core_exp] **)
@@ -225,90 +173,53 @@ and apply_renaming = With_delayed_renaming.apply_renaming
 
 and apply_renaming_expr_descr t renaming =
   match t with
-  | Named named ->
-    let named' = apply_renaming_named named renaming in
-    if named == named' then t else Named named'
-  | Let let_expr ->
-    let let_expr' = apply_renaming_let let_expr renaming in
-    if let_expr == let_expr' then t else Let let_expr'
-  | Let_cont let_cont_expr ->
-    let let_cont_expr' = apply_renaming_let_cont let_cont_expr renaming in
-    if let_cont_expr == let_cont_expr' then t else Let_cont let_cont_expr'
-  | Apply apply_expr ->
-    let apply_expr' = apply_renaming_apply apply_expr renaming in
-    if apply_expr == apply_expr' then t else Apply apply_expr'
-  | Lambda lambda_expr ->
-    let lambda_expr' = apply_renaming_lambda lambda_expr renaming in
-    if lambda_expr == lambda_expr' then t else Lambda lambda_expr'
-  | Switch switch_expr ->
-    let switch_expr' = apply_renaming_switch switch_expr renaming in
-    if switch_expr == switch_expr' then t else Switch switch_expr'
-  | Invalid _ -> t
-
-and apply_renaming_lambda t renaming : lambda_expr =
-  Name_abstraction.apply_renaming (module Bound_for_lambda) t renaming
-    ~apply_renaming_to_term:apply_renaming
-
-(* renaming for [Let] *)
-and apply_renaming_let ({ let_abst; expr_body } as t) renaming : let_expr =
-  let let_abst' =
-    Name_abstraction.apply_renaming
-      (module Bound_for_let)
-      let_abst renaming
-      ~apply_renaming_to_term:apply_renaming
-  in
-  let expr_body' = apply_renaming expr_body renaming in
-  if let_abst == let_abst' && expr_body == expr_body'
-  then t
-  else { let_abst = let_abst'; expr_body = expr_body' }
-
-and apply_renaming_literal t renaming : literal =
-  match t with
-  | Simple simple ->
-    let simple' = Simple.apply_renaming simple renaming in
-    if simple == simple' then t else Simple simple'
-  | Cont cont ->
-    let cont' = Renaming.apply_continuation renaming cont in
-    if cont == cont' then t else Cont cont'
-  | Res_cont (Return cont) ->
-    let cont' = Renaming.apply_continuation renaming cont in
-    if cont == cont' then t else Cont cont'
-  | Res_cont Never_returns -> t
-  | Slot (var, slot) ->
-    let var' = Renaming.apply_variable renaming var in
-    if var == var' then t else Slot (var', slot)
-  | Code_id id ->
-    let id' = Renaming.apply_code_id renaming id in
-    if id == id' then t else Code_id id'
-
-and apply_renaming_named t renaming : named =
-  match t with
-  | Literal literal ->
-    let literal' = apply_renaming_literal literal renaming in
-    if literal == literal' then t else Literal literal'
+  | Var var ->
+    let var' = apply_renaming_variable var renaming in
+    if var == var' then t else Var var
   | Prim prim ->
     let prim' = apply_renaming_prim prim renaming in
     if prim == prim' then t else Prim prim'
+  | Consts consts ->
+    let consts' = apply_renaming_const consts renaming in
+    if consts == consts' then t else const consts'
   | Closure_expr (var, slot, set) ->
     let var' = Renaming.apply_variable renaming var in
     let set' = apply_renaming_set_of_closures set renaming in
     if var == var' && set == set' then t else Closure_expr (var', slot, set')
-  | Set_of_closures set ->
-    let set' = apply_renaming_set_of_closures set renaming in
-    if set == set' then t else Set_of_closures set'
-  | Static_consts consts ->
-    let consts' = apply_renaming_static_const_group consts renaming in
-    if consts == consts' then t else Static_consts consts'
-  | Rec_info info ->
-    Rec_info (Rec_info_expr.apply_renaming info renaming)
+  | Closures clos ->
+    let clos' = apply_renaming_closures clos renaming in
+    if clos == clos' then t else closures clos'
+  | App app ->
+    let app' = apply_renaming_apply app renaming in
+    if app == app' then t else App app'
+  | Lam lam ->
+    let lam' = apply_renaming_lambda lam renaming in
+    if lam == lam' then t else Lam lam'
+  | Switch switch ->
+    let switch' = apply_renaming_switch switch renaming in
+    if switch == switch' then t else Switch switch'
+  | Error_ -> t
+
+and apply_renaming_lambda t renaming : lambda_expr =
+  Name_abstraction.apply_renaming (module Bound_parameters) t renaming
+    ~apply_renaming_to_term:apply_renaming
+
+and apply_renaming_variable t renaming : variable =
+  match t with
+  | Simple simple ->
+    let simple' = Simple.apply_renaming simple renaming in
+    if simple == simple' then t else Simple simple'
+  | Slot (var, slot) ->
+    let var' = Renaming.apply_variable renaming var in
+    if var == var' then t else Slot (var', slot)
 
 and apply_renaming_function_declarations
       (funs : function_declarations) renaming =
   SlotMap.map (fun x -> apply_renaming x renaming) funs
 
-and apply_renaming_set_of_closures
-      ({ function_decls; value_slots } as t : set_of_closures)
-      renaming : set_of_closures =
+and apply_renaming_closures
+      ({ function_decls; value_slots } as t : closures)
+      renaming : closures =
   let function_decls' =
     apply_renaming_function_declarations function_decls renaming
   in
@@ -382,9 +293,9 @@ and apply_renaming_static_const t renaming =
   then t
   else
     match t with
-    | Static_set_of_closures set ->
-      let set' = apply_renaming_set_of_closures set renaming in
-      if set == set' then t else Static_set_of_closures set'
+    | Static_closures set ->
+      let set' = apply_renaming_closures set renaming in
+      if set == set' then t else Static_closures set'
     | Block (tag, mut, fields) ->
       let fields' =
         Misc.Stdlib.List.map_sharing
@@ -446,7 +357,6 @@ and apply_renaming_function_params_and_body ({expr; anon} as t) renaming =
   in
   if expr == expr' then t else { expr = expr'; anon = anon }
 
-
 (* renaming for [Let_cont] *)
 and apply_renaming_let_cont ({handler; body} as t) renaming : let_cont_expr =
   let handler' =
@@ -460,13 +370,6 @@ and apply_renaming_let_cont ({handler; body} as t) renaming : let_cont_expr =
   if handler == handler' && body == body'
   then t
   else { handler = handler'; body = body' }
-
-(* and apply_renaming_cont_map t renaming : continuation_handler_map = *)
-(*   Continuation.Map.fold *)
-(*     (fun k handler result -> *)
-(*        let k = Renaming.apply_continuation renaming k in *)
-(*        let handler = apply_renaming_lambda handler renaming in *)
-(*        Continuation.Map.add k handler result) t Continuation.Map.empty *)
 
 (* renaming for [Apply] *)
 and apply_renaming_apply
@@ -502,209 +405,6 @@ and apply_renaming_switch ({scrutinee; arms} as t) renaming : switch_expr =
 
 (* ========================================================================== *)
 
-let must_be_named (e : core_exp) : named option =
-  match descr e with
-  | Named n -> Some n
-  | (Let _ | Let_cont _ | Apply _ | Lambda _ | Switch _ | Invalid _) -> None
-
-let must_be_literal (e : core_exp) : literal option =
-  match must_be_named e with
-  | Some (Literal n) -> Some n
-  | (Some (Prim _ | Closure_expr _ | Set_of_closures _ | Static_consts _
-          | Rec_info _)
-    | None) -> None
-
-let must_be_cont (e : core_exp) : Continuation.t option =
-  match must_be_literal e with
-  | Some (Cont k | Res_cont (Return k)) -> Some k
-  | (Some (Res_cont Never_returns | Simple _ | Slot _ | Code_id _) | None) ->
-    None
-
-let must_be_prim (e : core_exp) : primitive option =
-  match must_be_named e with
-  | Some e ->
-    (match e with
-     | Prim e -> Some e
-     | (Literal _ | Closure_expr _ | Set_of_closures _ | Static_consts _
-       | Rec_info _) -> None)
-  | None -> None
-
-let must_be_simple (e : core_exp) : Simple.t option =
-  match descr e with
-  | Named (Literal (Simple s)) -> Some s
-  | (Named (Literal (Cont _ | Res_cont _ | Slot _ | Code_id _)) |
-    Named (Prim _ | Closure_expr _ | Set_of_closures _ |
-            Static_consts _ | Rec_info _)
-    | Let _ | Let_cont _ | Apply _ | Lambda _ | Switch _ | Invalid _) -> None
-
-let must_be_lambda (e : core_exp) : lambda_expr option =
-  match descr e with
-  | Lambda e -> Some e
-  | (Named _ | Let _ | Let_cont _ | Apply _ | Switch _ | Invalid _) -> None
-
-let must_be_apply (e : core_exp) : apply_expr option =
-  match descr e with
-  | Apply e -> Some e
-  | (Named _ | Let _ | Let_cont _ | Lambda _ | Switch _ | Invalid _) -> None
-
-let must_be_static_consts (e : core_exp) : static_const_group option  =
-  match must_be_named e with
-  | Some (Static_consts g) -> Some g
-  | Some (Literal _ | Prim _ | Closure_expr _ | Set_of_closures _
-         | Rec_info _) | None -> None
-
-let must_be_code (e : static_const_group) : function_params_and_body option =
-  match e with
-  | [Code code] -> Some code
-  | ([] | (Code _ | Deleted_code | Static_const _)::_) -> None
-
-let must_be_code (e : core_exp) : function_params_and_body option =
-  match must_be_static_consts e with
-  | Some e -> must_be_code e
-  | None -> None
-
-let must_be_tagged_immediate (e : named) : named option =
-  match e with
-  | Literal (Simple s) ->
-    (match simple_with_type s with
-    | Tagged_immediate _ -> Some (Literal (Simple s))
-    | (Naked_immediate _ | Naked_float _ | Naked_int32 _ | Naked_int64 _
-      | Naked_nativeint _ | Var _ | Symbol _) -> None)
-  | Prim (Unary (Tag_immediate, arg)) -> must_be_named arg
-  | Prim (Unary
-            ((Untag_immediate | Duplicate_block _ | Duplicate_array _ | Is_int _
-             | Get_tag | Array_length | Bigarray_length _ | String_length _
-             | Int_as_pointer | Opaque_identity _ | Int_arith _ | Float_arith _
-             | Num_conv _ | Boolean_not | Reinterpret_int64_as_float | Unbox_number _
-             | Box_number _ | Project_function_slot _ | Project_value_slot _
-             | Is_boxed_float | Is_flat_float_array | Begin_try_region | End_region
-             | Obj_dup), _)) -> None
-  | (Prim (Nullary _ | Binary  _ | Ternary _ | Variadic _) |
-     Literal (Cont _ | Res_cont _ | Slot _ | Code_id _) | Closure_expr _
-    | Set_of_closures _ | Static_consts _ | Rec_info _) -> None
-
-let must_be_tagged_immediate (e : core_exp) : named option =
-  match must_be_named e with
-  | Some n -> must_be_tagged_immediate n
-  | None -> None
-
-let must_be_untagged_immediate (e : named) : named option =
-  match e with
-  | Literal (Simple _) -> None
-    (* (match simple_with_type s with
-     * | Naked_immediate _ -> Some (Literal (Simple s))
-     * | (Tagged_immediate _ | Naked_float _ | Naked_int32 _ | Naked_int64 _
-     *   | Naked_nativeint _ | Var _ | Symbol _) -> None) *)
-  | Prim (Unary (Untag_immediate, arg)) -> must_be_named arg
-  | Prim (Unary
-            ((Tag_immediate | Duplicate_block _ | Duplicate_array _ | Is_int _
-             | Get_tag | Array_length | Bigarray_length _ | String_length _
-             | Int_as_pointer | Opaque_identity _ | Int_arith _ | Float_arith _
-             | Num_conv _ | Boolean_not | Reinterpret_int64_as_float | Unbox_number _
-             | Box_number _ | Project_function_slot _ | Project_value_slot _
-             | Is_boxed_float | Is_flat_float_array | Begin_try_region | End_region
-             | Obj_dup), _)) -> None
-  | (Prim (Nullary _ | Binary  _ | Ternary _ | Variadic _) |
-     Literal (Cont _ | Res_cont _ | Slot _ | Code_id _) | Closure_expr _
-    | Set_of_closures _ | Static_consts _ | Rec_info _) -> None
-
-let must_be_untagged_immediate (e : core_exp) : named option =
-  match must_be_named e with
-  | Some n -> must_be_untagged_immediate n
-  | None -> None
-
-let must_be_simple_or_immediate (e : named) : Simple.t option =
-  match e with
-  | Literal (Simple s) -> Some s
-  | Prim (Unary ((Tag_immediate | Untag_immediate), arg)) ->
-    must_be_simple arg
-  | Prim (Unary
-             ((Duplicate_block _ | Duplicate_array _ | Is_int _ | Get_tag
-              | Array_length | Bigarray_length _ | String_length _
-              | Int_as_pointer | Opaque_identity _ | Int_arith _ | Float_arith _
-              | Num_conv _ | Boolean_not | Reinterpret_int64_as_float | Unbox_number _
-              | Box_number _ | Project_function_slot _ | Project_value_slot _
-              | Is_boxed_float | Is_flat_float_array | Begin_try_region | End_region
-              | Obj_dup), _)) -> None
-  | (Prim (Nullary _ | Binary  _ | Ternary _ | Variadic _) |
-     Literal (Cont _ | Res_cont _ | Slot _ | Code_id _) | Closure_expr _
-    | Set_of_closures _ | Static_consts _ | Rec_info _) -> None
-
-let must_be_simple_or_immediate (e : core_exp) : Simple.t option =
-  match must_be_named e with
-  | Some n -> must_be_simple_or_immediate n
-  | None -> None
-
-let must_be_string_length (e : named) : (Flambda_primitive.string_or_bytes * core_exp) option =
-  match e with
-  | Prim (Unary (String_length sb, arg)) -> Some (sb, arg)
-  | Prim (Unary
-            ((Tag_immediate | Untag_immediate | Duplicate_block _ | Duplicate_array _
-             | Is_int _ | Get_tag | Array_length | Bigarray_length _
-             | Int_as_pointer | Opaque_identity _ | Int_arith _ | Float_arith _
-             | Num_conv _ | Boolean_not | Reinterpret_int64_as_float | Unbox_number _
-             | Box_number _ | Project_function_slot _ | Project_value_slot _
-             | Is_boxed_float | Is_flat_float_array | Begin_try_region | End_region
-             | Obj_dup), _))
-  | (Prim (Nullary _ | Binary  _ | Ternary _ | Variadic _) |
-     Literal _ | Closure_expr _ | Set_of_closures _ | Static_consts _
-    | Rec_info _) -> None
-
-let must_be_string_length (e : core_exp) : (Flambda_primitive.string_or_bytes * core_exp) option =
-  match must_be_named e with
-  | Some n -> must_be_string_length n
-  | None -> None
-
-
-let must_be_slot (e : core_exp) : (Variable.t * slot) option =
-  match must_be_literal e with
-  | Some (Slot v) -> Some v
-  | (Some (Simple _ | Cont _ | Res_cont _ | Code_id _) | None) -> None
-
-let must_be_function_slot_expr (e : literal) :
-  (Variable.t * Function_slot.t) option =
-  match e with
-  | Slot (phi, Function_slot slot) -> Some (phi, slot)
-  | (Slot (_, Value_slot _) | Simple _ | Cont _ | Res_cont _ | Code_id _) ->
-    None
-
-let must_be_function_slot_expr (e : core_exp) :
-  (Variable.t * Function_slot.t) option =
-  match must_be_literal e with
-  | Some n -> must_be_function_slot_expr n
-  | None -> None
-
-let must_be_set_of_closures (e : named) =
-  match e with
-  | Set_of_closures e -> Some e
-  | (Literal _ | Prim _ | Closure_expr _ | Static_consts _ | Rec_info _) ->
-    None
-
-let must_be_set_of_closures (e : core_exp) =
-  match must_be_named e with
-  | Some n -> must_be_set_of_closures n
-  | None -> None
-
-let must_have_closure (e : named) : set_of_closures option =
-  match e with
-  | (Closure_expr (_, _, clo) | Set_of_closures clo) -> Some clo
-  | (Literal _ | Prim _ | Static_consts _ | Rec_info _) -> None
-
-let must_have_closure (e : core_exp) =
-  match must_be_named e with
-  | Some n -> must_have_closure n
-  | None -> None
-
-let must_be_static_set_of_closures (e : static_const) =
-  match e with
-  | Static_set_of_closures clo -> Some clo
-  | (Block _ | Boxed_float _ | Boxed_int32 _ | Boxed_int64 _ | Boxed_nativeint _
-    | Immutable_float_block _ | Immutable_float_array _
-    | Immutable_value_array _ | Empty_array
-    | Mutable_string _ | Immutable_string _) -> None
-
-(* ========================================================================== *)
-
 (** Sexp-ish simple pretty-printer for [core_exp]s.
   Ignores name_stamp, compilation_unit, and debug_info for simplicity. **)
 let rec print ppf e =
@@ -729,11 +429,11 @@ let rec print ppf e =
 
 and print_lambda ppf t =
   Name_abstraction.pattern_match_for_printing
-    (module Bound_for_lambda)
+    (module Bound_parameters)
     t ~apply_renaming_to_term:apply_renaming
     ~f:(fun bound body ->
       fprintf ppf "%a ->@.   @[<hov 1>%a@]"
-        Bound_for_lambda.print bound
+        Bound_parameters.print bound
         print body)
 
 and print_let ppf ({let_abst; expr_body} : let_expr) =
@@ -765,7 +465,7 @@ and print_static_pattern ppf (t : Bound_codelike.Pattern.t) =
   match t with
   | Code v ->
     fprintf ppf "%a" Code_id.print v
-  | Set_of_closures v ->
+  | closures v ->
     fprintf ppf "var %a" Bound_var.print v
   | Block_like v ->
     Format.fprintf ppf "(block_like %a)" Symbol.print v
@@ -802,10 +502,10 @@ and print_named ppf (t : named) =
       Variable.print var
       Function_slot.print slot
       (fun ppf clo ->
-         print_named ppf (Set_of_closures clo)) clo
-  | Set_of_closures clo ->
-    fprintf ppf "set_of_closures@. @[<hov 2>%a@]"
-    print_set_of_closures clo
+         print_named ppf (closures clo)) clo
+  | closures clo ->
+    fprintf ppf "closures@. @[<hov 2>%a@]"
+    print_closures clo
   | Static_consts consts ->
     fprintf ppf "@[<hov 0>%a@]"
       print_static_const_group consts
@@ -813,7 +513,7 @@ and print_named ppf (t : named) =
     fprintf ppf "rec_info %a"
       Rec_info_expr.print info
 
-and print_set_of_closures ppf
+and print_closures ppf
       { function_decls;
         value_slots } =
   if Value_slot.Map.is_empty value_slots then
@@ -889,9 +589,9 @@ and print_static_const_or_code ppf t =
 
 and print_static_const ppf (t : static_const) : unit =
   match t with
-  | Static_set_of_closures set ->
+  | Static_closures set ->
     fprintf ppf "%a"
-      print_set_of_closures set
+      print_closures set
   | Block (tag, mut, fields) ->
     fprintf ppf "(%sblock@ (tag %a)@ (%a))"
       (match mut with
@@ -1022,9 +722,9 @@ and ids_for_export_named (t : named) =
   | Literal literal -> ids_for_export_literal literal
   | Closure_expr (var, _, set) ->
     Ids_for_export.add_variable
-    (ids_for_export_set_of_closures set) var
+    (ids_for_export_closures set) var
   | Prim prim -> ids_for_export_prim prim
-  | Set_of_closures set -> ids_for_export_set_of_closures set
+  | closures set -> ids_for_export_closures set
   | Static_consts consts -> ids_for_export_static_const_group consts
   | Rec_info info -> Rec_info_expr.ids_for_export info
 
@@ -1034,8 +734,8 @@ and ids_for_export_function_decls funs =
        Ids_for_export.union (ids_for_export fn_expr) ids)
     funs Ids_for_export.empty
 
-and ids_for_export_set_of_closures
-      ({function_decls; value_slots} : set_of_closures) =
+and ids_for_export_closures
+      ({function_decls; value_slots} : closures) =
   let function_decls_ids =
     ids_for_export_function_decls function_decls
   in
@@ -1092,7 +792,7 @@ and ids_for_export_fields fields =
 
 and ids_for_export_static_const t =
   match t with
-  | Static_set_of_closures set -> ids_for_export_set_of_closures set
+  | Static_closures set -> ids_for_export_closures set
   | Block (_tag, _mut, fields) ->
     List.fold_left (fun acc x -> Ids_for_export.union (ids_for_export x) acc)
       Ids_for_export.empty fields
@@ -1158,7 +858,7 @@ and ids_for_export_apply
 (* ids for [Lambda] *)
 and ids_for_export_lambda t =
    Name_abstraction.ids_for_export
-     (module Bound_for_lambda) t ~ids_for_export_of_term:ids_for_export
+     (module Bound_parameters) t ~ids_for_export_of_term:ids_for_export
 
 and ids_for_export_switch { scrutinee; arms } =
   let scrutinee_ids = ids_for_export scrutinee in
@@ -1253,7 +953,7 @@ module Core_letcont = struct
 end
 
 module Core_lambda = struct
-  module A = Name_abstraction.Make (Bound_for_lambda) (Expr)
+  module A = Name_abstraction.Make (Bound_parameters) (Expr)
   type t = lambda_expr
 
   let pattern_match x ~f =
@@ -1268,9 +968,7 @@ module Core_lambda = struct
     A.pattern_match_pair t1 t2
       ~f:(fun
            bound body1 body2
-           -> f ~return_continuation:(bound.return_continuation)
-                ~exn_continuation:(bound.exn_continuation)
-                (bound.params) body1 body2)
+           -> f bound body1 body2)
 end
 
 module Core_function_params_and_body = struct
@@ -1289,9 +987,8 @@ module Core_function_params_and_body = struct
     A.pattern_match_pair t1 t2
       ~f:(fun my_closure body1 body2 ->
         Core_lambda.pattern_match_pair body1 body2
-          ~f:(fun ~return_continuation ~exn_continuation params body1 body2 ->
-            f ~return_continuation ~exn_continuation params ~body1 ~body2
-              ~my_closure))
+          ~f:(fun params body1 body2 ->
+            f params ~body1 ~body2 ~my_closure))
 end
 
 (* ========================================================================== *)
@@ -1339,7 +1036,7 @@ let switch_fix (f : core_exp -> core_exp)
     arms = Targetint_31_63.Map.map f arms}
   |> Expr.create_switch
 
-let set_of_closures_fix
+let closures_fix
       (fix : core_exp -> core_exp) {function_decls; value_slots} =
   let function_decls = SlotMap.map fix function_decls in
   let value_slots =
@@ -1349,9 +1046,9 @@ let set_of_closures_fix
 
 let static_const_fix (fix : core_exp -> core_exp) (e : static_const) =
   match e with
-  | Static_set_of_closures clo ->
-    let {function_decls; value_slots} = set_of_closures_fix fix clo in
-    Static_set_of_closures {function_decls; value_slots}
+  | Static_closures clo ->
+    let {function_decls; value_slots} = closures_fix fix clo in
+    Static_closures {function_decls; value_slots}
   | Block (tag, mut, list) ->
     let list = List.map fix list in
     Block (tag, mut, list)
@@ -1402,12 +1099,12 @@ let named_fix (fix : core_exp -> core_exp)
   | Literal l -> f arg l
   | Prim e -> prim_fix fix e
   | Closure_expr (phi, slot, clo) ->
-    let {function_decls; value_slots} = set_of_closures_fix fix clo in
+    let {function_decls; value_slots} = closures_fix fix clo in
     Named (Closure_expr (phi, slot, {function_decls; value_slots}))
     |> With_delayed_renaming.create
-  | Set_of_closures clo ->
-    let {function_decls; value_slots} = set_of_closures_fix fix clo in
-    Named (Set_of_closures {function_decls; value_slots})
+  | closures clo ->
+    let {function_decls; value_slots} = closures_fix fix clo in
+    Named (closures {function_decls; value_slots})
     |> With_delayed_renaming.create
   | Static_consts group ->
     static_const_group_fix fix group

@@ -21,7 +21,7 @@ and exp_descr =
   | Switch of switch_expr
   | Invalid of { message : string }
 
-and lambda_expr = (Bound_for_lambda.t, core_exp) Name_abstraction.t
+and lambda_expr = (Bound_parameters.t, core_exp) Name_abstraction.t
 
 (** Let expressions [let x = e1 in e2]
 
@@ -111,6 +111,8 @@ and switch_expr =
   { scrutinee : core_exp;
     arms : core_exp Targetint_31_63.Map.t }
 
+type continuation_handler_map = lambda_expr Continuation.Map.t
+
 type simple_type =
   | Var of Variable.t
   | Symbol of Symbol.t
@@ -122,48 +124,6 @@ type simple_type =
   | Naked_nativeint of Targetint_32_64.t
 
 val simple_with_type : Simple.t -> simple_type
-
-val is_static_set_of_closures : static_const_or_code -> bool
-
-val is_code : static_const_or_code -> bool
-
-val must_be_literal : core_exp -> literal option
-
-val must_be_named : core_exp -> named option
-
-val must_be_prim : core_exp -> primitive option
-
-val must_be_cont : core_exp -> Continuation.t option
-
-val must_be_slot : core_exp -> (Variable.t * slot) option
-
-val must_be_lambda : core_exp -> lambda_expr option
-
-val must_be_apply : core_exp -> apply_expr option
-
-val must_be_static_consts : core_exp -> static_const_group option
-
-val must_be_code : core_exp -> function_params_and_body option
-
-val must_be_simple : core_exp -> Simple.t option
-
-val must_be_simple_or_immediate : core_exp -> Simple.t option
-
-val must_be_tagged_immediate : core_exp -> named option
-
-val must_be_untagged_immediate : core_exp -> named option
-
-val must_be_string_length :
-  core_exp -> (Flambda_primitive.string_or_bytes * core_exp) option
-
-val must_be_function_slot_expr :
-  core_exp -> (Variable.t * Function_slot.t) option
-
-val must_be_set_of_closures : core_exp -> set_of_closures option
-
-val must_be_static_set_of_closures : static_const -> set_of_closures option
-
-val must_have_closure : core_exp -> set_of_closures option
 
 module Expr : sig
   type t = core_exp
@@ -219,16 +179,14 @@ end
 module Core_lambda : sig
   type t = lambda_expr
 
-  val create : Bound_for_lambda.t -> Expr.t -> t
+  val create : Bound_parameters.t -> Expr.t -> t
 
   val pattern_match :
-    t -> f:(Bound_for_lambda.t -> Expr.t -> 'a) -> 'a
+    t -> f:(Bound_parameters.t -> Expr.t -> 'a) -> 'a
 
   val pattern_match_pair:
     t -> t ->
-    f:(return_continuation:Continuation.t ->
-       exn_continuation:Continuation.t ->
-       Bound_parameters.t -> core_exp -> core_exp -> 'a) -> 'a
+    f:(Bound_parameters.t -> core_exp -> core_exp -> 'a) -> 'a
 end
 
 module Core_function_params_and_body : sig
@@ -244,9 +202,7 @@ module Core_function_params_and_body : sig
     t -> f:(Bound_var.t -> Core_lambda.t -> 'a) -> 'a
 
   val pattern_match_pair :
-    t -> t -> f:(return_continuation:Continuation.t ->
-      exn_continuation:Continuation.t ->
-      Bound_parameters.t ->
+    t -> t -> f:(Bound_parameters.t ->
       body1:core_exp -> body2:core_exp ->
       my_closure:Bound_var.t -> 'a)
     -> 'a

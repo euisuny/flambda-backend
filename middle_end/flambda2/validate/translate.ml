@@ -64,8 +64,7 @@ let subst_var_slot
     in
     (Singleton phi, s)
   | (Named (Literal _ | Prim _ | Closure_expr _ | Static_consts _ | Rec_info _) |
-     Let _ | Let_cont _ | Apply _ | Apply_cont _ | Lambda _ | Handler _ | Switch _
-    | Invalid _ ) ->
+     Let _ | Let_cont _ | Apply _ | Lambda _ | Switch _ | Invalid _ ) ->
     Misc.fatal_error "Expected set of closures"
 
 let subst_static_slot
@@ -293,7 +292,7 @@ and handler_map_to_closures (phi : Variable.t) (v : Bound_parameter.t list)
      lambda expression *)
   let in_order =
     Continuation.Map.fold
-      (fun (key : Continuation.t) (e : continuation_handler)
+      (fun (key : Continuation.t) (e : lambda_expr)
         (fun_decls) ->
        (* add handler as a lambda to set of function decls *)
        let slot =
@@ -301,13 +300,13 @@ and handler_map_to_closures (phi : Variable.t) (v : Bound_parameter.t list)
            Flambda_kind.With_subkind.any_value
        in
        let e =
-         Core_continuation_handler.pattern_match
+         Core_lambda.pattern_match
            e
            (fun params e ->
              let params =
                (Bound_parameters.to_list params) @ v |> Bound_parameters.create
              in
-             Core_continuation_handler.create params
+             Core_lambda.create params
                 (subst_cont_id key
                    (Expr.create_named (Literal (Slot (phi, Function_slot slot)))) e))
        in
@@ -334,10 +333,10 @@ and let_cont_to_core (e : Let_cont_expr.t) (s : env) :
           cont_handler_to_core
             (Non_recursive_let_cont_handler.handler h) s
         in
-        let handler =
-          Core_continuation_handler.pattern_match handler
-             (fun var handler ->
-                 Core_continuation_handler.create var handler)
+        let handler : Core_lambda.t =
+          Core_lambda.pattern_match handler
+             ~f:(fun var handler ->
+                 Core_lambda.create var handler)
         in
         let body = Core_letcont_body.create contvar body in
         let exp = Core_letcont.create handler ~body in
@@ -349,7 +348,7 @@ and let_cont_to_core (e : Let_cont_expr.t) (s : env) :
            let body, s = flambda_expr_to_core body s in
            let phi = Variable.create "ϕ" in
            let handlers = cont_handlers_to_core handler s in
-           let clo =
+           let clo = failwith "Unimplemented"
              handler_map_to_closures phi
                (Bound_parameters.to_list invariant_params) handlers
            in
@@ -379,12 +378,8 @@ and subst_singleton_set_of_closures ~(bound: Variable.t)
     let_cont_fix (subst_singleton_set_of_closures ~bound ~clo s) e
   | Apply e ->
     apply_fix (subst_singleton_set_of_closures ~bound ~clo s) e
-  | Apply_cont e ->
-    apply_cont_fix (subst_singleton_set_of_closures ~bound ~clo s) e
   | Lambda e ->
     lambda_fix (subst_singleton_set_of_closures ~bound ~clo s) e
-  | Handler e ->
-    handler_fix (subst_singleton_set_of_closures ~bound ~clo s) e
   | Switch e ->
     switch_fix (subst_singleton_set_of_closures ~bound ~clo s) e
   | Invalid _ -> e
@@ -431,15 +426,15 @@ and subst_singleton_set_of_closures_named ~bound ~clo s (e : named) : core_exp =
 
 and cont_handler_to_core
       (e : Continuation_handler.t) (s : env)
-  : continuation_handler * env =
+  : lambda_expr * env =
   Continuation_handler.pattern_match e
     ~f:
       (fun var ~handler ->
          let handler, s = flambda_expr_to_core handler s in
-         (Core_continuation_handler.create var handler, s))
+         (Core_lambda.create var handler, s))
 
 and cont_handlers_to_core (e : Continuation_handlers.t) (s : env) :
-  continuation_handler Continuation.Map.t =
+  lambda_expr Continuation.Map.t =
   let e : Continuation_handler.t Continuation.Map.t =
     Continuation_handlers.to_map e in
   Continuation.Map.map
@@ -451,7 +446,7 @@ and apply_to_core (e : Apply.t) (s : env)
   let e =
     Expr.create_apply {
       callee = Apply_expr.callee e |> (simple_to_core s);
-      continuation = Expr.create_named (Literal (Res_cont (Apply_expr.continuation e)));
+      ret_continuation = Expr.create_named (Literal (Res_cont (Apply_expr.continuation e)));
       exn_continuation = Expr.create_named (Literal (Cont (Apply_expr.exn_continuation e |>
                                                Exn_continuation.exn_handler)));
       region = simple_to_core s (Simple.var (Apply_expr.region e));
@@ -462,7 +457,7 @@ and apply_to_core (e : Apply.t) (s : env)
 and apply_cont_to_core (e : Apply_cont.t) (s : env)
   : core_exp * env =
   let e =
-    Expr.create_apply_cont {
+    Expr.create_apply {
       k = Expr.create_named (Literal (Cont (Apply_cont_expr.continuation e)));
       args = Apply_cont_expr.args e |> List.map (simple_to_core s);}
   in
