@@ -39,53 +39,101 @@ let simple_to_core (s : env) (v : Simple.t) : core_exp =
   let v = Simple.without_coercion v in
   match Sub.find_opt v s with
   | Some n -> n
-  | None -> Expr.create_named (Literal (Simple v))
+  | None -> Expr.create_var (Simple v)
 
 (** Translation from flambda2 terms to simplified core language **)
 let tagged_immediate_to_core (e : Targetint_31_63.t) : core_exp =
-  Expr.create_named
-     (Literal (Simple (Simple.const (Int_ids.Const.tagged_immediate e))))
+   Expr.create_var (Simple (Simple.const (Int_ids.Const.tagged_immediate e)))
 
 let subst_var_slot
       (vars : Bound_var.t list)
-      (e : core_exp) (s : env) : Bound_for_let.t * env =
-  let phivar = Variable.create "ϕ" in
-  let phi = Bound_var.create phivar Name_mode.normal in
+      (e : core_exp) (s : env) : Variable.t * env =
+  let phi = Variable.create "ϕ" in
   match descr e with
-  | Named (Set_of_closures soc) ->
+  | Closures soc ->
     let in_order = SlotMap.bindings soc.function_decls
     in
     let s =
       List.fold_left
       (fun s (var, (slot, _)) ->
          (Sub.add (Simple.var (Bound_var.var var))
-          (Expr.create_named (Literal (Slot (Bound_var.var phi, Function_slot slot)))) s)) s
+          (Expr.create_var (Slot (phi, Function_slot slot))) s)) s
       (List.combine vars in_order)
     in
-    (Singleton phi, s)
-  | (Named (Literal _ | Prim _ | Closure_expr _ | Static_consts _ | Rec_info _) |
-     Let _ | Let_cont _ | Apply _ | Lambda _ | Switch _ | Invalid _ ) ->
+    (phi, s)
+  | (Var _ | Prim _ | Consts _ | App _ | Lam _ | Closure_expr _ |
+     Switch _ | Error _ ) ->
     Misc.fatal_error "Expected set of closures"
 
 let subst_static_slot
       (bound : Symbol.t Function_slot.Lmap.t)
-      (phi : Bound_var.t) s =
+      (phi : Variable.t) s =
   let bound = Function_slot.Lmap.bindings bound in
   List.fold_left
   (fun s (slot, sym) ->
     (Sub.add (Simple.symbol sym)
-        (Expr.create_named
-          (Literal (Slot (Bound_var.var phi, Function_slot slot)))) s))
+        (Expr.create_var
+          (Slot (phi, Function_slot slot))) s))
   s bound
+
+(* -------------------------------------------------------------------------- *)
+(** Simplification of bound variables *)
+
+(* In [Flambda2] core, we simplify all the bound variables into [Simple]
+   variables. *)
+
+(* Bound patterns *)
+let bound_var_to_var (v : Bound_var.t) : Variable.t =
+  Bound_var.var v
+
+let bound_var_to_simple (v : Bound_var.t) : Simple.t =
+  Simple.var (Bound_var.var v)
+
+let bound_var_to_variable (v : Bound_var.t) : variable =
+  Simple (bound_var_to_simple v)
+
+let singleton_param (p : Bound_parameter.t) : Bound_parameters.t =
+  Bound_parameters.create [p]
+
+let var_to_bound_param (v : Variable.t) : Bound_parameter.t =
+  Bound_parameter.create v Flambda_kind.With_subkind.any_value
+
+let var_to_bound_params (v : Variable.t) : Bound_parameters.t =
+  singleton_param (var_to_bound_param v)
+
+let bound_static_pattern_to_bound_param (p : Bound_static.Pattern.t)
+  : Bound_parameter.t =
+  match p with
+  | Code id -> var_to_bound_param (Code_id.var id)
+  | Set_of_closures _ -> failwith "Unimplemented"
+    (* Function_slot.Lmap.bindings s *)
+  | Block_like s -> var_to_bound_param (Symbol.var s)
+
+(* let bound_static_pattern_to_simple (v : Bound_static.Pattern.t) : Simple.t = *)
+(*   match v with *)
+(*   | Code _ -> failwith "Unimplemented" *)
+(*   | Set_of_closures soc -> failwith "Unimplemented" *)
+(*   | Block_like s -> Simple.symbol s *)
+
+(* -------------------------------------------------------------------------- *)
+(** Translation *)
 
 let rec flambda_expr_to_core (e: expr) (s : env) : core_exp * env =
   let e = Flambda.Expr.descr e in
   match e with
   | Flambda.Let t -> let_to_core t s
-  | Flambda.Let_cont t -> let_cont_to_core t s
-  | Flambda.Apply t -> apply_to_core t s
-  | Flambda.Apply_cont t -> apply_cont_to_core t s
-  | Flambda.Switch t -> switch_to_core t s
+  | Flambda.Let_cont _t ->
+    failwith "Unimplemented"
+    (* let_cont_to_core t s *)
+  | Flambda.Apply _t ->
+    failwith "Unimplemented"
+    (* apply_to_core t s *)
+  | Flambda.Apply_cont _t ->
+    failwith "Unimplemented"
+    (* apply_cont_to_core t s *)
+  | Flambda.Switch _t ->
+    failwith "Unimplemented"
+    (* switch_to_core t s *)
   | Flambda.Invalid { message = t } ->
     (Expr.create_invalid t, s)
 
@@ -93,76 +141,83 @@ let rec flambda_expr_to_core (e: expr) (s : env) : core_exp * env =
    language. *)
 and let_to_core (e : Let_expr.t) (s : env) :
   core_exp * env =
-  Let_expr.pattern_match e
-    ~f:(fun var ~body ->
-      (* The bound variable, [var], is being passed around for checking whether
-         if when a [code_id] is bound, it is an anonymous function (i.e. whether
-         the prefix starts with [anon-fn]) *)
-      let x, e1, s = named_to_core var (Let_expr.defining_expr e) s in
-      (* let x, e1, s = bound_pattern_to_core var e1 s in *)
-      let e2, s = flambda_expr_to_core body s in
-      match e1 with
-      | Some e1 ->
-        Core_let.create ~x ~e1 ~e2, s
-      | None -> e2, s)
+  let let_to_core_ var ~body =
+    (* The bound variable, [var], is being passed around for checking whether
+        if when a [code_id] is bound, it is an anonymous function (i.e. whether
+        the prefix starts with [anon-fn]) *)
+    let x, e1, s = named_to_core var (Let_expr.defining_expr e) s in
+    let e2, s = flambda_expr_to_core body s in
+    match e1 with
+    | Some e1 ->
+      (* let-bindings are sugar for (fun x -> e1) e2 *)
+      let callee = Core_lambda.create x e1 |> Expr.create_lambda in
+      let result = { callee ; apply_args = [e2] } |> Expr.create_apply in
+      (result, s)
+    | None ->
+      (e2, s)
+  in
+  Let_expr.pattern_match e ~f:let_to_core_
 
+(* Translate a Flambda [named] term *)
 and named_to_core (t : Bound_pattern.t) (e : Flambda.named) (s : env) :
-  Bound_for_let.t * core_exp option * env =
+  Bound_parameters.t * core_exp option * env =
   (match t, e with
+  (* Simple *)
   | Singleton v, Simple e ->
     let n = simple_to_core s e in
-    (Singleton v, Some n, s)
+    (bound_var_to_var v |> var_to_bound_params, Some n, s)
+  (* Primitives *)
   | Singleton v, Prim (t, _) ->
-    let e = Prim (prim_to_core s t) in
-    (Singleton v, Some (Expr.create_named e), s)
+    let e = prim_to_core s t in
+    (bound_var_to_var v |> var_to_bound_params, Some (Expr.create_prim e), s)
+  (* Sets of closures *)
   | Set_of_closures vars, Set_of_closures e ->
-    let e = Set_of_closures (set_of_closures_to_core s e) |> Expr.create_named in
+    let e = set_of_closures_to_core s e |> Expr.create_closures in
     let var, s = subst_var_slot vars e s in
-    (var, Some e, s)
+    (var |> var_to_bound_params, Some e, s)
+  (* Static constants *)
   | Static static, Static_consts e ->
     let static = Bound_static.to_list static in
     let body = Static_const_group.to_list e in
     let var, group, s =
       static_consts_to_core (List.combine static body) s
     in
-    let e = Expr.create_named (Static_consts group) in
-    (* Format.printf "[Static pattern] %a\n\n%!" Bound_pattern.print t; *)
-    (* Format.printf "[Static expr] %a\n\n%!" Flambda2_core.print e; *)
-    (Static (Bound_codelike.create var), Some e, s)
-  | Singleton v, Rec_info t ->
-    let e = Expr.create_named (Rec_info t) in
-    (Singleton v, Some e, s)
+    let e = Expr.create_consts group in
+    (Bound_parameters.create var, Some e, s)
+  | Singleton v, Rec_info _ -> (* Forget [rec_info].
+                                  LATER: Use this information *)
+    (bound_var_to_var v |> var_to_bound_params, None, s)
   | _, _ -> Misc.fatal_error "Mismatched let binding with expression")[@ocaml.warning "-4"]
 
 and static_consts_to_core l s =
   let s, l = create_phi_vars s l in
   let rec static_consts_to_core_acc
-            s (l : (Bound_static.Pattern.t * Static_const_or_code.t * _) list)
-            pat_acc acc =
+      s (l : (Bound_static.Pattern.t * Static_const_or_code.t * _) list)
+      pat_acc acc : Bound_parameter.t list * constant list * env =
     match l with
     | [] -> pat_acc, acc, s
     | (var, x, phiopt) :: l ->
       let pat_acc, acc, s =
         (match var, x, phiopt with
-         | Code v, Code e, _ ->
-           let e, s =
-             Code0.params_and_body e |> function_params_and_body_to_core s var
-           in
-           (Bound_codelike.Pattern.code v) :: pat_acc,
-           (Code e) :: acc, s
+         (* | Code v, Code e, _ -> *)
+         (*   let e, s = *)
+         (*     Code0.params_and_body e |> function_params_and_body_to_core s var *)
+         (*   in *)
+         (*   (var_to_bound_param (Code_id.var v)) :: pat_acc, *)
+         (*   (Flambda2_core.Expr.create_lambda e) :: acc, s *)
          | Block_like v, Static_const t, _ ->
            let e = static_const_to_core s t in
-           (Bound_codelike.Pattern.block_like v) :: pat_acc,
-           (Static_const e) :: acc, s
-         | Set_of_closures _, Static_const (Set_of_closures soc), Some phi ->
-           let soc = set_of_closures_to_core s soc in
-           (Bound_codelike.Pattern.set_of_closures phi)::pat_acc,
-           (Static_const (Static_set_of_closures soc))::acc, s
-         | Code v, Deleted_code, _ ->
-           (Bound_codelike.Pattern.code v) :: pat_acc,
-           Deleted_code :: acc, s
-         | Set_of_closures _, Static_const _, None ->
-           Misc.fatal_error "static_consts_to_core: phi var generation error"
+           (var_to_bound_param (Symbol.var v)) :: pat_acc,
+           e :: acc, s
+         (* | Set_of_closures _, Static_const (Set_of_closures soc), Some phi -> *)
+         (*   let soc = set_of_closures_to_core s soc in *)
+         (*   (Bound_codelike.Pattern.set_of_closures phi)::pat_acc, *)
+         (*   (Static_const (Static_set_of_closures soc))::acc, s *)
+         (* | Code v, Deleted_code, _ -> *)
+         (*   (Bound_codelike.Pattern.code v) :: pat_acc, *)
+         (*   Deleted_code :: acc, s *)
+         (* | Set_of_closures _, Static_const _, None -> *)
+         (*   Misc.fatal_error "static_consts_to_core: phi var generation error" *)
          | _, _, _ ->
            Misc.fatal_error "Mismatched static consts binding")[@ocaml.warning "-4"]
       in
@@ -170,7 +225,9 @@ and static_consts_to_core l s =
   in
   static_consts_to_core_acc s l [] []
 
-and create_phi_vars s l =
+and create_phi_vars s l :
+  env *
+  (Bound_static.Pattern.t * Static_const_or_code.t * Variable.t option) list =
   (* When we encounter a Set_of_closures binding, we create the phi nodes and extend the
      substitution as a preprocessing step before translating the bound terms.  This is
      necessary because the bindings are mutually recursive and we need the substitution to
@@ -179,14 +236,13 @@ and create_phi_vars s l =
     (fun s (var, x : Bound_static.Pattern.t * Static_const_or_code.t) ->
        match[@ocaml.warning "-4"] var, x with
        | Set_of_closures bound, Static_const _ ->
-         let phivar = (Variable.create "ϕ") in
-         let phi = Bound_var.create phivar Name_mode.normal in
+         let phi = Variable.create "ϕ" in
          let s = subst_static_slot bound phi s in
          s, (var, x, Some phi)
        | _, _ -> s, (var, x, None))
     s l
 
-and set_of_closures_to_core s (e : Set_of_closures.t) : set_of_closures =
+and set_of_closures_to_core s (e : Set_of_closures.t) : closures =
   let function_decls =
     Set_of_closures.function_decls e |> function_declarations_to_core
   in
@@ -194,9 +250,10 @@ and set_of_closures_to_core s (e : Set_of_closures.t) : set_of_closures =
     Set_of_closures.value_slots e |> value_slots_to_core s in
   { function_decls; value_slots }
 
-and function_declarations_to_core (e : Function_declarations.t) : function_declarations =
+and function_declarations_to_core (e : Function_declarations.t) : core_exp SlotMap.t =
     Function_declarations.funs_in_order e |>
-    Function_slot.Lmap.map (fun x -> Expr.create_named (Literal (Code_id x))) |>
+    Function_slot.Lmap.map
+      (fun x -> Expr.create_var (Simple (Simple.code_id x))) |>
     Function_slot.Lmap.bindings |> List.to_seq |> SlotMap.of_seq
 
 and value_slots_to_core
@@ -217,10 +274,8 @@ and prim_to_core s (e : P.t) : primitive =
     Variadic (prim,
               List.map (fun x -> simple_to_core s x) args)
 
-and static_const_to_core s (e : Static_const.t) : Flambda2_core.static_const =
+and static_const_to_core s (e : Static_const.t) : constant =
   match e with
-  | Set_of_closures soc ->
-    Static_set_of_closures (set_of_closures_to_core s soc)
   | Block (tag, mut, list) ->
     let list = List.map (field_of_static_block_to_core s) list in
     Block (tag, mut, list)
@@ -234,6 +289,7 @@ and static_const_to_core s (e : Static_const.t) : Flambda2_core.static_const =
   | Empty_array -> Empty_array
   | Mutable_string {initial_value} -> Mutable_string {initial_value}
   | Immutable_string s -> Immutable_string s
+  | Set_of_closures _ -> failwith "Unimplemented"
 
 and field_of_static_block_to_core s (e : Field_of_static_block.t) : core_exp =
   match e with
@@ -241,244 +297,245 @@ and field_of_static_block_to_core s (e : Field_of_static_block.t) : core_exp =
   | Tagged_immediate e -> tagged_immediate_to_core e
   | Dynamically_computed (var, _) -> simple_to_core s (Simple.var var)
 
-and function_params_and_body_to_core s
-      (var : Bound_static.Pattern.t)
-      (t : Flambda.function_params_and_body) =
-  let name =
-    (match var with
-     | Code id -> id
-     | (Set_of_closures _ | Block_like _) -> Misc.fatal_error "Expected code id")
-  in
-  let anon =
-    String.starts_with ~prefix:"anon-fn[" (Code_id.name name)
-  in
-  let bound, my_closure, (body, s) =
-    Function_params_and_body.pattern_match' t
-      ~f:(fun (bound: Bound_for_function.t) ~body ->
-        let my_closure = Bound_for_function.my_closure bound in
-        bound, my_closure, flambda_expr_to_core body s)
-  in
-  let expr =
-    Core_function_params_and_body.create
-      (Bound_var.create my_closure Name_mode.normal)
-      (Core_lambda.create
-         (Bound_for_lambda.create
-            ~return_continuation:
-              (Bound_for_function.return_continuation bound)
-            ~exn_continuation:
-              (Bound_for_function.exn_continuation bound)
-            ~params:
-              (Bound_for_function.params bound)
-            ~my_region:
-              (Bound_for_function.my_region bound))
-         body)
-  in
-  ({expr; anon}, s)
+and function_params_and_body_to_core _s
+      (_var : Bound_static.Pattern.t)
+      (_t : Flambda.function_params_and_body) =
+  failwith "Unimplemented"
+  (* let name = *)
+  (*   (match var with *)
+  (*    | Code id -> id *)
+  (*    | (Set_of_closures _ | Block_like _) -> Misc.fatal_error "Expected code id") *)
+  (* in *)
+  (* let anon = *)
+  (*   String.starts_with ~prefix:"anon-fn[" (Code_id.name name) *)
+  (* in *)
+  (* let bound, my_closure, (body, s) = *)
+  (*   Function_params_and_body.pattern_match' t *)
+  (*     ~f:(fun (bound: Bound_for_function.t) ~body -> *)
+  (*       let my_closure = Bound_for_function.my_closure bound in *)
+  (*       bound, my_closure, flambda_expr_to_core body s) *)
+  (* in *)
+  (* let expr = *)
+  (*   Core_function_params_and_body.create *)
+  (*     (Bound_var.create my_closure Name_mode.normal) *)
+  (*     (Core_lambda.create *)
+  (*        (Bound_for_lambda.create *)
+  (*           ~return_continuation: *)
+  (*             (Bound_for_function.return_continuation bound) *)
+  (*           ~exn_continuation: *)
+  (*             (Bound_for_function.exn_continuation bound) *)
+  (*           ~params: *)
+  (*             (Bound_for_function.params bound) *)
+  (*           ~my_region: *)
+  (*             (Bound_for_function.my_region bound)) *)
+  (*        body) *)
+  (* in *)
+  (* ({expr; anon}, s) *)
 
-and subst_cont_id (cont : Continuation.t) (e1 : core_exp) (e2 : core_exp) : core_exp =
-  core_fmap
-    (fun _ x ->
-       match x with
-       | (Cont k | Res_cont (Return k)) ->
-         if Continuation.equal cont k
-         then e1
-         else Expr.create_named (Literal x)
-       | (Simple _ | Res_cont Never_returns | Slot _ | Code_id _) ->
-         Expr.create_named (Literal x)) () e2
+(* and subst_cont_id (cont : Continuation.t) (e1 : core_exp) (e2 : core_exp) : core_exp = *)
+(*   core_fmap *)
+(*     (fun _ x -> *)
+(*        match x with *)
+(*        | (Cont k | Res_cont (Return k)) -> *)
+(*          if Continuation.equal cont k *)
+(*          then e1 *)
+(*          else Expr.create_named (Literal x) *)
+(*        | (Simple _ | Res_cont Never_returns | Slot _ | Code_id _) -> *)
+(*          Expr.create_named (Literal x)) () e2 *)
 
-and handler_map_to_closures (phi : Variable.t) (v : Bound_parameter.t list)
-      (m : continuation_handler_map) : set_of_closures =
-  (* for each continuation handler, create a new function slot and a
-     lambda expression *)
-  let in_order =
-    Continuation.Map.fold
-      (fun (key : Continuation.t) (e : lambda_expr)
-        (fun_decls) ->
-       (* add handler as a lambda to set of function decls *)
-       let slot =
-         Function_slot.create !comp_unit ~name:(Continuation.name key)
-           Flambda_kind.With_subkind.any_value
-       in
-       let e =
-         Core_lambda.pattern_match
-           e
-           (fun params e ->
-             let params =
-               (Bound_parameters.to_list params) @ v |> Bound_parameters.create
-             in
-             Core_lambda.create params
-                (subst_cont_id key
-                   (Expr.create_named (Literal (Slot (phi, Function_slot slot)))) e))
-       in
-       (* for every occurence of [key] in [e], substitute
-          with Slot(phi, Function_slot slot) *)
-       let lambda = Expr.create_handler e in
-       SlotMap.add slot lambda fun_decls) m
-    SlotMap.empty
-  in
-  { function_decls = in_order;
-    value_slots = Value_slot.Map.empty }
+(* and handler_map_to_closures (phi : Variable.t) (v : Bound_parameter.t list) *)
+(*       (m : continuation_handler_map) : closures = *)
+(*   (\* for each continuation handler, create a new function slot and a *)
+(*      lambda expression *\) *)
+(*   let in_order = *)
+(*     Continuation.Map.fold *)
+(*       (fun (key : Continuation.t) (e : lambda_expr) *)
+(*         (fun_decls) -> *)
+(*        (\* add handler as a lambda to set of function decls *\) *)
+(*        let slot = *)
+(*          Function_slot.create !comp_unit ~name:(Continuation.name key) *)
+(*            Flambda_kind.With_subkind.any_value *)
+(*        in *)
+(*        let e = *)
+(*          Core_lambda.pattern_match *)
+(*            e *)
+(*            (fun params e -> *)
+(*              let params = *)
+(*                (Bound_parameters.to_list params) @ v |> Bound_parameters.create *)
+(*              in *)
+(*              Core_lambda.create params *)
+(*                 (subst_cont_id key *)
+(*                    (Expr.create_named (Literal (Slot (phi, Function_slot slot)))) e)) *)
+(*        in *)
+(*        (\* for every occurence of [key] in [e], substitute *)
+(*           with Slot(phi, Function_slot slot) *\) *)
+(*        let lambda = Expr.create_handler e in *)
+(*        SlotMap.add slot lambda fun_decls) m *)
+(*     SlotMap.empty *)
+(*   in *)
+(*   { function_decls = in_order; *)
+(*     value_slots = Value_slot.Map.empty } *)
 
-(* Accumulate env in both the body and the handler, and substitute in
-  the bindings for the whole expression. *)
-and let_cont_to_core (e : Let_cont_expr.t) (s : env) :
-  core_exp * env =
-  match e with
-  | Non_recursive
-      {handler = h; num_free_occurrences = _; is_applied_with_traps = _} ->
-    Non_recursive_let_cont_handler.pattern_match h
-      ~f:(fun contvar ~body ->
-        let body, s = flambda_expr_to_core body s in
-        let handler, s =
-          cont_handler_to_core
-            (Non_recursive_let_cont_handler.handler h) s
-        in
-        let handler : Core_lambda.t =
-          Core_lambda.pattern_match handler
-             ~f:(fun var handler ->
-                 Core_lambda.create var handler)
-        in
-        let body = Core_letcont_body.create contvar body in
-        let exp = Core_letcont.create handler ~body in
-        (exp, s))
-  | Recursive r ->
-    Recursive_let_cont_handlers.pattern_match_bound r
-      ~f:
-        (fun bound ~invariant_params ~body handler ->
-           let body, s = flambda_expr_to_core body s in
-           let phi = Variable.create "ϕ" in
-           let handlers = cont_handlers_to_core handler s in
-           let clo = failwith "Unimplemented"
-             handler_map_to_closures phi
-               (Bound_parameters.to_list invariant_params) handlers
-           in
-           let in_order = clo.function_decls |> SlotMap.bindings in
-           let in_order_with_cont =
-             List.combine (Bound_continuations.to_list bound) in_order
-           in
-           let e2 =
-             List.fold_left
-               (fun acc (cont, (slot, _)) ->
-                  subst_cont_id cont
-                    (Expr.create_named (Literal (Slot (phi, Function_slot slot)))) acc)
-               body in_order_with_cont
-           in
-           (* CR ccasinghino I think this is quadratic, but rare so we aren't
-              seeing the performance impact in practice. *)
-           let e = subst_singleton_set_of_closures ~bound:phi ~clo s e2 in
-           (e, s))
+(* (\* Accumulate env in both the body and the handler, and substitute in *)
+(*   the bindings for the whole expression. *\) *)
+(* and let_cont_to_core (e : Let_cont_expr.t) (s : env) : *)
+(*   core_exp * env = *)
+(*   match e with *)
+(*   | Non_recursive *)
+(*       {handler = h; num_free_occurrences = _; is_applied_with_traps = _} -> *)
+(*     Non_recursive_let_cont_handler.pattern_match h *)
+(*       ~f:(fun contvar ~body -> *)
+(*         let body, s = flambda_expr_to_core body s in *)
+(*         let handler, s = *)
+(*           cont_handler_to_core *)
+(*             (Non_recursive_let_cont_handler.handler h) s *)
+(*         in *)
+(*         let handler : Core_lambda.t = *)
+(*           Core_lambda.pattern_match handler *)
+(*              ~f:(fun var handler -> *)
+(*                  Core_lambda.create var handler) *)
+(*         in *)
+(*         let body = Core_letcont_body.create contvar body in *)
+(*         let exp = Core_letcont.create handler ~body in *)
+(*         (exp, s)) *)
+(*   | Recursive r -> *)
+(*     Recursive_let_cont_handlers.pattern_match_bound r *)
+(*       ~f: *)
+(*         (fun bound ~invariant_params ~body handler -> *)
+(*            let body, s = flambda_expr_to_core body s in *)
+(*            let phi = Variable.create "ϕ" in *)
+(*            let handlers = cont_handlers_to_core handler s in *)
+(*            let clo = failwith "Unimplemented" *)
+(*              handler_map_to_closures phi *)
+(*                (Bound_parameters.to_list invariant_params) handlers *)
+(*            in *)
+(*            let in_order = clo.function_decls |> SlotMap.bindings in *)
+(*            let in_order_with_cont = *)
+(*              List.combine (Bound_continuations.to_list bound) in_order *)
+(*            in *)
+(*            let e2 = *)
+(*              List.fold_left *)
+(*                (fun acc (cont, (slot, _)) -> *)
+(*                   subst_cont_id cont *)
+(*                     (Expr.create_named (Literal (Slot (phi, Function_slot slot)))) acc) *)
+(*                body in_order_with_cont *)
+(*            in *)
+(*            (\* CR ccasinghino I think this is quadratic, but rare so we aren't *)
+(*               seeing the performance impact in practice. *\) *)
+(*            let e = subst_singleton_set_of_closures ~bound:phi ~clo s e2 in *)
+(*            (e, s)) *)
 
-and subst_singleton_set_of_closures ~(bound: Variable.t)
-      ~(clo : set_of_closures) s (e : core_exp) : core_exp =
-  match descr e with
-  | Named e -> subst_singleton_set_of_closures_named ~bound ~clo s e
-  | Let e ->
-    let_fix (subst_singleton_set_of_closures ~bound ~clo s) e
-  | Let_cont e ->
-    let_cont_fix (subst_singleton_set_of_closures ~bound ~clo s) e
-  | Apply e ->
-    apply_fix (subst_singleton_set_of_closures ~bound ~clo s) e
-  | Lambda e ->
-    lambda_fix (subst_singleton_set_of_closures ~bound ~clo s) e
-  | Switch e ->
-    switch_fix (subst_singleton_set_of_closures ~bound ~clo s) e
-  | Invalid _ -> e
+(* and subst_singleton_set_of_closures ~(bound: Variable.t) *)
+(*       ~(clo : set_of_closures) s (e : core_exp) : core_exp = *)
+(*   match descr e with *)
+(*   | Named e -> subst_singleton_set_of_closures_named ~bound ~clo s e *)
+(*   | Let e -> *)
+(*     let_fix (subst_singleton_set_of_closures ~bound ~clo s) e *)
+(*   | Let_cont e -> *)
+(*     let_cont_fix (subst_singleton_set_of_closures ~bound ~clo s) e *)
+(*   | Apply e -> *)
+(*     apply_fix (subst_singleton_set_of_closures ~bound ~clo s) e *)
+(*   | Lambda e -> *)
+(*     lambda_fix (subst_singleton_set_of_closures ~bound ~clo s) e *)
+(*   | Switch e -> *)
+(*     switch_fix (subst_singleton_set_of_closures ~bound ~clo s) e *)
+(*   | Invalid _ -> e *)
 
-and subst_singleton_set_of_closures_named ~bound ~clo s (e : named) : core_exp =
-  let f bound (v : literal) =
-    (match v with
-    | Simple v ->
-      (if Simple.same v (Simple.var bound) then
-         (let {function_decls; value_slots=_} = clo in
-          match SlotMap.bindings function_decls with
-          | [(slot, _)] ->
-              Expr.create_named (Closure_expr (bound, slot, clo))
-          | ([] | _::_)->
-            Expr.create_named (Set_of_closures clo))
-      else
-        simple_to_core s v)
-    | Slot (phi, Function_slot slot) ->
-      (let decls = SlotMap.bindings clo.function_decls in
-       let bound_closure = List.find_opt (fun (x, _) -> x = slot) decls in
-       (match bound_closure with
-        | None -> Expr.create_named e
-        | Some (k, _) -> Expr.create_named (Closure_expr (phi, k, clo))
-       ))
-    | (Cont _ | Res_cont _ | Slot (_, Value_slot _) | Code_id _) ->
-      Expr.create_named (Literal v))
-  in
-  match e with
-  | Literal v -> f bound v
-  | Prim e -> prim_fix (subst_singleton_set_of_closures ~bound ~clo s) e
-  | Closure_expr (phi, slot, set) ->
-    let set =
-      set_of_closures_fix (subst_singleton_set_of_closures ~bound ~clo s) set
-    in
-    Expr.create_named (Closure_expr (phi, slot, set))
-  | Set_of_closures set ->
-    let set =
-      set_of_closures_fix (subst_singleton_set_of_closures ~bound ~clo s) set
-    in
-    Expr.create_named (Set_of_closures set)
-  | Static_consts group ->
-    static_const_group_fix (subst_singleton_set_of_closures ~bound ~clo s) group
-  | Rec_info _ -> Expr.create_named e
+(* and subst_singleton_set_of_closures_named ~bound ~clo s (e : named) : core_exp = *)
+(*   let f bound (v : literal) = *)
+(*     (match v with *)
+(*     | Simple v -> *)
+(*       (if Simple.same v (Simple.var bound) then *)
+(*          (let {function_decls; value_slots=_} = clo in *)
+(*           match SlotMap.bindings function_decls with *)
+(*           | [(slot, _)] -> *)
+(*               Expr.create_named (Closure_expr (bound, slot, clo)) *)
+(*           | ([] | _::_)-> *)
+(*             Expr.create_named (Set_of_closures clo)) *)
+(*       else *)
+(*         simple_to_core s v) *)
+(*     | Slot (phi, Function_slot slot) -> *)
+(*       (let decls = SlotMap.bindings clo.function_decls in *)
+(*        let bound_closure = List.find_opt (fun (x, _) -> x = slot) decls in *)
+(*        (match bound_closure with *)
+(*         | None -> Expr.create_named e *)
+(*         | Some (k, _) -> Expr.create_named (Closure_expr (phi, k, clo)) *)
+(*        )) *)
+(*     | (Cont _ | Res_cont _ | Slot (_, Value_slot _) | Code_id _) -> *)
+(*       Expr.create_named (Literal v)) *)
+(*   in *)
+(*   match e with *)
+(*   | Literal v -> f bound v *)
+(*   | Prim e -> prim_fix (subst_singleton_set_of_closures ~bound ~clo s) e *)
+(*   | Closure_expr (phi, slot, set) -> *)
+(*     let set = *)
+(*       set_of_closures_fix (subst_singleton_set_of_closures ~bound ~clo s) set *)
+(*     in *)
+(*     Expr.create_named (Closure_expr (phi, slot, set)) *)
+(*   | Set_of_closures set -> *)
+(*     let set = *)
+(*       set_of_closures_fix (subst_singleton_set_of_closures ~bound ~clo s) set *)
+(*     in *)
+(*     Expr.create_named (Set_of_closures set) *)
+(*   | Static_consts group -> *)
+(*     static_const_group_fix (subst_singleton_set_of_closures ~bound ~clo s) group *)
+(*   | Rec_info _ -> Expr.create_named e *)
 
-and cont_handler_to_core
-      (e : Continuation_handler.t) (s : env)
-  : lambda_expr * env =
-  Continuation_handler.pattern_match e
-    ~f:
-      (fun var ~handler ->
-         let handler, s = flambda_expr_to_core handler s in
-         (Core_lambda.create var handler, s))
+(* and cont_handler_to_core *)
+(*       (e : Continuation_handler.t) (s : env) *)
+(*   : lambda_expr * env = *)
+(*   Continuation_handler.pattern_match e *)
+(*     ~f: *)
+(*       (fun var ~handler -> *)
+(*          let handler, s = flambda_expr_to_core handler s in *)
+(*          (Core_lambda.create var handler, s)) *)
 
-and cont_handlers_to_core (e : Continuation_handlers.t) (s : env) :
-  lambda_expr Continuation.Map.t =
-  let e : Continuation_handler.t Continuation.Map.t =
-    Continuation_handlers.to_map e in
-  Continuation.Map.map
-    (fun e ->
-       let e, _ = cont_handler_to_core e s in e) e
+(* and cont_handlers_to_core (e : Continuation_handlers.t) (s : env) : *)
+(*   lambda_expr Continuation.Map.t = *)
+(*   let e : Continuation_handler.t Continuation.Map.t = *)
+(*     Continuation_handlers.to_map e in *)
+(*   Continuation.Map.map *)
+(*     (fun e -> *)
+(*        let e, _ = cont_handler_to_core e s in e) e *)
 
-and apply_to_core (e : Apply.t) (s : env)
-  : core_exp * env =
-  let e =
-    Expr.create_apply {
-      callee = Apply_expr.callee e |> (simple_to_core s);
-      ret_continuation = Expr.create_named (Literal (Res_cont (Apply_expr.continuation e)));
-      exn_continuation = Expr.create_named (Literal (Cont (Apply_expr.exn_continuation e |>
-                                               Exn_continuation.exn_handler)));
-      region = simple_to_core s (Simple.var (Apply_expr.region e));
-      apply_args = Apply_expr.args e |> List.map (simple_to_core s) }
-  in
-  e, s
+(* and apply_to_core (e : Apply.t) (s : env) *)
+(*   : core_exp * env = *)
+(*   let e = *)
+(*     Expr.create_apply { *)
+(*       callee = Apply_expr.callee e |> (simple_to_core s); *)
+(*       ret_continuation = Expr.create_named (Literal (Res_cont (Apply_expr.continuation e))); *)
+(*       exn_continuation = Expr.create_named (Literal (Cont (Apply_expr.exn_continuation e |> *)
+(*                                                Exn_continuation.exn_handler))); *)
+(*       region = simple_to_core s (Simple.var (Apply_expr.region e)); *)
+(*       apply_args = Apply_expr.args e |> List.map (simple_to_core s) } *)
+(*   in *)
+(*   e, s *)
 
-and apply_cont_to_core (e : Apply_cont.t) (s : env)
-  : core_exp * env =
-  let e =
-    Expr.create_apply {
-      k = Expr.create_named (Literal (Cont (Apply_cont_expr.continuation e)));
-      args = Apply_cont_expr.args e |> List.map (simple_to_core s);}
-  in
-  e, s
+(* and apply_cont_to_core (e : Apply_cont.t) (s : env) *)
+(*   : core_exp * env = *)
+(*   let e = *)
+(*     Expr.create_apply { *)
+(*       k = Expr.create_named (Literal (Cont (Apply_cont_expr.continuation e))); *)
+(*       args = Apply_cont_expr.args e |> List.map (simple_to_core s);} *)
+(*   in *)
+(*   e, s *)
 
-and switch_to_core (e : Switch.t) (s : env)
-  : core_exp * env =
-  let e =
-    Expr.create_switch {
-      scrutinee = Switch_expr.scrutinee e |> simple_to_core s;
-      arms = Switch_expr.arms e |>
-             Targetint_31_63.Map.map
-               (fun x -> let e, _ = apply_cont_to_core x s in e)
-      ;}
-  in
-  e, s
+(* and switch_to_core (e : Switch.t) (s : env) *)
+(*   : core_exp * env = *)
+(*   let e = *)
+(*     Expr.create_switch { *)
+(*       scrutinee = Switch_expr.scrutinee e |> simple_to_core s; *)
+(*       arms = Switch_expr.arms e |> *)
+(*              Targetint_31_63.Map.map *)
+(*                (fun x -> let e, _ = apply_cont_to_core x s in e) *)
+(*       ;} *)
+(*   in *)
+(*   e, s *)
 
-let flambda_unit_to_core e =
-  let e, _ =
-    flambda_expr_to_core (Flambda_unit.body e) Sub.empty
-  in
-  e
+(* let flambda_unit_to_core e = *)
+(*   let e, _ = *)
+(*     flambda_expr_to_core (Flambda_unit.body e) Sub.empty *)
+(*   in *)
+(*   e *)
 
-let prim_to_core e = prim_to_core create_env e
+(* let prim_to_core e = prim_to_core create_env e *)

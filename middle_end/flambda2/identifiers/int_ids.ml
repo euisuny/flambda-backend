@@ -405,6 +405,8 @@ module Symbol = struct
 
   let create_wrapped data = Table.add !grand_table_of_symbols data
 
+  let var t = t
+
   let unsafe_create compilation_unit linkage_name =
     Symbol_data.unsafe_create compilation_unit linkage_name |> create_wrapped
 
@@ -564,6 +566,8 @@ module Simple = struct
 
   let vars vars = vars
 
+  let code_id v = v
+
   let symbol s = s
 
   let const cst = cst
@@ -682,6 +686,8 @@ module Code_id = struct
   let get_compilation_unit t = (find_data t).compilation_unit
 
   let linkage_name t = (find_data t).linkage_name
+
+  let var v = v
 
   let name t = (find_data t).name
 

@@ -61,7 +61,9 @@ and exp_descr =
   (* Primitive operations *)
   | Prim of primitive
   (* Static constants, which include literal expressions and blocks *)
-  | Consts of constant list
+  | Const of constant
+  (* Recursive binding TODO *)
+  | Rec of core_exp list
   (* Application *)
   | App of apply_expr
   (* A lambda for code expressions and continuations. *)
@@ -137,41 +139,41 @@ and constant =
   | Mutable_string of { initial_value : string }
   | Immutable_string of string
 
-(* ========================================================================== *)
+(* (\* ========================================================================== *\) *)
 
-type simple_type =
-  | Var of Variable.t
-  | Symbol of Symbol.t
-  | Naked_immediate of Targetint_31_63.t
-  | Tagged_immediate of Targetint_31_63.t
-  | Naked_float of Numeric_types.Float_by_bit_pattern.t
-  | Naked_int32 of Int32.t
-  | Naked_int64 of Int64.t
-  | Naked_nativeint of Targetint_32_64.t
+(* type simple_type = *)
+(*   | Var of Variable.t *)
+(*   | Symbol of Symbol.t *)
+(*   | Naked_immediate of Targetint_31_63.t *)
+(*   | Tagged_immediate of Targetint_31_63.t *)
+(*   | Naked_float of Numeric_types.Float_by_bit_pattern.t *)
+(*   | Naked_int32 of Int32.t *)
+(*   | Naked_int64 of Int64.t *)
+(*   | Naked_nativeint of Targetint_32_64.t *)
 
-let simple_with_type (s : Simple.t) : simple_type =
-  Simple.pattern_match' s
-    ~var:(fun v ~coercion:_ -> Var v)
-    ~symbol:(fun s ~coercion:_ -> Symbol s)
-    ~const:(fun x ->
-      match Int_ids.Const.descr x with
-      | Naked_immediate i -> Naked_immediate i
-      | Tagged_immediate i -> Tagged_immediate i
-      | Naked_float i -> Naked_float i
-      | Naked_int32 i -> Naked_int32 i
-      | Naked_int64 i -> Naked_int64 i
-      | Naked_nativeint i -> Naked_nativeint i)
+(* let simple_with_type (s : Simple.t) : simple_type = *)
+(*   Simple.pattern_match' s *)
+(*     ~var:(fun v ~coercion:_ -> Var v) *)
+(*     ~symbol:(fun s ~coercion:_ -> Symbol s) *)
+(*     ~const:(fun x -> *)
+(*       match Int_ids.Const.descr x with *)
+(*       | Naked_immediate i -> Naked_immediate i *)
+(*       | Tagged_immediate i -> Tagged_immediate i *)
+(*       | Naked_float i -> Naked_float i *)
+(*       | Naked_int32 i -> Naked_int32 i *)
+(*       | Naked_int64 i -> Naked_int64 i *)
+(*       | Naked_nativeint i -> Naked_nativeint i) *)
 
 (* ========================================================================== *)
 
 (** Nominal renaming for [core_exp] **)
 let rec descr expr =
   With_delayed_renaming.descr expr
-    ~apply_renaming_descr:apply_renaming_expr_descr
+    ~apply_renaming_descr:apply_renaming_exp_descr
 
 and apply_renaming = With_delayed_renaming.apply_renaming
 
-and apply_renaming_expr_descr t renaming =
+and apply_renaming_exp_descr (t : exp_descr) renaming : exp_descr =
   match t with
   | Var var ->
     let var' = apply_renaming_variable var renaming in
@@ -180,15 +182,15 @@ and apply_renaming_expr_descr t renaming =
     let prim' = apply_renaming_prim prim renaming in
     if prim == prim' then t else Prim prim'
   | Consts consts ->
-    let consts' = apply_renaming_const consts renaming in
-    if consts == consts' then t else const consts'
+    let consts' = apply_renaming_consts consts renaming in
+    if consts == consts' then t else Consts consts'
   | Closure_expr (var, slot, set) ->
     let var' = Renaming.apply_variable renaming var in
-    let set' = apply_renaming_set_of_closures set renaming in
+    let set' = apply_renaming_closures set renaming in
     if var == var' && set == set' then t else Closure_expr (var', slot, set')
   | Closures clos ->
     let clos' = apply_renaming_closures clos renaming in
-    if clos == clos' then t else closures clos'
+    if clos == clos' then t else Closures clos'
   | App app ->
     let app' = apply_renaming_apply app renaming in
     if app == app' then t else App app'
@@ -198,13 +200,13 @@ and apply_renaming_expr_descr t renaming =
   | Switch switch ->
     let switch' = apply_renaming_switch switch renaming in
     if switch == switch' then t else Switch switch'
-  | Error_ -> t
+  | Error _ -> t
 
 and apply_renaming_lambda t renaming : lambda_expr =
   Name_abstraction.apply_renaming (module Bound_parameters) t renaming
     ~apply_renaming_to_term:apply_renaming
 
-and apply_renaming_variable t renaming : variable =
+and apply_renaming_variable (t : variable) renaming : variable =
   match t with
   | Simple simple ->
     let simple' = Simple.apply_renaming simple renaming in
@@ -214,7 +216,7 @@ and apply_renaming_variable t renaming : variable =
     if var == var' then t else Slot (var', slot)
 
 and apply_renaming_function_declarations
-      (funs : function_declarations) renaming =
+      (funs : core_exp SlotMap.t) renaming =
   SlotMap.map (fun x -> apply_renaming x renaming) funs
 
 and apply_renaming_closures
@@ -274,28 +276,15 @@ and apply_renaming_prim t renaming : primitive =
     let args' = List.map (fun x -> apply_renaming x renaming) args in
     if prim == prim' && args == args' then t else Variadic (prim', args')
 
-and apply_renaming_static_const_group t renaming : static_const_group =
-  Misc.Stdlib.List.map_sharing (fun static_const ->
-    apply_renaming_static_const_or_code static_const renaming) t
+and apply_renaming_consts (t : constant list) renaming : constant list =
+  Misc.Stdlib.List.map_sharing
+    (fun const -> apply_renaming_const const renaming) t
 
-and apply_renaming_static_const_or_code t renaming : static_const_or_code =
-  match t with
-  | Code code ->
-    let code' = apply_renaming_function_params_and_body code renaming in
-    if code == code' then t else Code code'
-  | Deleted_code -> Deleted_code
-  | Static_const const ->
-    let const' = apply_renaming_static_const const renaming in
-    if const == const' then t else Static_const const'
-
-and apply_renaming_static_const t renaming =
+and apply_renaming_const (t : constant) renaming : constant =
   if Renaming.is_empty renaming
   then t
   else
     match t with
-    | Static_closures set ->
-      let set' = apply_renaming_closures set renaming in
-      if set == set' then t else Static_closures set'
     | Block (tag, mut, fields) ->
       let fields' =
         Misc.Stdlib.List.map_sharing
@@ -349,49 +338,18 @@ and apply_renaming_static_const t renaming =
       if fields' == fields then t else Immutable_value_array fields'
     | Empty_array -> Empty_array
 
-and apply_renaming_function_params_and_body ({expr; anon} as t) renaming =
-  let expr' =
-    Name_abstraction.apply_renaming
-      (module Bound_var) expr renaming
-      ~apply_renaming_to_term:apply_renaming_lambda
-  in
-  if expr == expr' then t else { expr = expr'; anon = anon }
-
-(* renaming for [Let_cont] *)
-and apply_renaming_let_cont ({handler; body} as t) renaming : let_cont_expr =
-  let handler' =
-    apply_renaming_lambda handler renaming
-  in
-  let body' =
-    Name_abstraction.apply_renaming
-      (module Bound_continuation)
-      body renaming ~apply_renaming_to_term:apply_renaming
-  in
-  if handler == handler' && body == body'
-  then t
-  else { handler = handler'; body = body' }
-
 (* renaming for [Apply] *)
 and apply_renaming_apply
-      ({ callee; ret_continuation; exn_continuation; region; apply_args} as t)
+      ({ callee; apply_args} as t)
       renaming : apply_expr =
-  let ret_continuation' = apply_renaming ret_continuation renaming in
-  let exn_continuation' = apply_renaming exn_continuation renaming in
   let callee' = apply_renaming callee renaming in
-  let region' = apply_renaming region renaming in
   let apply_args' =
     Misc.Stdlib.List.map_sharing (fun x -> apply_renaming x renaming) apply_args
   in
-  if ret_continuation == ret_continuation' && exn_continuation == exn_continuation'
-     && callee == callee' && region == region' && apply_args == apply_args'
-  then t
+  if callee == callee' && apply_args == apply_args' then t
   else
     { callee = callee';
-      ret_continuation = ret_continuation';
-      exn_continuation = exn_continuation';
-      region = region';
-      apply_args = apply_args';
-    }
+      apply_args = apply_args'; }
 
 (* renaming for [Switch] *)
 and apply_renaming_switch ({scrutinee; arms} as t) renaming : switch_expr =
@@ -409,22 +367,29 @@ and apply_renaming_switch ({scrutinee; arms} as t) renaming : switch_expr =
   Ignores name_stamp, compilation_unit, and debug_info for simplicity. **)
 let rec print ppf e =
   match descr e with
-   | Named t ->
+   | Var t ->
      fprintf ppf "@[<hov 1>%a@]"
-     print_named t
-   | Let t -> print_let ppf t
-   | Let_cont t ->
-     print_let_cont ppf t
-   | Apply t ->
+     print_var t
+   | Prim prim -> print_prim ppf prim
+   | Consts consts -> print_consts ppf consts
+   | App t ->
      fprintf ppf "@[<hov 1>apply %a@]"
      print_apply t
-   | Lambda t ->
+   | Lam t ->
      fprintf ppf "@[<hov 1>λ@ %a@]"
      print_lambda t
+   | Closure_expr (var, slot, clo) ->
+     fprintf ppf "@[<hov 3>clo(%a,@ %a,@. %a)@]"
+       Variable.print var
+       Function_slot.print slot
+       (fun ppf clo -> print_closures ppf clo) clo
+   | Closures clo ->
+     fprintf ppf "closures@. @[<hov 2>%a@]"
+       print_closures clo
    | Switch t ->
      fprintf ppf "@[<hov 1>switch %a@]"
      print_switch t
-   | Invalid { message } ->
+   | Error { message } ->
      fprintf ppf "@[<hov 1>invalid %s@]" message
 
 and print_lambda ppf t =
@@ -436,50 +401,11 @@ and print_lambda ppf t =
         Bound_parameters.print bound
         print body)
 
-and print_let ppf ({let_abst; expr_body} : let_expr) =
-  Name_abstraction.pattern_match_for_printing
-    (module Bound_for_let)
-    let_abst ~apply_renaming_to_term:apply_renaming
-    ~f:(fun bound body ->
-      fprintf ppf
-        "@[<v 0>@[<hov 1>let (%a) =@ %a@]@;%a@]"
-        print_bound_pattern bound
-        print expr_body
-        print body)
-
-and print_bound_pattern ppf (t : Bound_for_let.t) =
-  match t with
-  | Singleton v ->
-    fprintf ppf "singleton %a"
-      Bound_var.print v
-  | Static v ->
-    fprintf ppf "static %a"
-      print_bound_static v
-
-and print_bound_static ppf (t : Bound_codelike.t) =
-  Format.fprintf ppf "@[<hov 0>%a@]"
-    (Format.pp_print_list ~pp_sep:Format.pp_print_space print_static_pattern)
-    (t |> Bound_codelike.to_list)
-
-and print_static_pattern ppf (t : Bound_codelike.Pattern.t) =
-  match t with
-  | Code v ->
-    fprintf ppf "%a" Code_id.print v
-  | closures v ->
-    fprintf ppf "var %a" Bound_var.print v
-  | Block_like v ->
-    Format.fprintf ppf "(block_like %a)" Symbol.print v
-
-and print_literal ppf (t : literal) =
+and print_var ppf (t : variable) =
   match t with
   | Simple simple ->
     fprintf ppf "simple %a"
       Simple.print simple
-  | Cont k | Res_cont (Return k) ->
-    fprintf ppf "%a"
-      Continuation.print k
-  | Res_cont (Never_returns) ->
-    fprintf ppf "never_returns"
   | Slot (var, Function_slot slot) ->
     fprintf ppf "slot(%a, %a)"
       Variable.print var
@@ -488,30 +414,6 @@ and print_literal ppf (t : literal) =
     fprintf ppf "slot(%a, %a)"
       Variable.print var
       Value_slot.print slot
-  | Code_id id ->
-    fprintf ppf "%a"
-      Code_id.print id
-
-and print_named ppf (t : named) =
-  match t with
-  | Literal literal ->
-    fprintf ppf "%a" print_literal literal
-  | Prim prim -> print_prim ppf prim;
-  | Closure_expr (var, slot, clo) ->
-    fprintf ppf "@[<hov 3>clo(%a,@ %a,@. %a)@]"
-      Variable.print var
-      Function_slot.print slot
-      (fun ppf clo ->
-         print_named ppf (closures clo)) clo
-  | closures clo ->
-    fprintf ppf "closures@. @[<hov 2>%a@]"
-    print_closures clo
-  | Static_consts consts ->
-    fprintf ppf "@[<hov 0>%a@]"
-      print_static_const_group consts
-  | Rec_info info ->
-    fprintf ppf "rec_info %a"
-      Rec_info_expr.print info
 
 and print_closures ppf
       { function_decls;
@@ -522,10 +424,6 @@ and print_closures ppf
   else
     Format.fprintf ppf "(%a@.)"
       print_function_declaration function_decls
-      (* (Value_slot.Map.print print_value_slot) value_slots *)
-
-(* and print_value_slot ppf value = *)
-(*   Format.fprintf ppf "@[(%a)@]" print value *)
 
 and print_function_declaration ppf in_order =
   Format.fprintf ppf "@[<hov 1>{%a}@]"
@@ -534,8 +432,6 @@ and print_function_declaration ppf in_order =
           Format.fprintf ppf "@[<hov 1>(%a@ %a)@]"
             Function_slot.print key print
             datum)) (in_order |> SlotMap.bindings)
-  (* Format.fprintf ppf "(%a)"
-   *   (SlotMap.print print) (in_order |> SlotMap.bindings) *)
 
 and print_prim ppf (t : primitive) =
   match t with
@@ -578,20 +474,11 @@ and print_nullary_prim ppf (t : P.nullary_primitive) =
   | Enter_inlined_apply _ ->
     fprintf ppf "Enter_inlined_apply"
 
-and print_static_const_group ppf t =
-  Format.pp_print_list ~pp_sep:Format.pp_print_space print_static_const_or_code ppf t
+and print_consts ppf t =
+  Format.pp_print_list ~pp_sep:Format.pp_print_space print_const ppf t
 
-and print_static_const_or_code ppf t =
+and print_const ppf (t : constant) : unit =
   match t with
-  | Code code -> print_function_params_and_body ppf code
-  | Deleted_code -> fprintf ppf "deleted_code"
-  | Static_const const -> print_static_const ppf const
-
-and print_static_const ppf (t : static_const) : unit =
-  match t with
-  | Static_closures set ->
-    fprintf ppf "%a"
-      print_closures set
   | Block (tag, mut, fields) ->
     fprintf ppf "(%sblock@ (tag %a)@ (%a))"
       (match mut with
@@ -638,35 +525,10 @@ and print_static_const ppf (t : static_const) : unit =
     fprintf ppf "(Immutable_string@ %S)"
       s
 
-and print_function_params_and_body ppf ({expr;anon=_}:function_params_and_body) =
-  Name_abstraction.pattern_match_for_printing
-    (module Bound_var) expr
-    ~apply_renaming_to_term:apply_renaming_lambda
-    ~f:(fun t expr ->
-      fprintf ppf "@[<hov 2>λ %a%a@]"
-        Variable.print (Bound_var.var t)
-        print_lambda expr)
-
-and print_let_cont ppf ({handler; body} : let_cont_expr) =
-  Name_abstraction.pattern_match_for_printing
-    (module Bound_continuation) body
-    ~apply_renaming_to_term:apply_renaming
-    ~f:(fun cont body ->
-        fprintf ppf "@[(%a)@;" print body;
-        fprintf ppf "(@[<hov 1>where %a"
-          print_cont cont;
-        print_lambda ppf handler) (* LATER: Cleanup *)
-
-and print_cont ppf (k : Bound_continuation.t) =
-  fprintf ppf "%a" Continuation.print k
-
 and print_apply ppf
-      ({callee; ret_continuation; exn_continuation; region; apply_args} : apply_expr) =
-  fprintf ppf "(callee:@[<hov 2>%a@])@ (ret:%a)@ (exn:%a)@ (reg: %a)"
-    print callee
-    print ret_continuation
-    print exn_continuation
-    print region;
+      ({callee; apply_args} : apply_expr) =
+  fprintf ppf "(callee:@[<hov 2>%a@])@"
+    print callee;
   fprintf ppf " (args:";
   Format.pp_print_list ~pp_sep:Format.pp_print_space print ppf apply_args;
   fprintf ppf ")"
@@ -686,47 +548,37 @@ and print_arm ppf key arm =
 (** [ids_for_export] is the set of bound variables for a given expression **)
 let rec ids_for_export (t : core_exp) =
   match descr t with
-  | Named t -> ids_for_export_named t
-  | Let t -> ids_for_export_let t
-  | Let_cont t -> ids_for_export_let_cont t
-  | Apply t -> ids_for_export_apply t
-  | Lambda t -> ids_for_export_lambda t
+  | Var t -> ids_for_export_var t
+  | Prim t -> ids_for_export_prim t
+  | Consts t -> ids_for_export_consts t
+  | App t -> ids_for_export_apply t
+  | Lam t -> ids_for_export_lambda t
+  | Closure_expr t -> ids_for_export_closure_expr t
+  | Closures t -> ids_for_export_closures t
   | Switch t -> ids_for_export_switch t
-  | Invalid _ -> Ids_for_export.empty
+  | Error _ -> Ids_for_export.empty
 
-(* ids for [Let_expr] *)
-and ids_for_export_let { let_abst; expr_body } =
-  let body_ids = ids_for_export expr_body in
-  let let_abst_ids =
-    Name_abstraction.ids_for_export
-      (module Bound_for_let)
-      let_abst ~ids_for_export_of_term:ids_for_export
-  in
-  Ids_for_export.union body_ids let_abst_ids
-
-and ids_for_export_literal (t : literal) =
+and ids_for_export_var (t : variable) =
   match t with
   | Simple simple ->
     Ids_for_export.from_simple simple
-  | Res_cont (Return k) | Cont k ->
-    Ids_for_export.add_continuation Ids_for_export.empty k
   | Slot (var, _) ->
     Ids_for_export.singleton_variable var
-  | Res_cont Never_returns ->
-    Ids_for_export.empty
-  | Code_id id ->
-    Ids_for_export.add_code_id Ids_for_export.empty id
 
-and ids_for_export_named (t : named) =
-  match t with
-  | Literal literal -> ids_for_export_literal literal
-  | Closure_expr (var, _, set) ->
-    Ids_for_export.add_variable
-    (ids_for_export_closures set) var
-  | Prim prim -> ids_for_export_prim prim
-  | closures set -> ids_for_export_closures set
-  | Static_consts consts -> ids_for_export_static_const_group consts
-  | Rec_info info -> Rec_info_expr.ids_for_export info
+and ids_for_export_closure_expr
+    ((var, _, set) : Variable.t * Function_slot.t * closures) =
+  Ids_for_export.add_variable (ids_for_export_closures set) var
+
+(* and ids_for_export_named (t : named) = *)
+(*   match t with *)
+(*   | Literal literal -> ids_for_export_literal literal *)
+(*   | Closure_expr (var, _, set) -> *)
+(*     Ids_for_export.add_variable *)
+(*     (ids_for_export_closures set) var *)
+(*   | Prim prim -> ids_for_export_prim prim *)
+(*   | closures set -> ids_for_export_closures set *)
+(*   | Static_consts consts -> ids_for_export_static_const_group consts *)
+(*   | Rec_info info -> Rec_info_expr.ids_for_export info *)
 
 and ids_for_export_function_decls funs =
   SlotMap.fold
@@ -774,15 +626,8 @@ and ids_for_export_prim (t : primitive) =
       (List.fold_left (fun acc x -> Ids_for_export.union (ids_for_export x) acc)
          Ids_for_export.empty args)
 
-and ids_for_export_static_const_group t =
-  List.map ids_for_export_static_const_or_code t |> Ids_for_export.union_list
-
-and ids_for_export_static_const_or_code t =
-  match t with
-  | Code code ->
-    ids_for_export_function_params_and_body code
-  | Deleted_code -> Ids_for_export.empty
-  | Static_const const -> ids_for_export_static_const const
+and ids_for_export_consts t =
+  List.map ids_for_export_const t |> Ids_for_export.union_list
 
 and ids_for_export_fields fields =
   List.fold_left
@@ -790,9 +635,8 @@ and ids_for_export_fields fields =
        Ids_for_export.union ids (Field_of_static_block.ids_for_export field))
     Ids_for_export.empty fields
 
-and ids_for_export_static_const t =
+and ids_for_export_const t =
   match t with
-  | Static_closures set -> ids_for_export_closures set
   | Block (_tag, _mut, fields) ->
     List.fold_left (fun acc x -> Ids_for_export.union (ids_for_export x) acc)
       Ids_for_export.empty fields
@@ -825,35 +669,13 @@ and ids_for_export_static_const t =
   | Immutable_value_array fields -> ids_for_export_fields fields
   | Empty_array -> Ids_for_export.empty
 
-and ids_for_export_function_params_and_body {expr; anon=_} =
-  Name_abstraction.ids_for_export (module Bound_var) expr
-    ~ids_for_export_of_term:ids_for_export_lambda
-
-(* ids for [Let_cont] *)
-and ids_for_export_let_cont ({handler; body} : let_cont_expr) =
-  let handler_ids = ids_for_export_lambda handler in
-  let body_ids =
-    Name_abstraction.ids_for_export
-      (module Bound_continuation)
-      body ~ids_for_export_of_term:ids_for_export in
-  Ids_for_export.union handler_ids body_ids
-
 (* ids for [Apply] *)
 and ids_for_export_apply
-      { callee; ret_continuation; exn_continuation; region; apply_args } =
+      { callee; apply_args } =
   let callee_ids = ids_for_export callee in
-  let callee_and_args_ids =
-    List.fold_left
-      (fun ids arg -> Ids_for_export.union ids (ids_for_export arg))
-       callee_ids apply_args in
-  let result_continuation_ids = ids_for_export ret_continuation in
-  let exn_continuation_ids = ids_for_export exn_continuation in
-  let region_ids = ids_for_export region in
-  (Ids_for_export.union
-     region_ids
-     (Ids_for_export.union
-        callee_and_args_ids
-        (Ids_for_export.union result_continuation_ids exn_continuation_ids)))
+  List.fold_left
+    (fun ids arg -> Ids_for_export.union ids (ids_for_export arg))
+      callee_ids apply_args
 
 (* ids for [Lambda] *)
 and ids_for_export_lambda t =
@@ -877,80 +699,83 @@ module Expr = struct
   let ids_for_export = ids_for_export
   let descr = descr
   let create = With_delayed_renaming.create
-  let create_named named = create (Named named)
-  let create_let let_expr = create (Let let_expr)
-  let create_let_cont let_cont = create (Let_cont let_cont)
-  let create_apply apply = create (Apply apply)
-  let create_lambda lambda = create (Lambda lambda)
+
+  let create_var var = create (Var var)
+  let create_prim prim = create (Prim prim)
+  let create_consts const = create (Consts const)
+  let create_apply apply = create (App apply)
+  let create_closure_expr e = create (Closure_expr e)
+  let create_closures clos = create (Closures clos)
+  let create_lambda lambda = create (Lam lambda)
   let create_switch switch = create (Switch switch)
-  let create_invalid msg = create (Invalid {message = msg})
+  let create_invalid msg = create (Error {message = msg})
 end
 
-module Core_let = struct
-  module A = Name_abstraction.Make (Bound_for_let) (Expr)
-  type t = let_expr
-  let create ~(x : Bound_for_let.t) ~(e1 : core_exp) ~(e2 : core_exp)  =
-    Expr.create_let { let_abst = A.create x e2; expr_body = e1 }
+(* module Core_let = struct *)
+(*   module A = Name_abstraction.Make (Bound_for_let) (Expr) *)
+(*   type t = let_expr *)
+(*   let create ~(x : Bound_for_let.t) ~(e1 : core_exp) ~(e2 : core_exp)  = *)
+(*     Expr.create_let { let_abst = A.create x e2; expr_body = e1 } *)
 
-  module Pattern_match_pair_error = struct
-    type t = Mismatched_let_bindings
-  end
+(*   module Pattern_match_pair_error = struct *)
+(*     type t = Mismatched_let_bindings *)
+(*   end *)
 
-  let pattern_match t ~(f : x:Bound_for_let.t -> e1:core_exp -> e2:core_exp -> 'a) : 'a =
-    let open A in
-    let<> x, e2 = t.let_abst in
-    f ~x ~e1:t.expr_body ~e2
+(*   let pattern_match t ~(f : x:Bound_for_let.t -> e1:core_exp -> e2:core_exp -> 'a) : 'a = *)
+(*     let open A in *)
+(*     let<> x, e2 = t.let_abst in *)
+(*     f ~x ~e1:t.expr_body ~e2 *)
 
-  (* Treat "dynamic binding" (statically scoped binding under lambda abstraction)
-     and "static binding" (globally scoped mapping of statics) differently *)
-  let pattern_match_pair
-        ({let_abst = let_abst1; expr_body = _})
-        ({let_abst = let_abst2; expr_body = _})
-        (dynamic : Bound_for_let.t -> core_exp -> core_exp -> 'a)
-        (static : Bound_codelike.t -> Bound_codelike.t -> core_exp -> core_exp -> 'a):
-    ('a, Pattern_match_pair_error.t) Result.t =
-    A.pattern_match let_abst1 ~f:(fun let_bound1 expr_body1 ->
-      A.pattern_match let_abst2 ~f:(fun let_bound2 expr_body2 ->
-        let dynamic_case () =
-          let ans = A.pattern_match_pair let_abst1 let_abst2 ~f:dynamic
-          in Ok ans
-        in
-        match let_bound1, let_bound2 with
-        | Bound_for_let.Singleton _, Bound_for_let.Singleton _ -> dynamic_case ()
-        | Static bound_static1, Static bound_static2 ->
-          let patterns1 = bound_static1 |> Bound_codelike.to_list in
-          let patterns2 = bound_static2 |> Bound_codelike.to_list in
-          if List.compare_lengths patterns1 patterns2 = 0
-          then
-            let ans = static bound_static1 bound_static2 expr_body1 expr_body2 in
-            Ok ans
-          else Error Pattern_match_pair_error.Mismatched_let_bindings
-        | (Singleton _ | Static _), _ ->
-            Error Pattern_match_pair_error.Mismatched_let_bindings
-      )
-    )
-end
+(*   (\* Treat "dynamic binding" (statically scoped binding under lambda abstraction) *)
+(*      and "static binding" (globally scoped mapping of statics) differently *\) *)
+(*   let pattern_match_pair *)
+(*         ({let_abst = let_abst1; expr_body = _}) *)
+(*         ({let_abst = let_abst2; expr_body = _}) *)
+(*         (dynamic : Bound_for_let.t -> core_exp -> core_exp -> 'a) *)
+(*         (static : Bound_codelike.t -> Bound_codelike.t -> core_exp -> core_exp -> 'a): *)
+(*     ('a, Pattern_match_pair_error.t) Result.t = *)
+(*     A.pattern_match let_abst1 ~f:(fun let_bound1 expr_body1 -> *)
+(*       A.pattern_match let_abst2 ~f:(fun let_bound2 expr_body2 -> *)
+(*         let dynamic_case () = *)
+(*           let ans = A.pattern_match_pair let_abst1 let_abst2 ~f:dynamic *)
+(*           in Ok ans *)
+(*         in *)
+(*         match let_bound1, let_bound2 with *)
+(*         | Bound_for_let.Singleton _, Bound_for_let.Singleton _ -> dynamic_case () *)
+(*         | Static bound_static1, Static bound_static2 -> *)
+(*           let patterns1 = bound_static1 |> Bound_codelike.to_list in *)
+(*           let patterns2 = bound_static2 |> Bound_codelike.to_list in *)
+(*           if List.compare_lengths patterns1 patterns2 = 0 *)
+(*           then *)
+(*             let ans = static bound_static1 bound_static2 expr_body1 expr_body2 in *)
+(*             Ok ans *)
+(*           else Error Pattern_match_pair_error.Mismatched_let_bindings *)
+(*         | (Singleton _ | Static _), _ -> *)
+(*             Error Pattern_match_pair_error.Mismatched_let_bindings *)
+(*       ) *)
+(*     ) *)
+(* end *)
 
-module Core_letcont_body = struct
-  module A = Name_abstraction.Make (Bound_continuation) (Expr)
-  type t = (Bound_continuation.t, core_exp) Name_abstraction.t
-  let create = A.create
-  let pattern_match (e : t) (f : Bound_continuation.t -> core_exp -> 'a) : 'a =
-    A.pattern_match e ~f:(fun cont body -> f cont body)
-  let pattern_match_pair (t1 : t) (t2 : t)
-        (f : Bound_continuation.t -> core_exp -> core_exp -> 'a) : 'a =
-    A.pattern_match_pair t1 t2 ~f:(fun cont body1 body2 ->
-      f cont body1 body2)
-end
+(* module Core_letcont_body = struct *)
+(*   module A = Name_abstraction.Make (Bound_continuation) (Expr) *)
+(*   type t = (Bound_continuation.t, core_exp) Name_abstraction.t *)
+(*   let create = A.create *)
+(*   let pattern_match (e : t) (f : Bound_continuation.t -> core_exp -> 'a) : 'a = *)
+(*     A.pattern_match e ~f:(fun cont body -> f cont body) *)
+(*   let pattern_match_pair (t1 : t) (t2 : t) *)
+(*         (f : Bound_continuation.t -> core_exp -> core_exp -> 'a) : 'a = *)
+(*     A.pattern_match_pair t1 t2 ~f:(fun cont body1 body2 -> *)
+(*       f cont body1 body2) *)
+(* end *)
 
-module Core_letcont = struct
-  type t = let_cont_expr
+(* module Core_letcont = struct *)
+(*   type t = let_cont_expr *)
 
-  let print = print_let_cont
+(*   let print = print_let_cont *)
 
-  let create handler ~body =
-    Expr.create_let_cont {handler; body}
-end
+(*   let create handler ~body = *)
+(*     Expr.create_let_cont {handler; body} *)
+(* end *)
 
 module Core_lambda = struct
   module A = Name_abstraction.Make (Bound_parameters) (Expr)
@@ -961,8 +786,12 @@ module Core_lambda = struct
 
   let create = A.create
 
-  let apply_renaming = apply_renaming_lambda
-  let ids_for_export = ids_for_export_lambda
+  let unary_create x e =
+    A.create (Bound_parameters.create
+      [Bound_parameter.create x Flambda_kind.With_subkind.any_value]) e
+
+  (* let apply_renaming = apply_renaming_lambda *)
+  (* let ids_for_export = ids_for_export_lambda *)
 
   let pattern_match_pair t1 t2 ~f =
     A.pattern_match_pair t1 t2
@@ -971,241 +800,241 @@ module Core_lambda = struct
            -> f bound body1 body2)
 end
 
-module Core_function_params_and_body = struct
-  module A = Name_abstraction.Make (Bound_var) (Core_lambda)
-  type t = (Bound_var.t, Core_lambda.t) Name_abstraction.t
+(* module Core_function_params_and_body = struct *)
+(*   module A = Name_abstraction.Make (Bound_var) (Core_lambda) *)
+(*   type t = (Bound_var.t, Core_lambda.t) Name_abstraction.t *)
 
-  let create = A.create
+(*   let create = A.create *)
 
-  let my_closure t = A.pattern_match t ~f:(fun param _ -> param)
+(*   let my_closure t = A.pattern_match t ~f:(fun param _ -> param) *)
 
-  let lambda_expr t = A.pattern_match t ~f:(fun _ body -> body)
+(*   let lambda_expr t = A.pattern_match t ~f:(fun _ body -> body) *)
 
-  let pattern_match = A.pattern_match
+(*   let pattern_match = A.pattern_match *)
 
-  let pattern_match_pair t1 t2 ~f =
-    A.pattern_match_pair t1 t2
-      ~f:(fun my_closure body1 body2 ->
-        Core_lambda.pattern_match_pair body1 body2
-          ~f:(fun params body1 body2 ->
-            f params ~body1 ~body2 ~my_closure))
-end
+(*   let pattern_match_pair t1 t2 ~f = *)
+(*     A.pattern_match_pair t1 t2 *)
+(*       ~f:(fun my_closure body1 body2 -> *)
+(*         Core_lambda.pattern_match_pair body1 body2 *)
+(*           ~f:(fun params body1 body2 -> *)
+(*             f params ~body1 ~body2 ~my_closure)) *)
+(* end *)
 
-(* ========================================================================== *)
-(** Fixpoint combinators for core expressions **)
+(* (\* ========================================================================== *\) *)
+(* (\** Fixpoint combinators for core expressions **\) *)
 
-let let_fix (f : core_exp -> core_exp) {let_abst; expr_body} =
-  Core_let.pattern_match {let_abst; expr_body}
-    ~f:(fun ~x ~e1 ~e2 ->
-      (Core_let.create
-        ~x
-        ~e1:(f e1)
-        ~e2:(f e2)))
+(* let let_fix (f : core_exp -> core_exp) {let_abst; expr_body} = *)
+(*   Core_let.pattern_match {let_abst; expr_body} *)
+(*     ~f:(fun ~x ~e1 ~e2 -> *)
+(*       (Core_let.create *)
+(*         ~x *)
+(*         ~e1:(f e1) *)
+(*         ~e2:(f e2))) *)
 
-let let_cont_fix (f : core_exp -> core_exp) ({handler; body} : let_cont_expr) =
-  let handler : lambda_expr =
-    Core_lambda.pattern_match handler
-      ~f:(fun param exp -> Core_lambda.create param (f exp))
-  in
-  let body =
-    Core_letcont_body.pattern_match body
-      (fun cont exp ->
-          Core_letcont_body.create cont (f exp))
-  in
-  Core_letcont.create handler ~body
+(* let let_cont_fix (f : core_exp -> core_exp) ({handler; body} : let_cont_expr) = *)
+(*   let handler : lambda_expr = *)
+(*     Core_lambda.pattern_match handler *)
+(*       ~f:(fun param exp -> Core_lambda.create param (f exp)) *)
+(*   in *)
+(*   let body = *)
+(*     Core_letcont_body.pattern_match body *)
+(*       (fun cont exp -> *)
+(*           Core_letcont_body.create cont (f exp)) *)
+(*   in *)
+(*   Core_letcont.create handler ~body *)
 
-let apply_fix (f : core_exp -> core_exp)
-      ({callee; ret_continuation; exn_continuation; region; apply_args} : apply_expr) =
-  Apply
-    {callee = f callee;
-     ret_continuation = f ret_continuation;
-     exn_continuation = f exn_continuation;
-     region = f region;
-     apply_args = List.map f apply_args;}
-  |> With_delayed_renaming.create
+(* let apply_fix (f : core_exp -> core_exp) *)
+(*       ({callee; ret_continuation; exn_continuation; region; apply_args} : apply_expr) = *)
+(*   Apply *)
+(*     {callee = f callee; *)
+(*      ret_continuation = f ret_continuation; *)
+(*      exn_continuation = f exn_continuation; *)
+(*      region = f region; *)
+(*      apply_args = List.map f apply_args;} *)
+(*   |> With_delayed_renaming.create *)
 
-let lambda_fix (f : core_exp -> core_exp) (e : lambda_expr) =
-  Core_lambda.pattern_match e
-    ~f:(fun b e ->
-      (Core_lambda.create b (f e)))
-  |> Expr.create_lambda
+(* let lambda_fix (f : core_exp -> core_exp) (e : lambda_expr) = *)
+(*   Core_lambda.pattern_match e *)
+(*     ~f:(fun b e -> *)
+(*       (Core_lambda.create b (f e))) *)
+(*   |> Expr.create_lambda *)
 
-let switch_fix (f : core_exp -> core_exp)
-      ({scrutinee; arms} : switch_expr) =
-  {scrutinee = f scrutinee;
-    arms = Targetint_31_63.Map.map f arms}
-  |> Expr.create_switch
+(* let switch_fix (f : core_exp -> core_exp) *)
+(*       ({scrutinee; arms} : switch_expr) = *)
+(*   {scrutinee = f scrutinee; *)
+(*     arms = Targetint_31_63.Map.map f arms} *)
+(*   |> Expr.create_switch *)
 
-let closures_fix
-      (fix : core_exp -> core_exp) {function_decls; value_slots} =
-  let function_decls = SlotMap.map fix function_decls in
-  let value_slots =
-    Value_slot.Map.map (fun x -> fix x) value_slots
-  in
-  {function_decls; value_slots}
+(* let closures_fix *)
+(*       (fix : core_exp -> core_exp) {function_decls; value_slots} = *)
+(*   let function_decls = SlotMap.map fix function_decls in *)
+(*   let value_slots = *)
+(*     Value_slot.Map.map (fun x -> fix x) value_slots *)
+(*   in *)
+(*   {function_decls; value_slots} *)
 
-let static_const_fix (fix : core_exp -> core_exp) (e : static_const) =
-  match e with
-  | Static_closures clo ->
-    let {function_decls; value_slots} = closures_fix fix clo in
-    Static_closures {function_decls; value_slots}
-  | Block (tag, mut, list) ->
-    let list = List.map fix list in
-    Block (tag, mut, list)
-  | ( Boxed_float _ | Boxed_int32 _ | Boxed_int64 _ | Boxed_nativeint _
-    | Immutable_float_block _ | Immutable_float_array _ | Immutable_value_array _
-    | Empty_array | Mutable_string _ | Immutable_string _ ) -> e
+(* let static_const_fix (fix : core_exp -> core_exp) (e : static_const) = *)
+(*   match e with *)
+(*   | Static_closures clo -> *)
+(*     let {function_decls; value_slots} = closures_fix fix clo in *)
+(*     Static_closures {function_decls; value_slots} *)
+(*   | Block (tag, mut, list) -> *)
+(*     let list = List.map fix list in *)
+(*     Block (tag, mut, list) *)
+(*   | ( Boxed_float _ | Boxed_int32 _ | Boxed_int64 _ | Boxed_nativeint _ *)
+(*     | Immutable_float_block _ | Immutable_float_array _ | Immutable_value_array _ *)
+(*     | Empty_array | Mutable_string _ | Immutable_string _ ) -> e *)
 
-let static_const_or_code_fix (fix : core_exp -> core_exp)
-  (e : static_const_or_code) =
-  (match e with
-  | Code {expr; anon}->
-    Code
-      {expr =
-         Core_function_params_and_body.pattern_match expr
-         ~f:(fun
-              params body ->
-              Core_function_params_and_body.create
-                params
-                (Core_lambda.pattern_match body
-                   ~f:(fun bound body ->
-                     Core_lambda.create bound (fix body))));
-       anon}
-  | Deleted_code -> e
-  | Static_const const ->
-    Static_const (static_const_fix fix const))
+(* let static_const_or_code_fix (fix : core_exp -> core_exp) *)
+(*   (e : static_const_or_code) = *)
+(*   (match e with *)
+(*   | Code {expr; anon}-> *)
+(*     Code *)
+(*       {expr = *)
+(*          Core_function_params_and_body.pattern_match expr *)
+(*          ~f:(fun *)
+(*               params body -> *)
+(*               Core_function_params_and_body.create *)
+(*                 params *)
+(*                 (Core_lambda.pattern_match body *)
+(*                    ~f:(fun bound body -> *)
+(*                      Core_lambda.create bound (fix body)))); *)
+(*        anon} *)
+(*   | Deleted_code -> e *)
+(*   | Static_const const -> *)
+(*     Static_const (static_const_fix fix const)) *)
 
-let static_const_group_fix (fix : core_exp -> core_exp)
-       (e : static_const_group) =
-  Named (Static_consts (List.map (static_const_or_code_fix fix) e))
-  |> With_delayed_renaming.create
+(* let static_const_group_fix (fix : core_exp -> core_exp) *)
+(*        (e : static_const_group) = *)
+(*   Named (Static_consts (List.map (static_const_or_code_fix fix) e)) *)
+(*   |> With_delayed_renaming.create *)
 
-let prim_fix (fix : core_exp -> core_exp) (e : primitive) =
-  (match e with
-  | Nullary _ -> Named (Prim e)
-  | Unary (p, e) ->
-    Named (Prim (Unary (p, fix e)))
-  | Binary (p, e1, e2) ->
-    Named (Prim (Binary (p, fix e1, fix e2)))
-  | Ternary (p, e1, e2, e3) ->
-    Named (Prim (Ternary (p, fix e1, fix e2, fix e3)))
-  | Variadic (p, list) ->
-    Named (Prim (Variadic (p, List.map fix list))))
-  |> With_delayed_renaming.create
+(* let prim_fix (fix : core_exp -> core_exp) (e : primitive) = *)
+(*   (match e with *)
+(*   | Nullary _ -> Named (Prim e) *)
+(*   | Unary (p, e) -> *)
+(*     Named (Prim (Unary (p, fix e))) *)
+(*   | Binary (p, e1, e2) -> *)
+(*     Named (Prim (Binary (p, fix e1, fix e2))) *)
+(*   | Ternary (p, e1, e2, e3) -> *)
+(*     Named (Prim (Ternary (p, fix e1, fix e2, fix e3))) *)
+(*   | Variadic (p, list) -> *)
+(*     Named (Prim (Variadic (p, List.map fix list)))) *)
+(*   |> With_delayed_renaming.create *)
 
-let named_fix (fix : core_exp -> core_exp)
-      (f : 'a -> literal -> core_exp) arg (e : named) =
-  match e with
-  | Literal l -> f arg l
-  | Prim e -> prim_fix fix e
-  | Closure_expr (phi, slot, clo) ->
-    let {function_decls; value_slots} = closures_fix fix clo in
-    Named (Closure_expr (phi, slot, {function_decls; value_slots}))
-    |> With_delayed_renaming.create
-  | closures clo ->
-    let {function_decls; value_slots} = closures_fix fix clo in
-    Named (closures {function_decls; value_slots})
-    |> With_delayed_renaming.create
-  | Static_consts group ->
-    static_const_group_fix fix group
-  | Rec_info _ ->
-    Named e
-    |> With_delayed_renaming.create
+(* let named_fix (fix : core_exp -> core_exp) *)
+(*       (f : 'a -> literal -> core_exp) arg (e : named) = *)
+(*   match e with *)
+(*   | Literal l -> f arg l *)
+(*   | Prim e -> prim_fix fix e *)
+(*   | Closure_expr (phi, slot, clo) -> *)
+(*     let {function_decls; value_slots} = closures_fix fix clo in *)
+(*     Named (Closure_expr (phi, slot, {function_decls; value_slots})) *)
+(*     |> With_delayed_renaming.create *)
+(*   | closures clo -> *)
+(*     let {function_decls; value_slots} = closures_fix fix clo in *)
+(*     Named (closures {function_decls; value_slots}) *)
+(*     |> With_delayed_renaming.create *)
+(*   | Static_consts group -> *)
+(*     static_const_group_fix fix group *)
+(*   | Rec_info _ -> *)
+(*     Named e *)
+(*     |> With_delayed_renaming.create *)
 
-(* LATER: Make this first order? *)
-let rec core_fmap
-  (f : 'a -> literal -> core_exp) (arg : 'a) (e : core_exp) : core_exp =
-  match descr e with
-  | Named e ->
-    named_fix (core_fmap f arg) f arg e
-  | Let e -> let_fix (core_fmap f arg) e
-  | Let_cont e -> let_cont_fix (core_fmap f arg) e
-  | Apply e -> apply_fix (core_fmap f arg) e
-  | Lambda e -> lambda_fix (core_fmap f arg) e
-  | Switch e -> switch_fix (core_fmap f arg) e
-  | Invalid _ -> e
+(* (\* LATER: Make this first order? *\) *)
+(* let rec core_fmap *)
+(*   (f : 'a -> literal -> core_exp) (arg : 'a) (e : core_exp) : core_exp = *)
+(*   match descr e with *)
+(*   | Named e -> *)
+(*     named_fix (core_fmap f arg) f arg e *)
+(*   | Let e -> let_fix (core_fmap f arg) e *)
+(*   | Let_cont e -> let_cont_fix (core_fmap f arg) e *)
+(*   | Apply e -> apply_fix (core_fmap f arg) e *)
+(*   | Lambda e -> lambda_fix (core_fmap f arg) e *)
+(*   | Switch e -> switch_fix (core_fmap f arg) e *)
+(*   | Invalid _ -> e *)
 
-(* ========================================================================== *)
-(** Auxilary functions for core expressions *)
+(* (\* ========================================================================== *\) *)
+(* (\** Auxilary functions for core expressions *\) *)
 
-let literal_contained (literal1 : literal) (literal2 : literal) : bool =
-  match literal1, literal2 with
-  | Simple simple1, Simple simple2 ->
-    Simple.same simple1 simple2
-  | (Cont cont1, Cont cont2
-    | Res_cont (Return cont1), Res_cont (Return cont2))
-    -> Continuation.equal cont1 cont2
-  | Simple simple, Slot (phi, _) ->
-    Simple.same (Simple.var phi) simple
-  | Slot (_, Function_slot slot1), Slot (_, Function_slot slot2) ->
-    Function_slot.equal slot1 slot2
-  | Slot (_, Value_slot slot1), Slot (_, Value_slot slot2) ->
-    Value_slot.equal slot1 slot2
-  | Res_cont Never_returns, Res_cont Never_returns -> true
-  | Code_id code1, Code_id code2 ->
-    Code_id.name code1 == Code_id.name code2
-  | (Simple _ | Cont _ | Slot (_, (Function_slot _ | Value_slot _))
-    | Res_cont (Never_returns | Return _) | Code_id _), _ -> false
+(* let literal_contained (literal1 : literal) (literal2 : literal) : bool = *)
+(*   match literal1, literal2 with *)
+(*   | Simple simple1, Simple simple2 -> *)
+(*     Simple.same simple1 simple2 *)
+(*   | (Cont cont1, Cont cont2 *)
+(*     | Res_cont (Return cont1), Res_cont (Return cont2)) *)
+(*     -> Continuation.equal cont1 cont2 *)
+(*   | Simple simple, Slot (phi, _) -> *)
+(*     Simple.same (Simple.var phi) simple *)
+(*   | Slot (_, Function_slot slot1), Slot (_, Function_slot slot2) -> *)
+(*     Function_slot.equal slot1 slot2 *)
+(*   | Slot (_, Value_slot slot1), Slot (_, Value_slot slot2) -> *)
+(*     Value_slot.equal slot1 slot2 *)
+(*   | Res_cont Never_returns, Res_cont Never_returns -> true *)
+(*   | Code_id code1, Code_id code2 -> *)
+(*     Code_id.name code1 == Code_id.name code2 *)
+(*   | (Simple _ | Cont _ | Slot (_, (Function_slot _ | Value_slot _)) *)
+(*     | Res_cont (Never_returns | Return _) | Code_id _), _ -> false *)
 
-let effects_and_coeffects (p : primitive) =
-  match p with
-  | Nullary prim ->
-    Flambda_primitive.effects_and_coeffects_of_nullary_primitive prim
-  | Unary (prim, _) ->
-    Flambda_primitive.effects_and_coeffects_of_unary_primitive prim
-  | Binary (prim, _, _) ->
-    Flambda_primitive.effects_and_coeffects_of_binary_primitive prim
-  | Ternary (prim, _, _, _) ->
-    Flambda_primitive.effects_and_coeffects_of_ternary_primitive prim
-  | Variadic (prim, _) ->
-    Flambda_primitive.effects_and_coeffects_of_variadic_primitive prim
+(* let effects_and_coeffects (p : primitive) = *)
+(*   match p with *)
+(*   | Nullary prim -> *)
+(*     Flambda_primitive.effects_and_coeffects_of_nullary_primitive prim *)
+(*   | Unary (prim, _) -> *)
+(*     Flambda_primitive.effects_and_coeffects_of_unary_primitive prim *)
+(*   | Binary (prim, _, _) -> *)
+(*     Flambda_primitive.effects_and_coeffects_of_binary_primitive prim *)
+(*   | Ternary (prim, _, _, _) -> *)
+(*     Flambda_primitive.effects_and_coeffects_of_ternary_primitive prim *)
+(*   | Variadic (prim, _) -> *)
+(*     Flambda_primitive.effects_and_coeffects_of_variadic_primitive prim *)
 
-let no_effects (p : primitive) =
-  match effects_and_coeffects p with
-  | No_effects, _, _ -> true
-  | ( (Only_generative_effects _ | Arbitrary_effects),
-      (No_coeffects | Has_coeffects),
-      _ ) ->
-    false
+(* let no_effects (p : primitive) = *)
+(*   match effects_and_coeffects p with *)
+(*   | No_effects, _, _ -> true *)
+(*   | ( (Only_generative_effects _ | Arbitrary_effects), *)
+(*       (No_coeffects | Has_coeffects), *)
+(*       _ ) -> *)
+(*     false *)
 
-let no_effects (e : core_exp) : bool =
-  match must_be_prim e with
-  | None -> true
-  | Some p -> no_effects p
+(* let no_effects (e : core_exp) : bool = *)
+(*   match must_be_prim e with *)
+(*   | None -> true *)
+(*   | Some p -> no_effects p *)
 
-let can_inline (p : primitive) =
-  match effects_and_coeffects p with
-  | No_effects, No_coeffects, _ -> true
-  | Only_generative_effects _, No_coeffects, _ -> true
-  | ( (No_effects | Only_generative_effects _ | Arbitrary_effects),
-      (No_coeffects | Has_coeffects),
-      _ ) ->
-    false
+(* let can_inline (p : primitive) = *)
+(*   match effects_and_coeffects p with *)
+(*   | No_effects, No_coeffects, _ -> true *)
+(*   | Only_generative_effects _, No_coeffects, _ -> true *)
+(*   | ( (No_effects | Only_generative_effects _ | Arbitrary_effects), *)
+(*       (No_coeffects | Has_coeffects), *)
+(*       _ ) -> *)
+(*     false *)
 
-let can_inline (e : core_exp) : bool =
-  match must_be_prim e with
-  | None -> true
-  | Some p -> can_inline p
+(* let can_inline (e : core_exp) : bool = *)
+(*   match must_be_prim e with *)
+(*   | None -> true *)
+(*   | Some p -> can_inline p *)
 
-let no_effects_or_coeffects (p : primitive) =
-  match effects_and_coeffects p with
-  | No_effects, No_coeffects, _ -> true
-  | ( (No_effects | Only_generative_effects _ | Arbitrary_effects),
-      (No_coeffects | Has_coeffects),
-      _ ) ->
-    false
+(* let no_effects_or_coeffects (p : primitive) = *)
+(*   match effects_and_coeffects p with *)
+(*   | No_effects, No_coeffects, _ -> true *)
+(*   | ( (No_effects | Only_generative_effects _ | Arbitrary_effects), *)
+(*       (No_coeffects | Has_coeffects), *)
+(*       _ ) -> *)
+(*     false *)
 
-let no_effects_or_coeffects (e : core_exp) : bool =
-  match must_be_prim e with
-  | None -> true
-  | Some p -> no_effects_or_coeffects p
+(* let no_effects_or_coeffects (e : core_exp) : bool = *)
+(*   match must_be_prim e with *)
+(*   | None -> true *)
+(*   | Some p -> no_effects_or_coeffects p *)
 
-let returns_unit (p : primitive) : bool =
-  match p with
-  | Ternary _ -> true
-  | (Nullary _ | Unary _ | Binary _ | Variadic _) -> false
+(* let returns_unit (p : primitive) : bool = *)
+(*   match p with *)
+(*   | Ternary _ -> true *)
+(*   | (Nullary _ | Unary _ | Binary _ | Variadic _) -> false *)
 
-let returns_unit (e : core_exp) : bool =
-  match must_be_prim e with
-  | None -> false
-  | Some p -> returns_unit p
+(* let returns_unit (e : core_exp) : bool = *)
+(*   match must_be_prim e with *)
+(*   | None -> false *)
+(*   | Some p -> returns_unit p *)

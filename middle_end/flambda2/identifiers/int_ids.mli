@@ -115,6 +115,8 @@ module Symbol : sig
 
   val create_wrapped : Flambda2_import.Symbol.t -> t
 
+  val var : t -> Variable.t
+
   val unsafe_create : Compilation_unit.t -> Linkage_name.t -> t
 
   val compilation_unit : t -> Compilation_unit.t
@@ -150,47 +152,6 @@ module Coercion :
     with type variable = Variable.t
      and type rec_info_expr = Rec_info_expr.t
 
-module Simple : sig
-  type t = private Table_by_int_id.Id.t
-
-  type exported
-
-  include Container_types.S with type t := t
-
-  val name : Name.t -> t
-
-  val var : Variable.t -> t
-
-  val vars : Variable.t list -> t list
-
-  val symbol : Symbol.t -> t
-
-  val const : Const.t -> t
-
-  val coercion : t -> Coercion.t
-
-  val with_coercion : t -> Coercion.t -> t
-
-  (* This does not consult the grand table of [Simple]s. *)
-  val has_coercion : t -> bool
-
-  (* CR lmaurer: Should make [name] and [const] take a [coercion] argument to be
-     sure we're not dropping coercions by accident. *)
-  val pattern_match :
-    t ->
-    name:(Name.t -> coercion:Coercion.t -> 'a) ->
-    const:(Const.t -> 'a) ->
-    'a
-
-  (* [same s1 s2] returns true iff they represent the same name or const i.e.
-     [same s (with_coercion s coercion)] returns true *)
-  val same : t -> t -> bool
-
-  val export : t -> exported
-
-  val import : exported -> t
-end
-
 module Code_id : sig
   type t = private Table_by_int_id.Id.t
 
@@ -211,6 +172,8 @@ module Code_id : sig
   val is_imported : t -> bool
 
   val linkage_name : t -> Linkage_name.t
+
+  val var : t -> Variable.t
 
   val name : t -> string
 
@@ -244,6 +207,49 @@ module Code_id_or_symbol : sig
 
   val pattern_match :
     t -> code_id:(Code_id.t -> 'a) -> symbol:(Symbol.t -> 'a) -> 'a
+end
+
+module Simple : sig
+  type t = private Table_by_int_id.Id.t
+
+  type exported
+
+  include Container_types.S with type t := t
+
+  val name : Name.t -> t
+
+  val var : Variable.t -> t
+
+  val vars : Variable.t list -> t list
+
+  val code_id : Code_id.t -> t
+
+  val symbol : Symbol.t -> t
+
+  val const : Const.t -> t
+
+  val coercion : t -> Coercion.t
+
+  val with_coercion : t -> Coercion.t -> t
+
+  (* This does not consult the grand table of [Simple]s. *)
+  val has_coercion : t -> bool
+
+  (* CR lmaurer: Should make [name] and [const] take a [coercion] argument to be
+     sure we're not dropping coercions by accident. *)
+  val pattern_match :
+    t ->
+    name:(Name.t -> coercion:Coercion.t -> 'a) ->
+    const:(Const.t -> 'a) ->
+    'a
+
+  (* [same s1 s2] returns true iff they represent the same name or const i.e.
+     [same s (with_coercion s coercion)] returns true *)
+  val same : t -> t -> bool
+
+  val export : t -> exported
+
+  val import : exported -> t
 end
 
 val initialise : unit -> unit
