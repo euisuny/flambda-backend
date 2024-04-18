@@ -394,7 +394,7 @@ let rec step (e: core_exp) : core_exp =
   | Named e -> step_named e
   | Invalid _ -> e
 
-and simplify_speculative_application (e : core_exp) : core_exp =
+and _simplify_speculative_application (e : core_exp) : core_exp =
   (match Expr.descr e with
    | Apply {callee; continuation; exn_continuation; region; apply_args} ->
      (match must_be_handler continuation with
@@ -622,7 +622,7 @@ and step_apply_lambda lambda_expr continuation exn_continuation region apply_arg
         in
         subst_params params exp apply_args)
   in
-  simplify_speculative_application e
+  (* simplify_speculative_application e *) e
 
 and step_apply callee continuation exn_continuation region apply_args : core_exp =
   (let callee = step callee in
