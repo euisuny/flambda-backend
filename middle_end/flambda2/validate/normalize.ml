@@ -348,8 +348,15 @@ let rec subst_cont (cont_e1: core_exp) (k: Bound_continuation.t)
       Expr.create_handler
         (Core_continuation_handler.create args cont_e2)
     else cont_e1
+  | Named (Set_of_closures e) ->
+    let e = set_of_closures_fix (fun e -> subst_cont e k args cont_e2) e in
+     Set_of_closures e |> Expr.create_named
+  | Named (Static_consts e) ->
+    static_const_group_fix (fun e -> subst_cont e k args cont_e2) e
+  | Named (Prim e) ->
+    prim_fix (fun e -> subst_cont e k args cont_e2) e
   | Named (Literal (Simple _ | Slot _ | Res_cont Never_returns | Code_id _)
-          | Prim _ | Closure_expr _ | Set_of_closures _ | Static_consts _
+          | Closure_expr _
           | Rec_info _) -> cont_e1
   | Let e ->
     let_fix (fun e -> subst_cont e k args cont_e2) e
