@@ -338,7 +338,8 @@ let subst_params
         Expr.create_named (Literal s))
     () e
 
-(* [LetCont-β] *)
+(* [LetCont-β]
+  e1 where k args = e2 ⟶ e1 [k \ λ args. e2] *)
 let rec subst_cont (cont_e1: core_exp) (k: Bound_continuation.t)
           (args: Bound_parameters.t) (cont_e2: core_exp) : core_exp =
   match Expr.descr cont_e1 with
@@ -355,8 +356,10 @@ let rec subst_cont (cont_e1: core_exp) (k: Bound_continuation.t)
     static_const_group_fix (fun e -> subst_cont e k args cont_e2) e
   | Named (Prim e) ->
     prim_fix (fun e -> subst_cont e k args cont_e2) e
+  | Named (Closure_expr (v, slot, e)) ->
+    let e = set_of_closures_fix (fun e -> subst_cont e k args cont_e2) e in
+     Closure_expr (v, slot, e) |> Expr.create_named
   | Named (Literal (Simple _ | Slot _ | Res_cont Never_returns | Code_id _)
-          | Closure_expr _
           | Rec_info _) -> cont_e1
   | Let e ->
     let_fix (fun e -> subst_cont e k args cont_e2) e
