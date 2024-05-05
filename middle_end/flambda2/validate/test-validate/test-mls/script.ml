@@ -11,11 +11,12 @@ let [@ocamlformat "disable"] print_test_rule ~compiler ~file =
   Format.printf
 {|
 (rule
- (alias runtest)
+  (alias runtest)
+  (enabled_if (= %{context_name} "main"))
   (deps %s.ml %s.mli)
   (action
    (progn
-   (run %s -validate %s.mli %s.ml))))
+   (run %s -c -validate %s.mli %s.ml))))
 |}
     file file compiler file file
 
