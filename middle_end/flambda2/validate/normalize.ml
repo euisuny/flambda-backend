@@ -479,9 +479,9 @@ and step_let let_abst body : core_exp =
     (* If the let-bound value is a closure, store the normalized value into the
        environment. *)
     let x, e1 =
-      (match must_be_named e1 with
-       | Some e -> step_named_for_let x e
-      | None -> let e1 = step e1 in x, e1)
+      match must_be_named e1 with
+      | Some e -> step_named_for_let x e
+      | None -> let e1 = step e1 in x, e1
     in
     (* [Let-β]
        let x = v in e1 ⟶ e2 [x\v] *)
@@ -750,7 +750,15 @@ and step_named (body : named) : core_exp =
     let value_slots = Value_slot.Map.map step value_slots in
     Expr.create_named (Set_of_closures {function_decls; value_slots})
   | Static_consts e -> static_const_group_fix step e
-  | Prim v -> Eval_prim.eval v
+  | Prim v ->
+    let v = match v with
+      | Nullary _ -> v
+      | Unary (p, e) -> Unary (p, step e)
+      | Binary (p, e1, e2) -> Binary (p, step e1, step e2)
+      | Ternary (p, e1, e2, e3) -> Ternary (p, step e1, step e2, step e3)
+      | Variadic (p, es) -> Variadic (p, List.map step es)
+    in
+    Eval_prim.eval v
 
 (* This is a "normalization" of [named] expression, in quotations because there
   is some simple evaluation that occurs for primitive arithmetic expressions *)
@@ -853,7 +861,12 @@ and step_set_of_closures var
       (fun slot x ->
          (match must_be_literal x with
           | Some (Code_id id) ->
-            let code = Hashtbl.find env id in
+            let code =
+              try Hashtbl.find env id with
+              | Not_found ->
+                (Format.printf "Fatal error: failed to find code_id %a" Code_id.print id;
+                 exit 1)
+            in
             let params_and_body =
               concretize_my_closure var slot code {function_decls;value_slots}
             in
