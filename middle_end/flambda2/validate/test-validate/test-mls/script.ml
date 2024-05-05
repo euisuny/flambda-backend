@@ -12,7 +12,7 @@ let [@ocamlformat "disable"] print_test_rule ~compiler ~file =
 {|
 (rule
   (alias runtest)
-  (enabled_if (= %{context_name} "main"))
+  (enabled_if (= %%{context_name} "main"))
   (deps %s.ml %s.mli)
   (action
    (progn
