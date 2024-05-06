@@ -470,38 +470,39 @@ and step_switch scrutinee arms : core_exp =
 (* FIXME: normalize apply tailcall if other expressions are not inlined yet
           (should happen for non-tailcalls as well) *)
 and step_let let_abst body : core_exp =
-  Core_let.pattern_match {let_abst; expr_body = body}
-    ~f:(fun ~x ~e1 ~e2 ->
+  Core_let.pattern_match {let_abst; expr_body = body} ~f:(fun ~x ~e1 ~e2 ->
+    (* If the let-bound value is a closure, store the normalized value into the
+       environment. *)
     (* [LetL]
                     e1 ⟶ e1'
         -------------------------------------
        let x = e1 in e2 ⟶ let x = e1' in e2 *)
-    (* If the let-bound value is a closure, store the normalized value into the
-       environment. *)
+    (* If it's not a named expression, reduce [e1]. *)
     let x, e1 =
       match must_be_named e1 with
-      | Some e -> step_named_for_let x e
-      | None -> let e1 = step e1 in x, e1
+      | Some e ->
+        step_named_for_let x e
+      | None -> x, step e1
     in
-    (* [Let-β]
-       let x = v in e1 ⟶ e2 [x\v] *)
-    (* if can_inline e1 *)
-    (* then *)
-    (subst_pattern ~bound:x ~let_body:e1 e2 |> step))
-(*     else *)
-(*       ( *)
-(* (\* let c, e2 = step c e2 in *\) *)
-(*        let c, e2 = *)
-(*          (if returns_unit e1 then *)
-(*             let e2 = *)
-(*               subst_pattern ~bound:x *)
-(*                 ~let_body:(create_named (Literal (Simple *)
-(*                 (Simple.const Int_ids.Const.const_zero)))) e2 *)
-(*             in *)
-(*             e2 *)
-(*           else e2) |> step c *)
-(*        in *)
-(*        c, Core_let.create ~x ~e1 ~e2)) *)
+    if can_inline e1 then
+    (* [e1] can be inlined; i.e. it has no side effects. *)
+      (* [Let-β]
+        let x = v in e1 ⟶ e2 [x\v] *)
+      subst_pattern ~bound:x ~let_body:e1 e2 |> step
+
+    (* Cannot be inlined; however, if it returns unit, then
+       value can be replaced with unit. *)
+    else
+      let e2 =
+        if returns_unit e1 then
+        (* Substitute in unit value in place for [e2]. *)
+          subst_pattern ~bound:x
+            ~let_body:(Expr.create_named (Literal (Simple
+            (Simple.const Int_ids.Const.const_zero)))) e2
+        else e2
+      in
+      Core_let.create ~x ~e1 ~e2:(step e2)
+    )
 
 and step_let_cont ({handler; body}:let_cont_expr) : core_exp =
   Core_continuation_handler.pattern_match handler
@@ -816,10 +817,6 @@ and step_named_for_let (var: Bound_for_let.t) (body: named)
         (Static (Bound_codelike.create var),
         Expr.create_named (Static_consts consts)))
     | _ -> (var, Expr.create_named (Static_consts consts))
-      (* let _ = *) (*   Format.printf "Bound var %a\n\n%! Body is %a \n\n\n%!" *)
-      (*     Bound_for_let.print var Flambda2_core.print (Expr.create_named body) *)
-      (* in *)
-      (* Misc.fatal_error "Unexpected binders for static exprs" *)
 )[@ocaml.warning "-4"]
   | Prim v -> (var, Eval_prim.eval v)
 
@@ -870,7 +867,7 @@ and step_set_of_closures var
             let params_and_body =
               concretize_my_closure var slot code {function_decls;value_slots}
             in
-            params_and_body
+            params_and_body |> step
           | _ -> x))
       function_decls)[@ocaml.warning "-4"]
   in
