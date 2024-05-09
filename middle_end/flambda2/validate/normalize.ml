@@ -369,9 +369,6 @@ let rec subst_cont (cont_e1: core_exp) (k: Bound_continuation.t)
   | Apply e ->
     apply_fix (fun e -> subst_cont e k args cont_e2) e
   | Apply_cont {k = e; args = concrete_args} ->
-    (* if Continuation.equal cont k
-     * then subst_params args cont_e2 concrete_args
-     * else *)
     Expr.create_apply_cont
       {k = subst_cont e k args cont_e2;
         args = List.map (fun x -> subst_cont x k args cont_e2) concrete_args}
@@ -546,8 +543,7 @@ and reduce_rec_call_apply
             Continuation.equal return_continuation continuation' &&
             Continuation.equal exn_continuation exn_continuation')
           then
-                  (Expr.create_apply_cont {k = callee;
-                    args = apply_args})
+            (Expr.create_apply_cont {k = callee; args = apply_args})
           else e
         | (Some (_, (Value_slot _ | Function_slot _)) | None),
           (Some _ | None), (Some _ | None) -> e
@@ -563,7 +559,9 @@ and step_fun_decls (decls : function_declarations) phi =
          Core_lambda.pattern_match x
            ~f:(fun x e ->
                let e' = reduce_rec_call_apply x key phi e in
-               if core_eq e e' then
+               if core_eq e e' || not
+                    (does_not_occur (Cont x.return_continuation) true e' &&
+                    does_not_occur (Cont x.exn_continuation) true e') then
                  Expr.create_lambda (Core_lambda.create x e)
                else
                  Expr.create_handler
@@ -580,6 +578,8 @@ and step_apply_no_beta_redex callee continuation exn_continuation region apply_a
   in
   match Expr.descr callee with
   | Named (Closure_expr (phi, slot, {function_decls; value_slots})) ->
+    (* If it is a closure expression that contains a recursive call to itself,
+       reduce the expression down to an [apply_cont] if possible. *)
     let function_decls' =
       step_fun_decls function_decls phi
     in
@@ -858,25 +858,36 @@ and step_set_of_closures var
   (* [ClosureVal] and [ClosureFn]
      substituting in value slots for [Project_value_slots] and
      substituting in function slots for [Project_function_slots] *)
-  let function_decls =
+  let function_decls' =
     (SlotMap.mapi
       (fun slot x ->
          (match must_be_literal x with
           | Some (Code_id id) ->
+            (* Look up the code id in the environment *)
             let code =
               try Hashtbl.find env id with
               | Not_found ->
                 (Format.printf "Fatal error: failed to find code_id %a" Code_id.print id;
                  exit 1)
             in
+            (* Instantiate uses of [my_closure] and project out appropriate function
+              and value slots *)
             let params_and_body =
               concretize_my_closure var slot code {function_decls;value_slots}
             in
-            params_and_body |> step
+            (* Step the body *)
+            let params_and_body' = step params_and_body in
+            (* Format.printf "Before reduction : %a\n\n After reduction %a \n\n\n" *)
+            (*   print params_and_body *)
+            (*   print params_and_body'; *)
+            params_and_body'
           | _ -> x ))
       function_decls)[@ocaml.warning "-4"]
   in
-  { function_decls ; value_slots }
+  (* Format.printf "Before reduction : %a\n\n After reduction %a \n\n\n" *)
+  (*   print_set_of_closures {function_decls = function_decls; value_slots} *)
+  (*   print_set_of_closures {function_decls = function_decls'; value_slots}; *)
+  { function_decls = function_decls' ; value_slots }
 
 (* Inline non-recursive continuation handlers first *)
 let rec inline_handlers (e : core_exp) =
