@@ -1,6 +1,7 @@
 open! Flambda
 open! Flambda2_core
 open! Translate
+open! Equiv
 
 (** Normalization
 
@@ -516,56 +517,59 @@ and step_let_cont ({handler; body}:let_cont_expr) : core_exp =
           )
     ) |> step
 
-and step_fun_decls (decls : function_declarations) =
+and reduce_rec_call_apply
+    ({return_continuation; exn_continuation; my_region = _; params=_} as t : Bound_for_lambda.t) key phi
+    (e : core_exp) =
+  let _red_call = reduce_rec_call_apply t key phi in
+  (match descr e with
+  | Named e -> named_fix (_red_call) (fun () x -> Expr.create_named (Literal x)) () e
+  | Let e -> let_fix (_red_call) e
+  | Let_cont e -> let_cont_fix (_red_call) e
+  | Apply_cont e -> apply_cont_fix (_red_call) e
+  | Lambda e -> lambda_fix (_red_call) e
+  | Handler e -> handler_fix (_red_call) e
+  | Switch e -> switch_fix (_red_call) e
+  | Invalid _ -> e
+  | Apply {callee;
+      continuation = continuation';
+      exn_continuation = exn_continuation';
+      region = _;
+      apply_args} ->
+      (* callee is to itself *)
+      (match must_be_slot callee,
+             must_be_cont continuation',
+             must_be_cont exn_continuation'
+        with
+        | Some (_, Function_slot slot), Some continuation', Some exn_continuation' ->
+          if (Function_slot.name slot =
+              Function_slot.name key &&
+            Continuation.equal return_continuation continuation' &&
+            Continuation.equal exn_continuation exn_continuation')
+          then
+                  (Expr.create_apply_cont {k = callee;
+                    args = apply_args})
+          else e
+        | (Some (_, (Value_slot _ | Function_slot _)) | None),
+          (Some _ | None), (Some _ | None) -> e
+        )
+    )
+
+and step_fun_decls (decls : function_declarations) phi =
   SlotMap.mapi
     (fun key x ->
        match must_be_lambda x with
        | Some x ->
          (* Check if this is a direct loop *)
          Core_lambda.pattern_match x
-           ~f:(fun
-                {return_continuation;
-                 exn_continuation;
-                 params;
-                 my_region}
-                e ->
-                let default =
-                  Expr.create_lambda
-                    (Core_lambda.create
-                       {return_continuation;exn_continuation;params;my_region}
-                    e)
-                in
-                match must_be_apply e with
-                | Some
-                    {callee;
-                      continuation = continuation';
-                      exn_continuation = exn_continuation';
-                      region = _;
-                      apply_args} ->
-                  (* callee is to itself *)
-                  (match must_be_slot callee,
-                          must_be_cont continuation',
-                          must_be_cont exn_continuation'
-                    with
-                    | Some (_, Function_slot slot), Some cont, Some exn_cont ->
-                      if Function_slot.name slot =
-                         Function_slot.name key &&
-                        Continuation.equal cont return_continuation &&
-                        Continuation.equal exn_cont exn_continuation
-                      then
-                        Expr.create_handler
-                          (Core_continuation_handler.create
-                             params
-                              (Expr.create_apply_cont
-                                {k = callee;
-                                args = apply_args}))
-                      else default
-                    | (Some (_, (Value_slot _ | Function_slot _)) | None),
-                      (Some _ | None), (Some _ | None) ->
-                      default
-                   )
-                  | None -> default
-           )
+           ~f:(fun x e ->
+               let e' = reduce_rec_call_apply x key phi e in
+               if core_eq e e' then
+                 Expr.create_lambda (Core_lambda.create x e)
+               else
+                 Expr.create_handler
+                    (Core_continuation_handler.create
+                    (x.params)
+                    (reduce_rec_call_apply x key phi e)))
        | None -> x
     ) decls
 
@@ -576,17 +580,18 @@ and step_apply_no_beta_redex callee continuation exn_continuation region apply_a
   in
   match Expr.descr callee with
   | Named (Closure_expr (phi, slot, {function_decls; value_slots})) ->
-    let function_decls =
-      step_fun_decls function_decls
+    let function_decls' =
+      step_fun_decls function_decls phi
     in
-    (match SlotMap.find_opt slot function_decls |>
-            Option.map Expr.descr with
-     | Some (Handler _) ->
-       Expr.create_apply_cont
-         { k = Expr.create_named (Closure_expr (phi, slot, {function_decls; value_slots}));
-           args = apply_args }
-     | (Some (Named _ | Let _ | Let_cont _ | Apply _ | Apply_cont _ | Switch _
-              | Lambda _ | Invalid _) | None) -> default)
+    (match (SlotMap.find_opt slot function_decls),
+           (SlotMap.find_opt slot function_decls') with
+     | Some decl, Some decl' ->
+       if core_eq decl decl' then default
+       else Expr.create_apply_cont
+            { k = Expr.create_named (Closure_expr
+                                    (phi, slot, {function_decls = function_decls'; value_slots}));
+              args = apply_args }
+     | _, _ -> default)
   | (Named (Static_consts ((Code _ | Deleted_code | Static_const _)::_ | [])
            | Literal _ | Prim _ | Set_of_closures _
            | Rec_info _)
@@ -868,7 +873,7 @@ and step_set_of_closures var
               concretize_my_closure var slot code {function_decls;value_slots}
             in
             params_and_body |> step
-          | _ -> x))
+          | _ -> x ))
       function_decls)[@ocaml.warning "-4"]
   in
   { function_decls ; value_slots }
@@ -906,3 +911,4 @@ and inline_let_cont ({handler; body}:let_cont_expr) : core_exp =
 let normalize e =
   let e = inline_handlers e in
   step e
+

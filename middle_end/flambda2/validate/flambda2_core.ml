@@ -1456,7 +1456,7 @@ let set_of_closures_fix
       (fix : core_exp -> core_exp) {function_decls; value_slots} =
   let function_decls = SlotMap.map fix function_decls in
   let value_slots =
-    Value_slot.Map.map (fun x -> fix x) value_slots
+    Value_slot.Map.map fix value_slots
   in
   {function_decls; value_slots}
 
