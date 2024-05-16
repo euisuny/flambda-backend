@@ -552,8 +552,8 @@ and reduce_rec_call_apply
 
 and step_fun_decls (decls : function_declarations) phi =
   SlotMap.mapi
-    (fun key x ->
-       match must_be_lambda x with
+    (fun key slot ->
+       match must_be_lambda slot with
        | Some x ->
          (* Check if this is a direct loop *)
          Core_lambda.pattern_match x
@@ -562,13 +562,13 @@ and step_fun_decls (decls : function_declarations) phi =
                if core_eq e e' || not
                     (does_not_occur (Cont x.return_continuation) true e' &&
                     does_not_occur (Cont x.exn_continuation) true e') then
-                 Expr.create_lambda (Core_lambda.create x e)
+                 slot
                else
                  Expr.create_handler
                     (Core_continuation_handler.create
                     (x.params)
                     (reduce_rec_call_apply x key phi e)))
-       | None -> x
+       | None -> slot
     ) decls
 
 and step_apply_no_beta_redex callee continuation exn_continuation region apply_args :
