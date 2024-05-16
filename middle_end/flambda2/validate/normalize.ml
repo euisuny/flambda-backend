@@ -17,11 +17,11 @@ let comp_unit : Compilation_unit.t ref =
   ref (Compilation_unit.create Compilation_unit.Prefix.empty
          Compilation_unit.Name.dummy)
 
-let rec does_not_occur (v : literal) acc (exp : core_exp) =
+let rec does_not_occur (v : literal list) acc (exp : core_exp) =
   match descr exp with
   | Invalid _ -> acc
   | Named (Literal l) ->
-    (not (literal_contained v l) && acc)
+    ((List.for_all (fun x -> not (literal_contained x l)) v) && acc)
   | Named (Prim _| Closure_expr _ | Set_of_closures _ | Static_consts _
           | Rec_info _) -> acc (* FIXME : do a deep pattern match here *)
   | Let {let_abst; expr_body} ->
@@ -559,9 +559,9 @@ and step_fun_decls (decls : function_declarations) phi =
          Core_lambda.pattern_match x
            ~f:(fun x e ->
                let e' = reduce_rec_call_apply x key phi e in
-               if core_eq e e' || not
-                    (does_not_occur (Cont x.return_continuation) true e' &&
-                    does_not_occur (Cont x.exn_continuation) true e') then
+               if not (does_not_occur [Cont x.return_continuation; Cont x.exn_continuation] true e')
+                  || core_eq e e'
+               then
                  slot
                else
                  Expr.create_handler
@@ -604,7 +604,7 @@ and step_apply_function_decls phi slot function_decls
   match SlotMap.find_opt slot function_decls |>
         Option.map Expr.descr with
   | Some (Lambda exp) ->
-    if does_not_occur (Simple (Simple.var phi)) true (Expr.create_lambda exp) then
+    if does_not_occur [Simple (Simple.var phi)] true (Expr.create_lambda exp) then
       step_apply_lambda exp continuation exn_continuation region apply_args
     else
       step_apply_no_beta_redex callee continuation exn_continuation region apply_args
