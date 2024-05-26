@@ -366,7 +366,8 @@ let join0 ~typing_env_at_fork ~cse_at_fork ~cse_at_each_use ~params
       }
 
 let join ~typing_env_at_fork ~cse_at_fork ~use_info ~get_typing_env
-    ~get_rewrite_id ~get_cse ~params =
+      ~get_rewrite_id ~get_cse ~params =
+  if !Flambda_backend_flags.validate then None else
   let scope_at_fork = TE.current_scope typing_env_at_fork in
   let no_equations = ref false in
   let cse_at_each_use =
