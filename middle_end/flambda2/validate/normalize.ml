@@ -370,7 +370,10 @@ let remove_corresponding_end_region region_var e1 e2 =
 
   let rec remove_end region_var e2 =
     match Expr.descr e2 with
-    | Named _ | Invalid _-> e2
+    | Invalid _-> e2
+    | Named e ->
+      named_fix (remove_end region_var)
+        (fun () x -> Expr.create_named (Literal x)) () e
     | Let e ->
       begin match is_let_end_region_of region_var e with
       | Some e -> e
