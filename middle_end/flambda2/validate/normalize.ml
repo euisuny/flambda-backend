@@ -339,6 +339,55 @@ let subst_params
         Expr.create_named (Literal s))
     () e
 
+(* We want to remove [begin_region]/[end_region] pairs of the region is not used
+   for anything.  This is accomplished in two steps:
+
+   1) When simplifying [let x = e1 in e2], if [x] is unused in [e2], we can drop
+   the whole let and just keep [e2].  And we don't count [end_region] as using
+   its region argument, so we will drop [begin_region] (which is [e1] here) this
+   way.  That happens in [step_let]
+
+   2) But that leaves behind an [end_region] for a now undefined region in [e2].
+   This function checks for that and cleans it up.  This is horribly inefficient
+   - flambda2 actually does a much smarter thing so it doesn't have to
+   re-traverse the term.  *)
+let remove_corresponding_end_region region_var e1 e2 =
+  let[@warning "-4"] is_let_end_region_of region_var e =
+    Core_let.pattern_match e ~f:(fun ~x:_ ~e1 ~e2 ->
+      match Expr.descr e1 with
+      | Named (Prim (Unary (End_region, region))) ->
+        begin match Expr.descr region with
+        | Named (Literal (Simple region)) ->
+          begin match Simple.must_be_var region with
+          | Some (region_var', _) when Variable.equal region_var region_var' ->
+            Some e2
+          | _ -> None
+          end
+        | _ -> None
+        end
+      | _ -> None)
+  in
+
+  let rec remove_end region_var e2 =
+    match Expr.descr e2 with
+    | Named _ | Invalid _-> e2
+    | Let e ->
+      begin match is_let_end_region_of region_var e with
+      | Some e -> e
+      | None -> let_fix (remove_end region_var) e
+      end
+    | Let_cont e -> let_cont_fix (remove_end region_var) e
+    | Apply e -> apply_fix (remove_end region_var) e
+    | Apply_cont e -> apply_cont_fix (remove_end region_var) e
+    | Lambda e -> lambda_fix (remove_end region_var) e
+    | Handler e -> handler_fix (remove_end region_var) e
+    | Switch e -> switch_fix (remove_end region_var) e
+  in
+  match[@warning "-4"] Expr.descr e1, region_var with
+  | Named (Prim (Nullary Begin_region)), Bound_for_let.Singleton v ->
+    remove_end (Bound_var.var v) e2
+  | _ -> e2
+
 (* [LetCont-β]
   e1 where k args = e2 ⟶ e1 [k \ λ args. e2] *)
 let rec subst_cont (cont_e1: core_exp) (k: Bound_continuation.t)
@@ -482,15 +531,16 @@ and step_let let_abst body : core_exp =
         step_named_for_let x e
       | None -> x, step e1
     in
-    if can_inline e1 then
-    (* [e1] can be inlined; i.e. it has no side effects. *)
+    match Effects.can_substitute e1 with
+    | Can_duplicate ->
+      (* [e1] can be substituted freely; i.e. it has only generative effects and
+         does not observe effects. *)
       (* [Let-β]
         let x = v in e1 ⟶ e2 [x\v] *)
       subst_pattern ~bound:x ~let_body:e1 e2 |> step
-
-    (* Cannot be inlined; however, if it returns unit, then
-       value can be replaced with unit. *)
-    else
+    | No_substitutions ->
+      (* Cannot be substituted; however, if it returns unit, then value can be
+         replaced with unit. *)
       let e2 =
         if returns_unit e1 then
         (* Substitute in unit value in place for [e2]. *)
@@ -500,7 +550,25 @@ and step_let let_abst body : core_exp =
         else e2
       in
       Core_let.create ~x ~e1 ~e2:(step e2)
-    )
+    | Can_delete_if_unused ->
+      (* Can be deleted if its result is unused.  We also apply the unit
+         optimization from above. *)
+      let e2 =
+        if returns_unit e1 then
+        (* Substitute in unit value in place for [e2]. *)
+          subst_pattern ~bound:x
+            ~let_body:(Expr.create_named (Literal (Simple
+            (Simple.const Int_ids.Const.const_zero)))) e2
+        else e2
+      in
+      let e2 = step e2 in
+      let is_used = Core_let.let_var_free_in x e2 in
+      if is_used then
+        Core_let.create ~x ~e1 ~e2
+      else
+        (* A very special case for when we've removed a begin_region *)
+        remove_corresponding_end_region x e1 e2
+  )
 
 and step_let_cont ({handler; body}:let_cont_expr) : core_exp =
   Core_continuation_handler.pattern_match handler
@@ -822,7 +890,7 @@ and step_named_for_let (var: Bound_for_let.t) (body: named)
         (Static (Bound_codelike.create var),
         Expr.create_named (Static_consts consts)))
     | _ -> (var, Expr.create_named (Static_consts consts))
-)[@ocaml.warning "-4"]
+    )[@ocaml.warning "-4"]
   | Prim v -> (var, Eval_prim.eval v)
 
 and concretize_my_closure phi (slot : Function_slot.t)

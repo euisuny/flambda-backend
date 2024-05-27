@@ -216,6 +216,8 @@ module Core_let : sig
     t -> t -> (Bound_for_let.t -> core_exp -> core_exp -> 'a) ->
     (Bound_codelike.t -> Bound_codelike.t -> core_exp -> core_exp -> 'a) ->
     ('a, Pattern_match_pair_error.t) Result.t
+
+  val let_var_free_in : Bound_for_let.t -> core_exp -> bool
 end
 
 module Core_continuation_handler : sig
@@ -331,8 +333,25 @@ val static_const_group_fix :
 val print_set_of_closures : Format.formatter -> set_of_closures -> unit
 val literal_contained : literal -> literal -> bool
 
-(* Effects *)
-val no_effects_or_coeffects : core_exp -> bool
-val no_effects : core_exp -> bool
-val can_inline : core_exp -> bool
+module Effects : sig
+  (* Effects *)
+  val no_effects_or_coeffects : core_exp -> bool
+  val no_effects : core_exp -> bool
+
+  type substitutability =
+    | Can_duplicate
+    (* Things with no co-effects and only generative effects can be substituted freely for
+       our analysis.  Those for things with generative effects, it would be a bug for
+       flambda2 itself to do so, as this may increase allocation. *)
+    | Can_delete_if_unused
+    (* Things with co-effects and only generative effects.  These can't be substituted,
+       because their co-effects mean that reordering them is a change in behavior.  But if
+       their result is not used they can be deleted because they don't have observable
+       effects. *)
+    | No_substitutions
+    (* Things with real effects can't be moved or deleted at all. *)
+
+  val can_substitute : core_exp -> substitutability
+end
+
 val returns_unit : core_exp -> bool

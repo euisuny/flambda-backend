@@ -1092,10 +1092,16 @@ and ids_for_export_set_of_closures
       value_slots function_decls_ids
 
 and ids_for_export_prim (t : primitive) =
-  match t with
+  match[@warning "-4"] t with
   | Nullary
       (Invalid _ | Optimised_out _ | Probe_is_enabled _ | Begin_region
       | Enter_inlined_apply _) ->
+    Ids_for_export.empty
+  | Unary (End_region, _region) ->
+    (* Following [simplify/flow/flow_acc.ml], uses of a region in [End_region] don't count
+       as uses. *)
+    (* CR: But is that actually OK for all uses of [ids_for_export], or should I have a
+       separate free_vars function for this? *)
     Ids_for_export.empty
   | Unary (prim, arg) ->
     Ids_for_export.union
@@ -1306,6 +1312,14 @@ module Core_let = struct
             Error Pattern_match_pair_error.Mismatched_let_bindings
       )
     )
+
+  let let_var_free_in : Bound_for_let.t -> core_exp -> bool = fun var exp ->
+    let free_vars = ids_for_export exp in
+    Bound_for_let.fold_all_bound_names var
+      ~init:false
+      ~var:(fun acc v -> acc || Variable.Set.mem (Bound_var.var v) free_vars.variables)
+      ~symbol:(fun acc v -> acc || Symbol.Set.mem v free_vars.symbols)
+      ~code_id:(fun acc v -> acc || Code_id.Set.mem v free_vars.code_ids)
 end
 
 module Core_continuation_handler = struct
@@ -1562,58 +1576,71 @@ let literal_contained (literal1 : literal) (literal2 : literal) : bool =
   | (Simple _ | Cont _ | Slot (_, (Function_slot _ | Value_slot _))
     | Res_cont (Never_returns | Return _) | Code_id _), _ -> false
 
-let effects_and_coeffects (p : primitive) =
-  match p with
-  | Nullary prim ->
-    Flambda_primitive.effects_and_coeffects_of_nullary_primitive prim
-  | Unary (prim, _) ->
-    Flambda_primitive.effects_and_coeffects_of_unary_primitive prim
-  | Binary (prim, _, _) ->
-    Flambda_primitive.effects_and_coeffects_of_binary_primitive prim
-  | Ternary (prim, _, _, _) ->
-    Flambda_primitive.effects_and_coeffects_of_ternary_primitive prim
-  | Variadic (prim, _) ->
-    Flambda_primitive.effects_and_coeffects_of_variadic_primitive prim
+module Effects = struct
+  let effects_and_coeffects (p : primitive) =
+    match p with
+    | Nullary prim ->
+      Flambda_primitive.effects_and_coeffects_of_nullary_primitive prim
+    | Unary (prim, _) ->
+      Flambda_primitive.effects_and_coeffects_of_unary_primitive prim
+    | Binary (prim, _, _) ->
+      Flambda_primitive.effects_and_coeffects_of_binary_primitive prim
+    | Ternary (prim, _, _, _) ->
+      Flambda_primitive.effects_and_coeffects_of_ternary_primitive prim
+    | Variadic (prim, _) ->
+      Flambda_primitive.effects_and_coeffects_of_variadic_primitive prim
 
-let no_effects (p : primitive) =
-  match effects_and_coeffects p with
-  | No_effects, _, _ -> true
-  | ( (Only_generative_effects _ | Arbitrary_effects),
-      (No_coeffects | Has_coeffects),
-      _ ) ->
-    false
+  let no_effects (p : primitive) =
+    match effects_and_coeffects p with
+    | No_effects, _, _ -> true
+    | ( (Only_generative_effects _ | Arbitrary_effects),
+        (No_coeffects | Has_coeffects),
+        _ ) ->
+      false
 
-let no_effects (e : core_exp) : bool =
-  match must_be_prim e with
-  | None -> true
-  | Some p -> no_effects p
+  let no_effects (e : core_exp) : bool =
+    match must_be_prim e with
+    | None -> true
+    | Some p -> no_effects p
 
-let can_inline (p : primitive) =
-  match effects_and_coeffects p with
-  | No_effects, No_coeffects, _ -> true
-  | Only_generative_effects _, No_coeffects, _ -> true
-  | ( (No_effects | Only_generative_effects _ | Arbitrary_effects),
-      (No_coeffects | Has_coeffects),
-      _ ) ->
-    false
+  let no_effects_or_coeffects (p : primitive) =
+    match effects_and_coeffects p with
+    | No_effects, No_coeffects, _ -> true
+    | ( (No_effects | Only_generative_effects _ | Arbitrary_effects),
+        (No_coeffects | Has_coeffects),
+        _ ) ->
+      false
 
-let can_inline (e : core_exp) : bool =
-  match must_be_prim e with
-  | None -> true
-  | Some p -> can_inline p
+  let no_effects_or_coeffects (e : core_exp) : bool =
+    match must_be_prim e with
+    | None -> true
+    | Some p -> no_effects_or_coeffects p
 
-let no_effects_or_coeffects (p : primitive) =
-  match effects_and_coeffects p with
-  | No_effects, No_coeffects, _ -> true
-  | ( (No_effects | Only_generative_effects _ | Arbitrary_effects),
-      (No_coeffects | Has_coeffects),
-      _ ) ->
-    false
+  type substitutability =
+    | Can_duplicate
+    (* Things with no co-effects and only generative effects can be substituted freely for
+       our analysis.  Those for things with generative effects, it would be a bug for
+       flambda2 itself to do so, as this may increase allocation. *)
+    | Can_delete_if_unused
+    (* Things with co-effects and only generative effects.  These can't be substituted,
+       because their co-effects mean that reordering them is a change in behavior.  But if
+       their result is not used they can be deleted because they don't have observable
+       effects. *)
+    | No_substitutions
+    (* Things with real effects can't be moved or deleted at all. *)
 
-let no_effects_or_coeffects (e : core_exp) : bool =
-  match must_be_prim e with
-  | None -> true
-  | Some p -> no_effects_or_coeffects p
+  let can_substitute (p : primitive) =
+    match effects_and_coeffects p with
+    | (No_effects | Only_generative_effects _), No_coeffects, _ -> Can_duplicate
+    | (No_effects | Only_generative_effects _), Has_coeffects, _ ->
+      Can_delete_if_unused
+    | Arbitrary_effects, (No_coeffects | Has_coeffects), _ -> No_substitutions
+
+  let can_substitute (e : core_exp) =
+    match must_be_prim e with
+    | None -> Can_duplicate (* CR ccasinghino: Is this right? *)
+    | Some p -> can_substitute p
+end
 
 let returns_unit (p : primitive) : bool =
   match p with
