@@ -130,12 +130,12 @@ let validate filename (src : Flambda_unit.t) (res : Flambda_unit.t) =
   let res_core' =
     Profile.record ~accumulate:true "normalize_res" Normalize.normalize res_core
   in
-  let validated =
-    Profile.record ~accumulate:true "equiv" (Equiv.core_eq src_core') res_core'
-  in
   (match !Flambda_backend_flags.validate_debug with
   | None -> ()
   | Some file -> dump_validator_files file src_core src_core' res_core res_core');
+  let validated =
+    Profile.record ~accumulate:true "equiv" (Equiv.core_eq src_core') res_core'
+  in
   if validated
   then Format.eprintf "fλ2: %s PASS@." filename
   else Format.eprintf "fλ2: %s FAIL@." filename
