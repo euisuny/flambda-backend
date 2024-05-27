@@ -603,11 +603,20 @@ let must_be_tagged_immediate (e : core_exp) : named option =
 
 let must_be_untagged_immediate (e : named) : named option =
   match e with
-  | Literal (Simple _) -> None
-    (* (match simple_with_type s with
-     * | Naked_immediate _ -> Some (Literal (Simple s))
-     * | (Tagged_immediate _ | Naked_float _ | Naked_int32 _ | Naked_int64 _
-     *   | Naked_nativeint _ | Var _ | Symbol _) -> None) *)
+  | Literal (Simple s) ->
+    begin match Simple.must_be_constant s with
+    | Some c ->
+      begin match[@warning "-4"] Reg_width_const.descr c with
+      | Naked_immediate i ->
+        Some (Literal (Simple (Simple.const_int i)))
+      | Tagged_immediate _ | Naked_float _ | Naked_int32 _
+      | Naked_int64 _ | Naked_nativeint _ ->
+        (* CR ccasinghino: Could do something sensible here, probably, but without an
+           example I'm unsure if we need to add the tag bit. *)
+        None
+      end
+    | None -> None
+    end
   | Prim (Unary (Untag_immediate, arg)) -> must_be_named arg
   | Prim (Unary
             ((Tag_immediate | Duplicate_block _ | Duplicate_array _ | Is_int _
