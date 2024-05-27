@@ -670,20 +670,6 @@ and step_apply_no_beta_redex callee continuation exn_continuation region apply_a
     | Handler _ | Let _ | Let_cont _ | Apply _ | Apply_cont _ | Switch _ | Invalid _) ->
     default
 
-and step_apply_function_decls phi slot function_decls
-      callee continuation exn_continuation region apply_args : core_exp =
-  match SlotMap.find_opt slot function_decls |>
-        Option.map Expr.descr with
-  | Some (Lambda exp) ->
-    if does_not_occur [Simple (Simple.var phi)] true (Expr.create_lambda exp) then
-      step_apply_lambda exp continuation exn_continuation region apply_args
-    else
-      step_apply_no_beta_redex callee continuation exn_continuation region apply_args
-  | (Some (
-    (Named _ | Let _ | Let_cont _ | Apply _ | Apply_cont _ | Switch _
-    | Handler _ | Invalid _)) | None) ->
-    step_apply_no_beta_redex callee continuation exn_continuation region apply_args
-
 and step_apply_lambda lambda_expr continuation exn_continuation region apply_args :
   core_exp =
   let e = Core_lambda.pattern_match lambda_expr
@@ -718,16 +704,10 @@ and step_apply callee continuation exn_continuation region apply_args : core_exp
   let region = step region in
   let apply_args = List.map step apply_args in
   match Expr.descr callee with
-  | Named (Closure_expr (phi, slot,
-                         {function_decls; value_slots = _})) ->
-    step_apply_function_decls phi slot function_decls
-      callee continuation exn_continuation region apply_args
   | Lambda expr ->
     step_apply_lambda expr continuation exn_continuation region apply_args
-  | (Named (Static_consts ((Code _ | Deleted_code | Static_const _)::_ | [])
-           | Literal _ | Prim _ | Set_of_closures _
-           | Rec_info _)
-     | Handler _ | Let _ | Let_cont _ | Apply _ | Apply_cont _ | Switch _ | Invalid _) ->
+  | (Named _ | Handler _ | Let _ | Let_cont _ | Apply _ | Apply_cont _
+    | Switch _ | Invalid _) ->
     step_apply_no_beta_redex callee continuation exn_continuation region apply_args
   )[@ocaml.warning "-4"]
 
