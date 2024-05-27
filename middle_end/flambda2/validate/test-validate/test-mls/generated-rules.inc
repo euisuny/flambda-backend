@@ -58,3 +58,11 @@
   (action
    (progn
    (run %{bin:ocamlopt.opt} -c -validate project_closure.mli project_closure.ml))))
+
+(rule
+  (alias runtest)
+  (enabled_if (= %{context_name} "main"))
+  (deps box_ints.ml box_ints.mli)
+  (action
+   (progn
+   (run %{bin:ocamlopt.opt} -c -validate box_ints.mli box_ints.ml))))

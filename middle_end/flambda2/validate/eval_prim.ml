@@ -158,6 +158,51 @@ let eval_box_number_naked_float v (arg : core_exp) : named =
            | Static_consts _ |Rec_info _) | None) ->
      Prim (Unary (v, arg))
 
+let eval_box_number_naked_int32 v (arg : core_exp) : named =
+  let default = Prim (Unary (v, arg)) in
+  match[@warning "-4"] must_be_named arg with
+  | Some (Literal (Simple s)) ->
+    begin match Simple.must_be_constant s with
+    | Some c ->
+      begin match Reg_width_const.descr c with
+      | Naked_int32 i ->
+        Static_consts [Static_const (Boxed_int32 (Const i))]
+      | _ -> default
+      end
+    | None -> default
+    end
+  | _ -> default
+
+let eval_box_number_naked_int64 v (arg : core_exp) : named =
+  let default = Prim (Unary (v, arg)) in
+  match[@warning "-4"] must_be_named arg with
+  | Some (Literal (Simple s)) ->
+    begin match Simple.must_be_constant s with
+    | Some c ->
+      begin match Reg_width_const.descr c with
+      | Naked_int64 i ->
+        Static_consts [Static_const (Boxed_int64 (Const i))]
+      | _ -> default
+      end
+    | None -> default
+    end
+  | _ -> default
+
+let eval_box_number_naked_nativeint v (arg : core_exp) : named =
+  let default = Prim (Unary (v, arg)) in
+  match[@warning "-4"] must_be_named arg with
+  | Some (Literal (Simple s)) ->
+    begin match Simple.must_be_constant s with
+    | Some c ->
+      begin match Reg_width_const.descr c with
+      | Naked_nativeint i ->
+        Static_consts [Static_const (Boxed_nativeint (Const i))]
+      | _ -> default
+      end
+    | None -> default
+    end
+  | _ -> default
+
 let eval_string_length (sb : Flambda_primitive.string_or_bytes) (arg : core_exp) : named =
   let default = Prim (Unary (String_length sb, arg)) in
   (match must_be_static_consts arg with
@@ -227,8 +272,12 @@ let eval_unary (v : P.unary_primitive) (arg : core_exp) : core_exp =
   | Unbox_number n -> eval_unbox_number n arg
   | Box_number (Naked_float, _) ->
     Expr.create_named (eval_box_number_naked_float v arg)
-  | Box_number ((Naked_int32 | Naked_int64 | Naked_nativeint), _) ->
-    default
+  | Box_number (Naked_int32, _) ->
+    Expr.create_named (eval_box_number_naked_int32 v arg)
+  | Box_number (Naked_int64, _) ->
+    Expr.create_named (eval_box_number_naked_int64 v arg)
+  | Box_number (Naked_nativeint, _) ->
+    Expr.create_named (eval_box_number_naked_nativeint v arg)
   | Int_arith (kind, op) ->
     (match must_be_simple arg with
      | Some s1 ->
