@@ -50,3 +50,11 @@
   (action
    (progn
    (run %{bin:ocamlopt.opt} -c -validate region_elim.mli region_elim.ml))))
+
+(rule
+  (alias runtest)
+  (enabled_if (= %{context_name} "main"))
+  (deps project_closure.ml project_closure.mli)
+  (action
+   (progn
+   (run %{bin:ocamlopt.opt} -c -validate project_closure.mli project_closure.ml))))

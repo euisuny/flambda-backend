@@ -821,7 +821,17 @@ and step_named (body : named) : core_exp =
   | Closure_expr (phi, slot, {function_decls; value_slots}) ->
     let function_decls = SlotMap.map step function_decls in
     let value_slots = Value_slot.Map.map step value_slots in
-    Expr.create_named (Closure_expr (phi, slot, {function_decls; value_slots}))
+    (* If this slot has no reference to phi, just project it. *)
+    begin match SlotMap.find_opt slot function_decls with
+    | Some f ->
+      if does_not_occur [Simple (Simple.var phi)] true f then
+        f
+      else
+        Expr.create_named (Closure_expr (phi, slot, {function_decls; value_slots}))
+    | None ->
+      (* This seems like it should never happen? *)
+      Misc.fatal_error "Missing slot"
+    end
   | Set_of_closures {function_decls; value_slots} ->
     let function_decls = SlotMap.map step function_decls in
     let value_slots = Value_slot.Map.map step value_slots in
