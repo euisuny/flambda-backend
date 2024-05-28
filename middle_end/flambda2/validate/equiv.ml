@@ -224,8 +224,7 @@ and equiv_block env (tag1, mut1, fields1) (tag2, mut2, fields2) =
   Tag.Scannable.equal tag1 tag2 &&
   Mutability.compare mut1 mut2 = 0 &&
   (List.combine fields1 fields2 |>
-   List.fold_left (fun x (e1, e2) -> x && equiv env e1 e2)
-     true)
+   List.fold_left (fun x (e1, e2) -> x && equiv env e1 e2) true)
 
 and equiv_bound_static env static1 static2 : eq =
   let static1 = Bound_codelike.to_list static1 in
@@ -293,12 +292,9 @@ and equiv_set_of_closures env
       (function_slots_and_fun_decls_by_code_id set1)
       (function_slots_and_fun_decls_by_code_id set2)
       ~f:(fun acc ((_, (slot1, decl1)), (_, (slot2, decl2))) ->
-        (* if equiv env decl1 decl2 then *)
+        (Env.add_function_slot env slot1 slot2;
         acc &&
-        equiv_function_slots env slot1 slot2 &&
-        equiv env decl1 decl2
-        (* else unequal decl1 decl2 *)
-      )
+        equiv env decl1 decl2))
       ~acc: true
   in
   (* value_slots_eq && *)
@@ -327,8 +323,8 @@ and equiv_named env named1 named2 : eq =
   | Prim prim1, Prim prim2 ->
     equiv_primitives env prim1 prim2
   | Closure_expr (_, slot1, set1), Closure_expr (_, slot2, set2) ->
-    equiv_function_slots env slot1 slot2 &&
-    equiv_set_of_closures env set1 set2
+    equiv_set_of_closures env set1 set2 &&
+    equiv_function_slots env slot1 slot2
   | Set_of_closures set1, Set_of_closures set2 ->
     equiv_set_of_closures env set1 set2
   | Rec_info _, Rec_info _ -> true
