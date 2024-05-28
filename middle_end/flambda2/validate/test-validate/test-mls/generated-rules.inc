@@ -66,3 +66,27 @@
   (action
    (progn
    (run %{bin:ocamlopt.opt} -c -validate box_ints.mli box_ints.ml))))
+
+(rule
+  (alias runtest)
+  (enabled_if (= %{context_name} "main"))
+  (deps tag_imm.ml tag_imm.mli)
+  (action
+   (progn
+   (run %{bin:ocamlopt.opt} -c -validate tag_imm.mli tag_imm.ml))))
+
+(rule
+  (alias runtest)
+  (enabled_if (= %{context_name} "main"))
+  (deps subst_local_alloc.ml subst_local_alloc.mli)
+  (action
+   (progn
+   (run %{bin:ocamlopt.opt} -c -validate subst_local_alloc.mli subst_local_alloc.ml))))
+
+(rule
+  (alias runtest)
+  (enabled_if (= %{context_name} "main"))
+  (deps random.ml random.mli)
+  (action
+   (progn
+   (run %{bin:ocamlopt.opt} -c -validate random.mli random.ml))))

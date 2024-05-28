@@ -157,6 +157,8 @@ val must_be_apply : core_exp -> apply_expr option
 
 val must_be_static_consts : core_exp -> static_const_group option
 
+val must_be_static_const : core_exp -> static_const option
+
 val must_be_code : core_exp -> function_params_and_body option
 
 val must_be_simple : core_exp -> Simple.t option
@@ -164,6 +166,8 @@ val must_be_simple : core_exp -> Simple.t option
 val must_be_simple_or_immediate : core_exp -> Simple.t option
 
 val must_be_tagged_immediate : core_exp -> named option
+
+val must_be_tagged_immediate_int : core_exp -> Targetint_31_63.t option
 
 val must_be_untagged_immediate : core_exp -> named option
 

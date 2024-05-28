@@ -566,6 +566,13 @@ let must_be_static_consts (e : core_exp) : static_const_group option  =
   | Some (Literal _ | Prim _ | Closure_expr _ | Set_of_closures _
          | Rec_info _) | None -> None
 
+let must_be_static_const (e : core_exp) : static_const option  =
+  match must_be_named e with
+  | Some (Static_consts [Static_const c]) -> Some c
+  | Some (Static_consts ([] | [Code _] | [Deleted_code] | _ :: _ :: _)) -> None
+  | Some (Literal _ | Prim _ | Closure_expr _
+         | Set_of_closures _ | Rec_info _) | None -> None
+
 let must_be_code (e : static_const_group) : function_params_and_body option =
   match e with
   | [Code code] -> Some code
@@ -574,6 +581,31 @@ let must_be_code (e : static_const_group) : function_params_and_body option =
 let must_be_code (e : core_exp) : function_params_and_body option =
   match must_be_static_consts e with
   | Some e -> must_be_code e
+  | None -> None
+
+let must_be_tagged_immediate_int (e : named) : Targetint_31_63.t option =
+  match e with
+  | Literal (Simple s) ->
+    (match simple_with_type s with
+    | Tagged_immediate i -> Some i
+    | (Naked_immediate _ | Naked_float _ | Naked_int32 _ | Naked_int64 _
+      | Naked_nativeint _ | Var _ | Symbol _) -> None)
+  | Prim (Unary (Tag_immediate, _)) -> None
+  | Prim (Unary
+            ((Untag_immediate | Duplicate_block _ | Duplicate_array _ | Is_int _
+             | Get_tag | Array_length | Bigarray_length _ | String_length _
+             | Int_as_pointer | Opaque_identity _ | Int_arith _ | Float_arith _
+             | Num_conv _ | Boolean_not | Reinterpret_int64_as_float | Unbox_number _
+             | Box_number _ | Project_function_slot _ | Project_value_slot _
+             | Is_boxed_float | Is_flat_float_array | Begin_try_region | End_region
+             | Obj_dup), _)) -> None
+  | (Prim (Nullary _ | Binary  _ | Ternary _ | Variadic _) |
+     Literal (Cont _ | Res_cont _ | Slot _ | Code_id _) | Closure_expr _
+    | Set_of_closures _ | Static_consts _ | Rec_info _) -> None
+
+let must_be_tagged_immediate_int (e : core_exp) : Targetint_31_63.t  option =
+  match must_be_named e with
+  | Some n -> must_be_tagged_immediate_int n
   | None -> None
 
 let must_be_tagged_immediate (e : named) : named option =
@@ -1585,6 +1617,286 @@ let literal_contained (literal1 : literal) (literal2 : literal) : bool =
   | (Simple _ | Cont _ | Slot (_, (Function_slot _ | Value_slot _))
     | Res_cont (Never_returns | Return _) | Code_id _), _ -> false
 
+module Ast_folder : sig
+  (* Open recursion on core_exps, similar to the compiler's
+     ast_mapper/ast_iterator.
+  *)
+  type 'a folder = {
+    core_exp : 'a folder -> 'a -> core_exp -> 'a;
+    named : 'a folder -> 'a -> named -> 'a;
+    let_expr : 'a folder -> 'a -> let_expr -> 'a;
+    let_cont_expr : 'a folder -> 'a -> let_cont_expr -> 'a;
+    apply_expr : 'a folder -> 'a -> apply_expr -> 'a;
+    apply_cont_expr : 'a folder -> 'a -> apply_cont_expr -> 'a;
+    lambda_expr : 'a folder -> 'a -> lambda_expr -> 'a;
+    continuation_handler : 'a folder -> 'a -> continuation_handler -> 'a;
+    switch_expr : 'a folder -> 'a -> switch_expr -> 'a;
+    literal : 'a folder -> 'a -> literal -> 'a;
+    primitive : 'a folder -> 'a -> primitive -> 'a;
+    variable : 'a folder -> 'a -> Variable.t -> 'a;
+    set_of_closures : 'a folder -> 'a -> set_of_closures -> 'a;
+    static_const_group : 'a folder -> 'a -> static_const_group -> 'a;
+    static_const_or_code : 'a folder -> 'a -> static_const_or_code -> 'a;
+    static_const : 'a folder -> 'a -> static_const -> 'a;
+    symbol : 'a folder -> 'a -> Symbol.t -> 'a;
+    function_params_and_body : 'a folder -> 'a -> function_params_and_body -> 'a;
+    rec_info : 'a folder -> 'a -> Rec_info_expr.t -> 'a;
+    simple : 'a folder -> 'a -> Simple.t -> 'a;
+    continuation : 'a folder -> 'a -> Continuation.t -> 'a;
+    result_continuation :
+      'a folder -> 'a -> Apply_expr.Result_continuation.t -> 'a;
+    slot : 'a folder -> 'a -> slot -> 'a;
+    function_slot : 'a folder -> 'a -> Function_slot.t -> 'a;
+    value_slot : 'a folder -> 'a -> Value_slot.t -> 'a;
+    code_id : 'a folder -> 'a -> Code_id.t -> 'a;
+    function_declarations : 'a folder -> 'a -> function_declarations -> 'a;
+  }
+
+  val default_folder : 'a folder
+  (* The identity folder. *)
+
+  val core_exp_list : 'a folder -> 'a -> core_exp list -> 'a
+end = struct
+  type 'a folder = {
+    core_exp : 'a folder -> 'a -> core_exp -> 'a;
+    named : 'a folder -> 'a -> named -> 'a;
+    let_expr : 'a folder -> 'a -> let_expr -> 'a;
+    let_cont_expr : 'a folder -> 'a -> let_cont_expr -> 'a;
+    apply_expr : 'a folder -> 'a -> apply_expr -> 'a;
+    apply_cont_expr : 'a folder -> 'a -> apply_cont_expr -> 'a;
+    lambda_expr : 'a folder -> 'a -> lambda_expr -> 'a;
+    continuation_handler : 'a folder -> 'a -> continuation_handler -> 'a;
+    switch_expr : 'a folder -> 'a -> switch_expr -> 'a;
+    literal : 'a folder -> 'a -> literal -> 'a;
+    primitive : 'a folder -> 'a -> primitive -> 'a;
+    variable : 'a folder -> 'a -> Variable.t -> 'a;
+    set_of_closures : 'a folder -> 'a -> set_of_closures -> 'a;
+    static_const_group : 'a folder -> 'a -> static_const_group -> 'a;
+    static_const_or_code : 'a folder -> 'a -> static_const_or_code -> 'a;
+    static_const : 'a folder -> 'a -> static_const -> 'a;
+    symbol : 'a folder -> 'a -> Symbol.t -> 'a;
+    function_params_and_body : 'a folder -> 'a -> function_params_and_body -> 'a;
+    rec_info : 'a folder -> 'a -> Rec_info_expr.t -> 'a;
+    simple : 'a folder -> 'a -> Simple.t -> 'a;
+    continuation : 'a folder -> 'a -> Continuation.t -> 'a;
+    result_continuation :
+      'a folder -> 'a -> Apply_expr.Result_continuation.t -> 'a;
+    slot : 'a folder -> 'a -> slot -> 'a;
+    function_slot : 'a folder -> 'a -> Function_slot.t -> 'a;
+    value_slot : 'a folder -> 'a -> Value_slot.t -> 'a;
+    code_id : 'a folder -> 'a -> Code_id.t -> 'a;
+    function_declarations : 'a folder -> 'a -> function_declarations -> 'a;
+  }
+
+  let core_exp_list folder acc es =
+    List.fold_left (folder.core_exp folder) acc es
+
+  let or_variable_ignoring_const folder acc (e : 'a Or_variable.t) =
+    match e with
+    | Const _ -> acc
+    | Var (v, _debuginfo) -> folder.variable folder acc v
+
+  let or_variables_ignoring_const folder acc (es : 'a Or_variable.t list) =
+    List.fold_left (or_variable_ignoring_const folder) acc es
+
+  let core_exp folder acc e =
+    match descr e with
+    | Named e -> folder.named folder acc e
+    | Let e -> folder.let_expr folder acc e
+    | Let_cont e -> folder.let_cont_expr folder acc e
+    | Apply e -> folder.apply_expr folder acc e
+    | Apply_cont e -> folder.apply_cont_expr folder acc e
+    | Lambda e -> folder.lambda_expr folder acc e
+    | Handler e -> folder.continuation_handler folder acc e
+    | Switch e -> folder.switch_expr folder acc e
+    | Invalid _ -> acc
+
+  and named folder acc e =
+    match e with
+    | Literal e -> folder.literal folder acc e
+    | Prim e -> folder.primitive folder acc e
+    | Closure_expr (phi, slot, closures) ->
+      let acc = folder.variable folder acc phi in
+      let acc = folder.function_slot folder acc slot in
+      folder.set_of_closures folder acc closures
+    | Set_of_closures e -> folder.set_of_closures folder acc e
+    | Static_consts e -> folder.static_const_group folder acc e
+    | Rec_info e -> folder.rec_info folder acc e
+
+  and let_expr folder acc e =
+    Core_let.pattern_match e ~f:(fun ~x:_ ~e1 ~e2 ->
+      (* CR ccasinghino: could making binding available somehow. E.g., add
+         "expr_with_bound_var" to the record.  Would be needed to do free
+         vars with the folder. *)
+      let acc = folder.core_exp folder acc e1 in
+      folder.core_exp folder acc e2)
+
+  and let_cont_expr folder acc { handler; body } =
+    let acc = folder.continuation_handler folder acc handler in
+    Core_letcont_body.pattern_match body (fun _ e ->
+      (* CR ccasinghino: as above, could make the cont variable available
+         somehow. *)
+      folder.core_exp folder acc e)
+
+  and apply_expr folder acc
+        { callee; continuation; exn_continuation; region; apply_args } =
+    core_exp_list folder acc
+      (callee :: continuation :: exn_continuation :: region :: apply_args)
+
+  and apply_cont_expr folder acc { k; args } =
+    core_exp_list folder acc (k :: args)
+
+  and lambda_expr folder acc e =
+    Core_lambda.pattern_match e ~f:(fun _ e ->
+      (* CR ccasinghino: bound var *)
+      folder.core_exp folder acc e)
+
+  and continuation_handler folder acc e =
+    Core_continuation_handler.pattern_match e (fun _ e ->
+      (* CR ccasinghino: bound var *)
+      folder.core_exp folder acc e)
+
+  and switch_expr folder acc { scrutinee; arms } =
+    let acc = folder.core_exp folder acc scrutinee in
+    Targetint_31_63.Map.fold
+      (fun _key e acc -> folder.core_exp folder acc e)
+      arms
+      acc
+
+  and literal folder acc e =
+    match e with
+    | Simple e -> folder.simple folder acc e
+    | Cont e -> folder.continuation folder acc e
+    | Res_cont e -> folder.result_continuation folder acc e
+    | Slot (v, s) ->
+      let acc = folder.variable folder acc v in
+      folder.slot folder acc s
+    | Code_id e -> folder.code_id folder acc e
+
+  and primitive folder acc e =
+    match e with
+    | Nullary _ -> acc
+    | Unary (_, e) -> folder.core_exp folder acc e
+    | Binary (_, e1, e2) -> core_exp_list folder acc [e1;e2]
+    | Ternary (_, e1, e2, e3) -> core_exp_list folder acc [e1;e2;e3]
+    | Variadic (_, es) -> core_exp_list folder acc es
+
+  and variable _folder acc _ = acc
+
+  and slot folder acc e =
+    match e with
+    | Function_slot f -> folder.function_slot folder acc f
+    | Value_slot f -> folder.value_slot folder acc f
+
+  and function_slot _folder acc _ = acc
+  and value_slot _folder acc _ = acc
+
+  and set_of_closures folder acc { function_decls; value_slots } =
+    let acc = folder.function_declarations folder acc function_decls in
+    Value_slot.Map.fold (fun _key e acc -> folder.core_exp folder acc e)
+      value_slots acc
+
+  and static_const_group folder acc e =
+    List.fold_left (folder.static_const_or_code folder) acc e
+
+  and static_const_or_code folder acc e =
+    match e with
+    | Code e -> folder.function_params_and_body folder acc e
+    | Deleted_code -> acc
+    | Static_const e -> folder.static_const folder acc e
+
+  and static_const folder acc e =
+    (* CR ccasinghino: could add folders for the constants/strings *)
+    match e with
+    | Static_set_of_closures e -> folder.set_of_closures folder acc e
+    | Block (_tag, _mutability, es) ->
+      (* CR ccasinghino: could add folder for tags *)
+      core_exp_list folder acc es
+    | Boxed_float e -> or_variable_ignoring_const folder acc e
+    | Boxed_int32 e -> or_variable_ignoring_const folder acc e
+    | Boxed_int64 e -> or_variable_ignoring_const folder acc e
+    | Boxed_nativeint e -> or_variable_ignoring_const folder acc e
+    | Immutable_float_block es -> or_variables_ignoring_const folder acc es
+    | Immutable_float_array es -> or_variables_ignoring_const folder acc es
+    | Immutable_value_array es ->
+      let field_of_static_block folder acc (e : Field_of_static_block.t) =
+        match e with
+        | Symbol s -> folder.symbol folder acc s
+        | Tagged_immediate _ -> acc
+        | Dynamically_computed (v, _debuginfo) -> folder.variable folder acc v
+      in
+      List.fold_left (field_of_static_block folder) acc es
+    | Empty_array -> acc
+    | Mutable_string _ -> acc
+    | Immutable_string _ -> acc
+
+  and symbol _folder acc _ = acc
+
+  and function_params_and_body folder acc { expr; anon = _ } =
+    Core_function_params_and_body.pattern_match expr ~f:(fun _ e ->
+      (* CR ccasinghino: bound var *)
+      folder.lambda_expr folder acc e)
+
+  and rec_info folder acc (e : Rec_info_expr.t) =
+    let rec on_var folder acc (e : Rec_info_expr.t) =
+      match e with
+      | Const _ -> acc
+      | Var v -> folder.variable folder acc v
+      | Succ t -> on_var folder acc t
+      | Unroll_to (_, t) -> on_var folder acc t
+    in
+    on_var folder acc e
+
+  and simple folder acc (e : Simple.t) =
+    Simple.pattern_match' e
+      ~var:(fun v ~coercion:_ -> folder.variable folder acc v)
+      ~symbol:(fun v ~coercion:_ -> folder.symbol folder acc v)
+      ~const:(fun _ -> acc)
+
+  and continuation _folder acc _ = acc
+  (* CR ccasinghino: ? *)
+
+  and result_continuation folder acc (e : Apply_expr.Result_continuation.t) =
+    match e with
+    | Return e -> folder.continuation folder acc e
+    | Never_returns -> acc
+
+  and code_id _folder acc _ = acc
+
+  and function_declarations folder acc e =
+    SlotMap.fold (fun _ e acc -> folder.core_exp folder acc e) e acc
+
+  let default_folder : 'a . 'a folder = {
+    core_exp;
+    named;
+    let_expr;
+    let_cont_expr;
+    apply_expr;
+    apply_cont_expr;
+    lambda_expr;
+    continuation_handler;
+    switch_expr;
+    literal;
+    primitive;
+    variable;
+    slot;
+    function_slot;
+    value_slot;
+    set_of_closures;
+    static_const_group;
+    static_const_or_code;
+    static_const;
+    symbol;
+    function_params_and_body;
+    rec_info;
+    simple;
+    continuation;
+    result_continuation;
+    code_id;
+    function_declarations;
+  }
+end
+
 module Effects = struct
   let effects_and_coeffects (p : primitive) =
     match p with
@@ -1645,10 +1957,97 @@ module Effects = struct
       Can_delete_if_unused
     | Arbitrary_effects, (No_coeffects | Has_coeffects), _ -> No_substitutions
 
-  let can_substitute (e : core_exp) =
+  (* If any part of an expression is not substitutable, the whole is. *)
+  let combine_substitutability s1 s2 =
+    match s1, s2 with
+    | No_substitutions, _ | _, No_substitutions -> No_substitutions
+    | Can_delete_if_unused, _ | _, Can_delete_if_unused -> Can_delete_if_unused
+    | Can_duplicate, Can_duplicate -> Can_duplicate
+
+  let is_local_allocation (e : core_exp) : core_exp list option =
+    (* As a very special case, we allow a local allocation to be substituted.
+       But not an arbitrary expression containing a local allocation, just the
+       outer local.
+
+       The idea here is that it's not safe substitute local allocations in
+       general because we might substitute them past the relevant end_region.
+       But if we have something like:
+
+       begin_region;
+       ...
+       let x = allocate_local_block e in
+       ...
+       end_region
+
+       It is safe to substitute x itself (if it's safe to substitute e) because
+       it must be the case that x is not used directly after the end_region.
+       Now, if there some use of x in a subsequent let binding:
+
+       let y = ... x ... in
+       ...
+
+       It may not be safe to substitute y, once we've substituted x, because y
+       _may_ be used after the end region depending on how it uses x.  So
+       we can play this game once at the outer level only.
+    *)
+    let if_local_mode (m : Alloc_mode.For_allocations.t) x =
+      match m with
+      | Heap -> None
+      | Local _ -> Some x
+    in
+
+    let unary_primitive_is_local_allocation
+          (u : Flambda_primitive.unary_primitive) e =
+      match[@warning "-4"] u with (* CR ccasinghino: fragile *)
+      | Box_number (_, m) -> if_local_mode m [e]
+      | _ -> None
+    in
+
+    (* CR ccasinghino: Maybe these are needed, but the case I need is unary *)
+    let binary_primitive_is_local_allocation _ _ _ =
+      None
+    in
+    let ternary_primitive_is_local_allocation _ _ _ _ =
+      None
+    in
+    let variadic_primitive_is_local_allocation _ _ =
+      None
+    in
+
+    let primitive_is_local_allocation p : core_exp list option =
+      match p with
+      | Nullary _ -> None
+      | Unary (u, e) -> unary_primitive_is_local_allocation u e
+      | Binary (u, e1, e2) -> binary_primitive_is_local_allocation u e1 e2
+      | Ternary (u, e1, e2, e3) ->
+        ternary_primitive_is_local_allocation u e1 e2 e3
+      | Variadic (u, es) -> variadic_primitive_is_local_allocation u es
+    in
     match must_be_prim e with
-    | None -> Can_duplicate (* CR ccasinghino: Is this right? *)
-    | Some p -> can_substitute p
+    | None -> None
+    | Some p -> primitive_is_local_allocation p
+
+  let can_substitute (e : core_exp) =
+    (* We used to only count primitives themselves as effectful.  This was
+       wrong.  Now we descend deeper, but are still careful not to go under
+       closures (something that closes over an effect is not an effect). But
+       we're still too generous here: an application of such a function is
+       effectful, but we treat it as not.  This could be fixed.
+    *)
+    let folder =
+      {Ast_folder.default_folder with
+       lambda_expr = (fun _ _ _ -> Can_duplicate);
+       continuation_handler = (fun _ _ _ -> Can_duplicate);
+       function_declarations = (fun _ _ _ -> Can_duplicate);
+       function_params_and_body = (fun _ _ _ -> Can_duplicate);
+       primitive = fun self acc p ->
+         let acc = combine_substitutability acc (can_substitute p) in
+         Ast_folder.default_folder.primitive self acc p}
+    in
+    match is_local_allocation e with
+    | None -> folder.core_exp folder Can_duplicate e
+    | Some es -> Ast_folder.core_exp_list folder Can_duplicate es
+      (* See comment on [is_local_allocation] for this special case. *)
 end
 
 let returns_unit (p : primitive) : bool =

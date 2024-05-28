@@ -1257,6 +1257,17 @@ let eval_ternary (v : P.ternary_primitive)
       (arg1 : core_exp) (arg2 : core_exp) (arg3 : core_exp) : named =
   Prim (Ternary (v, arg1, arg2, arg3))
 
+let must_be_tagged_immediates args =
+  let rec go acc args =
+    match args with
+    | [] -> Some (List.rev acc)
+    | arg :: args ->
+      match must_be_tagged_immediate_int arg with
+      | Some c -> go (c :: acc) args
+      | None -> None
+  in
+  go [] args
+
 let eval_variadic (v : P.variadic_primitive) (args : core_exp list) : named =
   match v with
   | Make_block (Values (tag, kinds), mut, _alloc_mode) ->
@@ -1292,8 +1303,19 @@ let eval_variadic (v : P.variadic_primitive) (args : core_exp list) : named =
   | Make_block (Naked_floats,
                 (Mutable | Immutable | Immutable_unique), _) ->
     Prim (Variadic (v, args))
-  | Make_array _ -> Prim (Variadic (v, args))
-    (* Misc.fatal_error "[Primitive eval]: eval_variadic_make_array_unspported" *)
+  | Make_array (Immediates, Immutable, _mode) ->
+    (* CR ccasinghino: Can/should we do this in the immutable_unique case? *)
+    begin match must_be_tagged_immediates args with
+    | Some consts ->
+      let fields =
+        List.map (fun i -> Field_of_static_block.Tagged_immediate i) consts
+      in
+      Static_consts [Static_const (Immutable_value_array fields)]
+    | None -> Prim (Variadic (v, args))
+    end
+  | Make_array (Immediates, (Mutable | Immutable_unique), _mode)
+  | Make_array ((Values | Naked_floats), _, _mode) ->
+    Prim (Variadic (v, args))
 
 let rec eval (v : primitive) : core_exp =
   let f_arg (arg : core_exp) =
