@@ -1,0 +1,98 @@
+let $camlList_fold__first_const57 = Block 0 () in
+let code rec loopify(default tailrec) size(27)
+      rev_append_0
+        (l1 : [ 0 | 0 of val * [ 0 | 0 of val * val ] ],
+         l2 : [ 0 | 0 of val * [ 0 | 0 of val * val ] ])
+        my_closure my_region my_depth
+        -> k * k1
+        : [ 0 | 0 of val * [ 0 | 0 of val * val ] ] =
+  let next_depth = rec_info (succ my_depth) in
+  let prim = %is_int l1 in
+  let Pisint = %Tag_imm prim in
+  (let untagged = %untag_imm Pisint in
+   switch untagged
+     | 0 -> k2
+     | 1 -> k (l2))
+    where k2 =
+      let Pfield = %block_load (l1, 0) in
+      let Pmakeblock = %Block 0 (Pfield, l2) in
+      let Pfield_1 = %block_load (l1, 1) in
+      apply direct(rev_append_0)
+        (my_closure : _ -> [ 0 | 0 of val * [ 0 | 0 of val * val ] ])
+          (Pfield_1, Pmakeblock)
+          &my_region
+          -> k * k1
+in
+let code size(5)
+      rev_1 (l : [ 0 | 0 of val * [ 0 | 0 of val * val ] ])
+        my_closure my_region my_depth
+        -> k * k1
+        : [ 0 | 0 of val * [ 0 | 0 of val * val ] ] =
+  let rev_append = %project_value_slot rev.rev_append my_closure in
+  apply direct(rev_append_0)
+    (rev_append : _ -> [ 0 | 0 of val * [ 0 | 0 of val * val ] ])
+      (l, 0)
+      &my_region
+      -> k * k1
+in
+let code size(36)
+      aux_3
+        (f,
+         accu,
+         l_accu : [ 0 | 0 of val * [ 0 | 0 of val * val ] ],
+         param : [ 0 | 0 of val * [ 0 | 0 of val * val ] ])
+        my_closure my_region my_depth
+        -> k * k1
+        : [ 0 of val * [ 0 | 0 of val * val ] ] =
+  let rev = %project_value_slot aux.rev my_closure in
+  let prim = %is_int param in
+  let Pisint = %Tag_imm prim in
+  (let untagged = %untag_imm Pisint in
+   switch untagged
+     | 0 -> k2
+     | 1 -> k3)
+    where k3 =
+      (apply direct(rev_1)
+         (rev : _ -> [ 0 | 0 of val * [ 0 | 0 of val * val ] ])
+           (l_accu)
+           &my_region
+           -> k3 * k1
+         where k3 (apply_result : [ 0 | 0 of val * [ 0 | 0 of val * val ] ]) =
+           let Pmakeblock = %Block 0 (accu, apply_result) in
+           cont k (Pmakeblock))
+    where k2 =
+      ((let Pfield = %block_load (param, 0) in
+        apply f (accu, Pfield) &my_region -> k2 * k1)
+         where k2 (`*match*` : [ 0 of [ 0 of val * val ] * val ]) =
+           let Pfield = %block_load (`*match*`, 0) in
+           cont k (Pfield))
+in
+let code size(50)
+      fold_left_map_2
+        (f, accu, l : [ 0 | 0 of val * [ 0 | 0 of val * val ] ])
+        my_closure my_region my_depth
+        -> k * k1
+        : [ 0 of val * [ 0 | 0 of val * val ] ] =
+  let rev = %project_value_slot fold_left_map.rev_1 my_closure in
+  let aux = closure aux_3 @aux with { rev = rev } in
+  apply direct(aux_3)
+    (aux : _ -> [ 0 of val * [ 0 | 0 of val * val ] ])
+      (f, accu, 0, l)
+      &my_region
+      -> k * k1
+in
+(let append = %block_load ($Stdlib.camlStdlib, 36) in
+ let rev_append = closure rev_append_0 @rev_append in
+ let rev = closure rev_1 @rev with { rev_append = rev_append } in
+ let fold_left_map = closure fold_left_map_2 @fold_left_map
+ with { rev_1 = rev }
+ in
+ let Pmakeblock = %Block 0 (append, rev_append, rev, fold_left_map) in
+ cont k (Pmakeblock))
+  where k define_root_symbol (module_block) =
+    let field_0 = %block_load tag(0) size(4) (module_block, 0) in
+    let field_1 = %block_load tag(0) size(4) (module_block, 1) in
+    let field_2 = %block_load tag(0) size(4) (module_block, 2) in
+    let field_3 = %block_load tag(0) size(4) (module_block, 3) in
+    let $camlList_fold = Block 0 (field_0, field_1, field_2, field_3) in
+    cont done ($camlList_fold)
