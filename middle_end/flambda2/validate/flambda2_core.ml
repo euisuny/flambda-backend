@@ -566,6 +566,13 @@ let must_be_static_consts (e : core_exp) : static_const_group option  =
   | Some (Literal _ | Prim _ | Closure_expr _ | Set_of_closures _
          | Rec_info _) | None -> None
 
+let must_be_static_const (e : core_exp) : static_const option  =
+  match must_be_named e with
+  | Some (Static_consts [Static_const c]) -> Some c
+  | Some (Static_consts ([] | [Code _] | [Deleted_code] | _ :: _ :: _)) -> None
+  | Some (Literal _ | Prim _ | Closure_expr _
+         | Set_of_closures _ | Rec_info _) | None -> None
+
 let must_be_code (e : static_const_group) : function_params_and_body option =
   match e with
   | [Code code] -> Some code
@@ -574,6 +581,31 @@ let must_be_code (e : static_const_group) : function_params_and_body option =
 let must_be_code (e : core_exp) : function_params_and_body option =
   match must_be_static_consts e with
   | Some e -> must_be_code e
+  | None -> None
+
+let must_be_tagged_immediate_int (e : named) : Targetint_31_63.t option =
+  match e with
+  | Literal (Simple s) ->
+    (match simple_with_type s with
+    | Tagged_immediate i -> Some i
+    | (Naked_immediate _ | Naked_float _ | Naked_int32 _ | Naked_int64 _
+      | Naked_nativeint _ | Var _ | Symbol _) -> None)
+  | Prim (Unary (Tag_immediate, _)) -> None
+  | Prim (Unary
+            ((Untag_immediate | Duplicate_block _ | Duplicate_array _ | Is_int _
+             | Get_tag | Array_length | Bigarray_length _ | String_length _
+             | Int_as_pointer | Opaque_identity _ | Int_arith _ | Float_arith _
+             | Num_conv _ | Boolean_not | Reinterpret_int64_as_float | Unbox_number _
+             | Box_number _ | Project_function_slot _ | Project_value_slot _
+             | Is_boxed_float | Is_flat_float_array | Begin_try_region | End_region
+             | Obj_dup), _)) -> None
+  | (Prim (Nullary _ | Binary  _ | Ternary _ | Variadic _) |
+     Literal (Cont _ | Res_cont _ | Slot _ | Code_id _) | Closure_expr _
+    | Set_of_closures _ | Static_consts _ | Rec_info _) -> None
+
+let must_be_tagged_immediate_int (e : core_exp) : Targetint_31_63.t  option =
+  match must_be_named e with
+  | Some n -> must_be_tagged_immediate_int n
   | None -> None
 
 let must_be_tagged_immediate (e : named) : named option =
