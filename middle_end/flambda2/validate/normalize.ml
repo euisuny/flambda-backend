@@ -60,6 +60,162 @@ let rec does_not_occur (v : literal list) acc (exp : core_exp) =
     Targetint_31_63.Map.fold
       (fun _ x acc -> acc && does_not_occur v acc x) arms true
 
+let literal_var_eq l v =
+  (match l with
+    | Simple s ->
+      let var = Simple.var v in
+      Simple.equal s var
+    | (Cont _ | Res_cont _ | Slot _ | Code_id _) -> false)
+
+(* Check whether a parameter occurs in an expression other than in argument position *)
+let rec parameter_occurs_only_as_call_arg (p : Bound_parameter.t) (e : core_exp) =
+  (match descr e with
+  | Named n -> parameter_occurs_only_as_call_arg_named p n
+  | Let e ->
+    Core_let.pattern_match e
+      ~f:(fun ~x:_ ~e1 ~e2 ->
+        parameter_occurs_only_as_call_arg p e1 &&
+        parameter_occurs_only_as_call_arg p e2)
+  | Let_cont {handler;body} ->
+    Core_continuation_handler.pattern_match handler
+      (fun _ e ->
+        parameter_occurs_only_as_call_arg p e) &&
+    Core_letcont_body.pattern_match body
+      (fun _ e ->
+        parameter_occurs_only_as_call_arg p e)
+  | Apply_cont {k ; args} ->
+      parameter_occurs_only_as_call_arg p k &&
+      List.for_all (fun x ->
+          match must_be_literal x with
+          | Some _ -> true
+          | None -> parameter_occurs_only_as_call_arg p x) args
+  | Lambda e ->
+      Core_lambda.pattern_match e
+        ~f:(fun _ e -> parameter_occurs_only_as_call_arg p e)
+  | Handler e ->
+      Core_continuation_handler.pattern_match e
+       (fun _ e -> parameter_occurs_only_as_call_arg p e)
+  | Switch {scrutinee; arms} ->
+       parameter_occurs_only_as_call_arg p scrutinee &&
+       Targetint_31_63.Map.for_all (fun _ e -> parameter_occurs_only_as_call_arg p e) arms
+  | Invalid _ -> false
+  | Apply {callee;
+      continuation;
+      exn_continuation;
+      region;
+      apply_args} ->
+      parameter_occurs_only_as_call_arg p callee &&
+      parameter_occurs_only_as_call_arg p continuation &&
+      parameter_occurs_only_as_call_arg p exn_continuation &&
+      parameter_occurs_only_as_call_arg p region &&
+      List.for_all (fun x ->
+          match must_be_literal x with
+          | Some _ -> true
+          | None -> parameter_occurs_only_as_call_arg p x) apply_args)
+
+and parameter_occurs_only_as_call_arg_prim p (e : primitive) =
+  (match e with
+  | Nullary _ -> true
+  | Unary (_, e) ->
+    parameter_occurs_only_as_call_arg p e
+  | Binary (_, e1, e2) ->
+    parameter_occurs_only_as_call_arg p e1 &&
+    parameter_occurs_only_as_call_arg p e2
+  | Ternary (_, e1, e2, e3) ->
+    parameter_occurs_only_as_call_arg p e1 &&
+    parameter_occurs_only_as_call_arg p e2 &&
+    parameter_occurs_only_as_call_arg p e3
+  | Variadic (_, list) ->
+    List.for_all (parameter_occurs_only_as_call_arg p) list)
+
+and parameter_occurs_only_as_call_arg_named p (e : named) =
+  match e with
+  | Literal l ->
+    not (literal_var_eq l (Bound_parameter.var p))
+  | Prim e -> parameter_occurs_only_as_call_arg_prim p e
+  | Closure_expr (_, _, {function_decls; value_slots}) ->
+    SlotMap.for_all (fun _ a -> parameter_occurs_only_as_call_arg p a) function_decls &&
+    Value_slot.Map.for_all (fun _ a -> parameter_occurs_only_as_call_arg p a) value_slots
+  | Set_of_closures {function_decls; value_slots} ->
+    SlotMap.for_all (fun _ a -> parameter_occurs_only_as_call_arg p a) function_decls &&
+    Value_slot.Map.for_all (fun _ a -> parameter_occurs_only_as_call_arg p a) value_slots
+  | Static_consts e ->
+    List.for_all
+    (fun e ->
+      match e with
+        | Code {expr; anon=_}->
+              Core_function_params_and_body.pattern_match expr
+              ~f:(fun
+                    _ body ->
+                      (Core_lambda.pattern_match body
+                        ~f:(fun _ body ->
+                             parameter_occurs_only_as_call_arg p body)));
+        | Deleted_code -> true
+        | Static_const const ->
+          (match const with
+          | Static_set_of_closures {function_decls; value_slots }->
+            SlotMap.for_all (fun _ a -> parameter_occurs_only_as_call_arg p a) function_decls &&
+            Value_slot.Map.for_all (fun _ a -> parameter_occurs_only_as_call_arg p a) value_slots
+          | Block (_, _, list) ->
+              (List.for_all (parameter_occurs_only_as_call_arg p) list)
+          | ( Boxed_float _ | Boxed_int32 _ | Boxed_int64 _ | Boxed_nativeint _
+            | Immutable_float_block _ | Immutable_float_array _ | Immutable_value_array _
+            | Empty_array | Mutable_string _ | Immutable_string _ ) -> true)) e
+  | Rec_info _ -> true
+
+let rec eliminate (p : Bound_parameter.t) (e : core_exp) =
+  match Expr.descr e with
+  | Named e ->
+    named_fix (eliminate p) (fun () x -> Expr.create_named (Literal x)) () e
+  | Let e ->
+    let_fix (eliminate p) e
+  | Let_cont e ->
+    let_cont_fix (eliminate p) e
+  | Apply e ->
+    eliminate_apply p e
+  | Apply_cont e ->
+    eliminate_apply_cont p e
+  | Lambda e -> lambda_fix (eliminate p) e
+  | Handler e ->
+    handler_fix (eliminate p) e
+  | Switch e -> switch_fix (eliminate p) e
+  | Invalid _ -> e
+
+and eliminate_apply (p : Bound_parameter.t) {callee; continuation; exn_continuation; region; apply_args} =
+  let apply_args =
+    List.filter
+      (fun x ->
+         match must_be_literal x with
+         | Some l -> not (literal_var_eq l (Bound_parameter.var p))
+         | None -> true
+      ) apply_args
+  in
+  Expr.create_apply
+    {callee = eliminate p callee ;
+     continuation = eliminate p continuation;
+     exn_continuation = eliminate p exn_continuation;
+     region = eliminate p region;
+     apply_args}
+
+and eliminate_apply_cont (p : Bound_parameter.t) {k; args} =
+  let args' =
+    List.filter
+      (fun x ->
+         match must_be_literal x with
+         | Some l ->
+            not (literal_var_eq l (Bound_parameter.var p))
+         | None -> true
+      ) args
+  in
+  Expr.create_apply_cont
+    {k = eliminate p k; args = args'}
+
+let eliminate_arguments_rec_call (p : Bound_parameter.t) (e : core_exp) =
+  if parameter_occurs_only_as_call_arg p e then
+    (true, eliminate p e)
+  else
+    (false, e)
+
 (* Substitution funtions for β-reduction *)
 (* [Let-β]
       e[bound\let_body] *)
@@ -585,6 +741,7 @@ and step_let_cont ({handler; body}:let_cont_expr) : core_exp =
           )
     ) |> step
 
+(* Reduce a direct loop apply to an [apply_cont]. *)
 and reduce_rec_call_apply
     ({return_continuation; exn_continuation; my_region = _; params=_} as t : Bound_for_lambda.t) key phi
     (e : core_exp) =
@@ -630,6 +787,8 @@ and step_fun_decls (decls : function_declarations) phi =
          Core_lambda.pattern_match x
            ~f:(fun x e ->
                let e' = reduce_rec_call_apply x key phi e in
+               (* If the return and exception continuation occurs in the
+                  subexpression or the transformation didn't take place *)
                if not (does_not_occur [Cont x.return_continuation; Cont x.exn_continuation] true e')
                   || core_eq e e'
                then
@@ -637,8 +796,9 @@ and step_fun_decls (decls : function_declarations) phi =
                else
                  Expr.create_handler
                     (Core_continuation_handler.create
-                    (x.params)
-                    (reduce_rec_call_apply x key phi e)))
+                   x.params
+                    (* (Bound_parameters.create params) *)
+                    e'))
        | None -> slot
     ) decls
 
@@ -724,7 +884,38 @@ and step_apply_cont k args : core_exp =
   | Some handler ->
     Core_continuation_handler.pattern_match handler
       (fun params e -> subst_params params e args) |> step
-  | None -> Expr.create_apply_cont {k; args}
+  | None ->
+    (match must_be_named k with
+    | Some (Closure_expr (phi, slot, {function_decls; value_slots})) ->
+      let x = SlotMap.find slot function_decls in
+      let (e, args) =
+        (match must_be_handler x with
+          | Some x ->
+            Core_continuation_handler.pattern_match x
+              (fun params e' ->
+                 let concrete_args =
+                   List.combine (Bound_parameters.to_list params) args
+                 in
+                (* Loop invariant argument reduction :
+                  for each parameter, remove the argument if it only occurs
+                  in argument position of the recursive call and nowhere else. *)
+                let (params, e', args) =
+                  List.fold_left (fun (l, e, args) (x, arg) ->
+                    let (b, e) = eliminate_arguments_rec_call x e in
+                    if b then (l, e, args) else (x :: l, e, arg :: args)
+                  ) ([], e', []) concrete_args
+                in
+                let e =
+                  Expr.create_handler
+                      (Core_continuation_handler.create
+                          (Bound_parameters.create params) e') in
+                (e, args))
+          | None -> (x, args))
+        in
+        let function_decls = SlotMap.add slot e function_decls in
+        let k = Expr.create_named (Closure_expr (phi, slot, {function_decls; value_slots})) in
+        Expr.create_apply_cont {k; args}
+    | _ -> Expr.create_apply_cont {k; args})[@ocaml.warning "-4"]
 
 (* N.B. [Projection reduction]
     When we substitute in a set of closures for primitives,
@@ -942,7 +1133,7 @@ and step_set_of_closures var
             (*   print params_and_body *)
             (*   print params_and_body'; *)
             params_and_body'
-          | _ -> x ))
+          | _ -> x))
       function_decls)[@ocaml.warning "-4"]
   in
   (* Format.printf "Before reduction : %a\n\n After reduction %a \n\n\n" *)
