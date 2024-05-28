@@ -1622,6 +1622,8 @@ module Ast_folder : sig
 
   val default_folder : 'a folder
   (* The identity folder. *)
+
+  val core_exp_list : 'a folder -> 'a -> core_exp list -> 'a
 end = struct
   type 'a folder = {
     core_exp : 'a folder -> 'a -> core_exp -> 'a;
@@ -1930,6 +1932,69 @@ module Effects = struct
     | Can_delete_if_unused, _ | _, Can_delete_if_unused -> Can_delete_if_unused
     | Can_duplicate, Can_duplicate -> Can_duplicate
 
+  let is_local_allocation (e : core_exp) : core_exp list option =
+    (* As a very special case, we allow a local allocation to be substituted.
+       But not an arbitrary expression containing a local allocation, just the
+       outer local.
+
+       The idea here is that it's not safe substitute local allocations in
+       general because we might substitute them past the relevant end_region.
+       But if we have something like:
+
+       begin_region;
+       ...
+       let x = allocate_local_block e in
+       ...
+       end_region
+
+       It is safe to substitute x itself (if it's safe to substitute e) because
+       it must be the case that x is not used directly after the end_region.
+       Now, if there some use of x in a subsequent let binding:
+
+       let y = ... x ... in
+       ...
+
+       It may not be safe to substitute y, once we've substituted x, because y
+       _may_ be used after the end region depending on how it uses x.  So
+       we can play this game once at the outer level only.
+    *)
+    let if_local_mode (m : Alloc_mode.For_allocations.t) x =
+      match m with
+      | Heap -> None
+      | Local _ -> Some x
+    in
+
+    let unary_primitive_is_local_allocation
+          (u : Flambda_primitive.unary_primitive) e =
+      match[@warning "-4"] u with (* CR ccasinghino: fragile *)
+      | Box_number (_, m) -> if_local_mode m [e]
+      | _ -> None
+    in
+
+    (* CR ccasinghino: Maybe these are needed, but the case I need is unary *)
+    let binary_primitive_is_local_allocation _ _ _ =
+      None
+    in
+    let ternary_primitive_is_local_allocation _ _ _ _ =
+      None
+    in
+    let variadic_primitive_is_local_allocation _ _ =
+      None
+    in
+
+    let primitive_is_local_allocation p : core_exp list option =
+      match p with
+      | Nullary _ -> None
+      | Unary (u, e) -> unary_primitive_is_local_allocation u e
+      | Binary (u, e1, e2) -> binary_primitive_is_local_allocation u e1 e2
+      | Ternary (u, e1, e2, e3) ->
+        ternary_primitive_is_local_allocation u e1 e2 e3
+      | Variadic (u, es) -> variadic_primitive_is_local_allocation u es
+    in
+    match must_be_prim e with
+    | None -> None
+    | Some p -> primitive_is_local_allocation p
+
   let can_substitute (e : core_exp) =
     (* We used to only count primitives themselves as effectful.  This was
        wrong.  Now we descend deeper, but are still careful not to go under
@@ -1947,7 +2012,10 @@ module Effects = struct
          let acc = combine_substitutability acc (can_substitute p) in
          Ast_folder.default_folder.primitive self acc p}
     in
-    folder.core_exp folder Can_duplicate e
+    match is_local_allocation e with
+    | None -> folder.core_exp folder Can_duplicate e
+    | Some es -> Ast_folder.core_exp_list folder Can_duplicate es
+      (* See comment on [is_local_allocation] for this special case. *)
 end
 
 let returns_unit (p : primitive) : bool =
