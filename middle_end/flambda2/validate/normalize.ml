@@ -621,11 +621,15 @@ let rec step (e: core_exp) : core_exp =
   | Lambda e -> step_lambda e
   | Handler e -> step_handler e
   | Switch {scrutinee; arms} ->
-    let scrutinee = step scrutinee in
+    (* Format.printf "Stepping switch, %a\n" print_switch {scrutinee; arms}; *)
+    let scrutinee' = step scrutinee in
+    (* Format.printf "Stepping switch, before: %a\n after : %a \n" *)
+      (* print_switch {scrutinee; arms} *)
+      (* print_switch {scrutinee= scrutinee'; arms}; *)
     let arms =
       Targetint_31_63.Map.map (fun x -> let e = step x in e) arms
     in
-    step_switch scrutinee arms
+    step_switch scrutinee' arms
   | Named e -> step_named e
   | Invalid _ -> e
 
@@ -932,7 +936,7 @@ and step_apply_cont k args : core_exp =
                 (e, args))
           | None -> (x, args))
         in
-        let function_decls = SlotMap.add slot e function_decls in
+        let function_decls = SlotMap.add slot (step e) function_decls in
         let k = Expr.create_named (Closure_expr (phi, slot, {function_decls; value_slots})) in
         Expr.create_apply_cont {k; args}
     | _ -> Expr.create_apply_cont {k; args})[@ocaml.warning "-4"]
